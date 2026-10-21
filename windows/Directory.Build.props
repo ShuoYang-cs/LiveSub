@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>0.1.0</Version>
+    <Authors>Shuo Yang</Authors>
+    <Company>Shuo Yang</Company>
+    <Product>LiveSub</Product>
+    <Copyright>Copyright (c) 2026 Shuo Yang</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <SatelliteResourceLanguages>en;zh-Hans</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>

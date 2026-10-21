@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="AppName" xml:space="preserve"><value>实时翻译助手</value></data>
+  <data name="Menu_Start" xml:space="preserve"><value>开始字幕</value></data>
+  <data name="Menu_Stop" xml:space="preserve"><value>停止字幕</value></data>
+  <data name="Menu_AudioSource" xml:space="preserve"><value>音源</value></data>
+  <data name="Source_Microphone" xml:space="preserve"><value>麦克风</value></data>
+  <data name="Source_System" xml:space="preserve"><value>系统音频</value></data>
+  <data name="Menu_Model" xml:space="preserve"><value>翻译模型</value></data>
+  <data name="Menu_Display" xml:space="preserve"><value>显示内容</value></data>
+  <data name="Display_Bilingual" xml:space="preserve"><value>双语</value></data>
+  <data name="Display_TranslationOnly" xml:space="preserve"><value>仅译文</value></data>
+  <data name="Display_SourceOnly" xml:space="preserve"><value>仅原文</value></data>
+  <data name="Menu_ShowOverlay" xml:space="preserve"><value>显示字幕</value></data>
+  <data name="Menu_HideOverlay" xml:space="preserve"><value>隐藏字幕</value></data>
+  <data name="Menu_Lock" xml:space="preserve"><value>锁定字幕</value></data>
+  <data name="Menu_ResetPosition" xml:space="preserve"><value>字幕移回屏幕底部</value></data>
+  <data name="Menu_Export" xml:space="preserve"><value>导出字幕</value></data>
+  <data name="Menu_History" xml:space="preserve"><value>历史记录…</value></data>
+  <data name="Menu_NewSession" xml:space="preserve"><value>开始新的记录</value></data>
+  <data name="Menu_OpenFolder" xml:space="preserve"><value>打开记录文件夹</value></data>
+  <data name="Menu_Settings" xml:space="preserve"><value>设置…</value></data>
+  <data name="Menu_Quit" xml:space="preserve"><value>退出</value></data>
+  <data name="Group_ClaudeCode" xml:space="preserve"><value>Claude Code</value></data>
+  <data name="Group_Anthropic" xml:space="preserve"><value>Anthropic API</value></data>
+  <data name="Model_NotConfigured" xml:space="preserve"><value>未设置模型</value></data>
+  <data name="Model_NoKey" xml:space="preserve"><value>需要 API 密钥</value></data>
+  <data name="Status_NotStarted" xml:space="preserve"><value>未开始</value></data>
+  <data name="Status_Preparing" xml:space="preserve"><value>准备中…</value></data>
+  <data name="Status_DownloadingModel" xml:space="preserve"><value>正在下载识别模型 {0}：{1}%</value></data>
+  <data name="Status_LoadingModel" xml:space="preserve"><value>正在加载识别模型…</value></data>
+  <data name="Status_Listening" xml:space="preserve"><value>正在听：{0} · {1} → {2} · {3}</value></data>
+  <data name="Status_Stopped" xml:space="preserve"><value>已停止</value></data>
+  <data name="Status_NewSession" xml:space="preserve"><value>已开始新的记录</value></data>
+  <data name="Status_Filtered" xml:space="preserve"><value>已过滤中文说话 {0} 段</value></data>
+  <data name="Status_Exported" xml:space="preserve"><value>字幕已导出：{0}</value></data>
+  <data name="Status_StartFailed" xml:space="preserve"><value>启动失败：{0}</value></data>
+  <data name="Overlay_Listening" xml:space="preserve"><value>正在聆听…</value></data>
+  <data name="Overlay_Ready" xml:space="preserve"><value>{0} 已就绪 · {1}</value></data>
+  <data name="Overlay_TranslationFailed" xml:space="preserve"><value>翻译失败</value></data>
+  <data name="Overlay_NoInput" xml:space="preserve"><value>无音频输入</value></data>
+  <data name="Overlay_Receiving" xml:space="preserve"><value>收音中</value></data>
+  <data name="Overlay_Quiet" xml:space="preserve"><value>无声音</value></data>
+  <data name="Overlay_RecognitionHard" xml:space="preserve"><value>识别较难 · 已自动纠正</value></data>
+  <data name="Overlay_RecognitionClear" xml:space="preserve"><value>识别清晰</value></data>
+  <data name="Tip_RecognitionHard" xml:space="preserve"><value>识别置信度较低，已自动按发音纠正识别错误。</value></data>
+  <data name="Tip_RecognitionClear" xml:space="preserve"><value>识别置信度正常。</value></data>
+  <data name="Overlay_Backlog" xml:space="preserve"><value>待翻译 {0} 句</value></data>
+  <data name="Overlay_BackToLive" xml:space="preserve"><value>返回实时</value></data>
+  <data name="Tip_ModelMenu" xml:space="preserve"><value>点击切换翻译模型。</value></data>
+  <data name="Tool_Start" xml:space="preserve"><value>开始</value></data>
+  <data name="Tool_Stop" xml:space="preserve"><value>停止</value></data>
+  <data name="Tool_CycleDisplay" xml:space="preserve"><value>切换显示内容</value></data>
+  <data name="Tool_Lock" xml:space="preserve"><value>锁定字幕。锁定后字幕不响应鼠标，在托盘菜单中解锁。</value></data>
+  <data name="Tool_History" xml:space="preserve"><value>历史记录</value></data>
+  <data name="Tool_Settings" xml:space="preserve"><value>设置</value></data>
+  <data name="Tool_Hide" xml:space="preserve"><value>隐藏字幕。按 {0} 重新显示。</value></data>
+  <data name="Tool_HideNoKey" xml:space="preserve"><value>隐藏字幕。在托盘菜单中重新显示。</value></data>
+  <data name="Tip_Tray" xml:space="preserve"><value>{0} · {1}</value></data>
+  <data name="Error_ClaudeNotFound" xml:space="preserve"><value>找不到 claude 命令。请先安装 Claude Code，或在设置里填写 claude 的路径。</value></data>
+  <data name="Error_NotLoggedIn" xml:space="preserve"><value>Claude Code 未登录：请在终端运行 claude，输入 /login 登录一次。</value></data>
+  <data name="Error_Unauthorized" xml:space="preserve"><value>API 密钥无效：{0}</value></data>
+  <data name="Error_MissingKey" xml:space="preserve"><value>请先在设置里填写 {0} 的 API 密钥。</value></data>
+  <data name="Error_MissingModel" xml:space="preserve"><value>请先在设置里为 {0} 选择模型。</value></data>
+  <data name="Error_Timeout" xml:space="preserve"><value>翻译超时。</value></data>
+  <data name="Error_ProcessExited" xml:space="preserve"><value>Claude 进程退出：{0}</value></data>
+  <data name="Error_NoOutput" xml:space="preserve"><value>无输出</value></data>
+  <data name="Error_Http" xml:space="preserve"><value>翻译出错（{0}）：{1}</value></data>
+  <data name="Error_Network" xml:space="preserve"><value>无法连接翻译服务：{0}</value></data>
+  <data name="Error_Refused" xml:space="preserve"><value>模型拒绝翻译这一句。</value></data>
+  <data name="Error_Other" xml:space="preserve"><value>翻译出错：{0}</value></data>
+  <data name="Error_Microphone" xml:space="preserve"><value>无法使用麦克风：{0}。请在 Windows 设置 › 隐私和安全性 › 麦克风 中允许桌面应用访问麦克风。</value></data>
+  <data name="Error_SystemAudio" xml:space="preserve"><value>无法录制系统声音：{0}</value></data>
+  <data name="Error_AudioStopped" xml:space="preserve"><value>音频采集中断：{0}</value></data>
+  <data name="Error_ModelDownload" xml:space="preserve"><value>识别模型下载失败：{0}</value></data>
+  <data name="Error_Recognizer" xml:space="preserve"><value>语音识别出错：{0}</value></data>
+  <data name="Error_ExportFailed" xml:space="preserve"><value>导出失败：{0}</value></data>
+  <data name="Error_HotKey" xml:space="preserve"><value>快捷键 {0} 已被其他程序占用，可以在设置里换一个。</value></data>
+  <data name="Error_Busy" xml:space="preserve"><value>正在处理上一项操作，请稍后再试。</value></data>
+  <data name="Info_DeviceChanged" xml:space="preserve"><value>音频设备已切换。</value></data>
+  <data name="Settings_Title" xml:space="preserve"><value>设置</value></data>
+  <data name="Section_Translation" xml:space="preserve"><value>翻译</value></data>
+  <data name="Label_SourceLanguage" xml:space="preserve"><value>讲话语言</value></data>
+  <data name="Label_TargetLanguage" xml:space="preserve"><value>字幕语言</value></data>
+  <data name="Label_AudioSource" xml:space="preserve"><value>音源</value></data>
+  <data name="Label_Engine" xml:space="preserve"><value>翻译服务</value></data>
+  <data name="Label_Model" xml:space="preserve"><value>模型</value></data>
+  <data name="Label_ClaudePath" xml:space="preserve"><value>claude 路径</value></data>
+  <data name="Tip_ClaudePath" xml:space="preserve"><value>留空时自动查找。</value></data>
+  <data name="Status_ClaudeFound" xml:space="preserve"><value>已找到：{0}</value></data>
+  <data name="Status_ClaudeMissing" xml:space="preserve"><value>未找到 claude 命令。</value></data>
+  <data name="Button_Browse" xml:space="preserve"><value>浏览…</value></data>
+  <data name="Label_ApiKey" xml:space="preserve"><value>API 密钥</value></data>
+  <data name="Tip_ApiKey" xml:space="preserve"><value>密钥用 Windows 数据保护加密后保存在本机，不写入设置文件。</value></data>
+  <data name="Status_KeySaved" xml:space="preserve"><value>已保存</value></data>
+  <data name="Button_FetchModels" xml:space="preserve"><value>获取模型</value></data>
+  <data name="Section_Providers" xml:space="preserve"><value>OpenAI 兼容接口</value></data>
+  <data name="Button_AddProvider" xml:space="preserve"><value>添加</value></data>
+  <data name="Button_RemoveProvider" xml:space="preserve"><value>删除</value></data>
+  <data name="Preset_Custom" xml:space="preserve"><value>自定义</value></data>
+  <data name="Label_ProviderName" xml:space="preserve"><value>名称</value></data>
+  <data name="Label_BaseUrl" xml:space="preserve"><value>接口地址</value></data>
+  <data name="Tip_BaseUrl" xml:space="preserve"><value>例如 https://api.openai.com/v1。本地服务不需要密钥。</value></data>
+  <data name="Button_Test" xml:space="preserve"><value>测试翻译</value></data>
+  <data name="Status_Testing" xml:space="preserve"><value>正在测试…</value></data>
+  <data name="Status_TestOk" xml:space="preserve"><value>译文：{0}</value></data>
+  <data name="Status_FetchedModels" xml:space="preserve"><value>获取到 {0} 个模型</value></data>
+  <data name="Status_Fetching" xml:space="preserve"><value>正在获取…</value></data>
+  <data name="Section_Recognition" xml:space="preserve"><value>语音识别</value></data>
+  <data name="Label_WhisperModel" xml:space="preserve"><value>识别模型</value></data>
+  <data name="Tip_WhisperModel" xml:space="preserve"><value>模型越大越准确，也越慢。首次使用时自动下载。</value></data>
+  <data name="Model_Downloaded" xml:space="preserve"><value>已下载</value></data>
+  <data name="Model_NotDownloaded" xml:space="preserve"><value>未下载</value></data>
+  <data name="Button_Download" xml:space="preserve"><value>下载</value></data>
+  <data name="Label_UseGpu" xml:space="preserve"><value>显卡加速</value></data>
+  <data name="Tip_UseGpu" xml:space="preserve"><value>安装了显卡运行库时用显卡识别。重新启动后生效。</value></data>
+  <data name="Label_LivePreview" xml:space="preserve"><value>实时预览</value></data>
+  <data name="Tip_LivePreview" xml:space="preserve"><value>说话过程中先显示识别草稿，会多用一些处理器。</value></data>
+  <data name="Label_FilterChinese" xml:space="preserve"><value>过滤中文说话声</value></data>
+  <data name="Tip_FilterChinese" xml:space="preserve"><value>讲话语言不是中文时，丢掉被判断为中文的片段。每段多做一次语言判断。</value></data>
+  <data name="Label_ModelMirror" xml:space="preserve"><value>模型下载地址</value></data>
+  <data name="Tip_ModelMirror" xml:space="preserve"><value>默认 https://huggingface.co。无法访问时可以换成镜像地址。</value></data>
+  <data name="Section_Overlay" xml:space="preserve"><value>字幕</value></data>
+  <data name="Label_DisplayMode" xml:space="preserve"><value>显示内容</value></data>
+  <data name="Label_TranslationFontSize" xml:space="preserve"><value>译文字号</value></data>
+  <data name="Label_SourceFontSize" xml:space="preserve"><value>原文字号</value></data>
+  <data name="Label_Opacity" xml:space="preserve"><value>背景不透明度</value></data>
+  <data name="Label_VisibleLines" xml:space="preserve"><value>显示句数</value></data>
+  <data name="Label_ShowStatusBar" xml:space="preserve"><value>状态条</value></data>
+  <data name="Tip_ShowStatusBar" xml:space="preserve"><value>在字幕底部显示音量、识别状态、模型和待翻译句数。</value></data>
+  <data name="Label_Lock" xml:space="preserve"><value>锁定字幕</value></data>
+  <data name="Label_HotKey" xml:space="preserve"><value>快捷键</value></data>
+  <data name="Tip_HotKey" xml:space="preserve"><value>显示或隐藏字幕。部分键盘布局（例如波兰语）中 Ctrl+Alt 等同于 AltGr，选它会占用用 AltGr 输入的字符。</value></data>
+  <data name="HotKey_None" xml:space="preserve"><value>无</value></data>
+  <data name="Tip_Lock" xml:space="preserve"><value>锁定后字幕不响应鼠标，可以点击下面的窗口。在托盘菜单中解锁。</value></data>
+  <data name="Button_ResetOverlay" xml:space="preserve"><value>恢复默认大小和位置</value></data>
+  <data name="Section_Records" xml:space="preserve"><value>记录</value></data>
+  <data name="Label_TranscriptFolder" xml:space="preserve"><value>记录文件夹</value></data>
+  <data name="Button_Open" xml:space="preserve"><value>打开</value></data>
+  <data name="Label_KeepOriginal" xml:space="preserve"><value>保留识别原文</value></data>
+  <data name="Tip_KeepOriginal" xml:space="preserve"><value>自动纠正改动原文时，在记录里同时保留识别器原来的文字。</value></data>
+  <data name="History_Title" xml:space="preserve"><value>历史记录</value></data>
+  <data name="History_Empty" xml:space="preserve"><value>还没有字幕。</value></data>
+  <data name="Button_OpenTranscript" xml:space="preserve"><value>打开记录文件</value></data>
+  <data name="Export_FilterSrt" xml:space="preserve"><value>SRT 字幕</value></data>
+  <data name="Export_FilterVtt" xml:space="preserve"><value>WebVTT 字幕</value></data>
+  <data name="Export_DefaultName" xml:space="preserve"><value>字幕</value></data>
+  <data name="Transcript_Name" xml:space="preserve"><value>字幕记录</value></data>
+</root>

@@ -1,0 +1,212 @@
+# LiveSub · 实时翻译助手
+
+macOS 菜单栏小工具：实时监听**麦克风**（现场交谈、讲座、会议）或**系统正在播放的声音**（视频、网课、线上会议），识别成文字、翻译，并以**悬浮双语字幕**显示在屏幕上，同时自动保存文字记录；可以一键生成笔记，旁边的 AI 助手随时回答“刚才说了什么”。
+
+## 设计思路
+
+| 环节 | 用什么 | 说明 |
+|---|---|---|
+| 系统音频采集 | Core Audio process tap | 只需“系统录音”权限，不需要屏幕录制，不影响正常播放 |
+| 麦克风采集 | AVAudioEngine | 可选系统语音处理降噪 |
+| 语音识别 | 系统 `SpeechAnalyzer` | 本地离线，模型由系统管理，几乎不占本应用内存 |
+| 翻译 | 可选：Apple 本地翻译、Claude Code、自己的 API、本地模型 | 见下方“选择翻译模型” |
+| 备用翻译 | Apple `Translation` 框架 | 离线；所选模型出错时自动顶上 |
+| AI 助手与笔记 | 所选的大模型 | 需要 Claude Code、自己的 API 或本地模型 |
+
+## 运行要求
+
+- macOS 14.2 或更新。不同系统版本可用的功能：
+
+  | 功能 | macOS 14.2–15 | macOS 26 或更新 |
+  |---|---|---|
+  | 语音识别 | 系统 `SFSpeechRecognizer`，支持时只在本机识别 | 系统 `SpeechAnalyzer`，本地离线，延迟更低 |
+  | 翻译模型 | Claude Code、自己的 API、本地模型 | 另有 Apple 本地翻译 |
+  | 出错时自动改用 Apple 翻译 | 不可用 | 可用 |
+  | 过滤中文说话声 | 不可用 | 可用 |
+  | 识别困难时自动纠错 | 不可用（旧版识别器不提供置信度） | 可用 |
+
+  macOS 14.2 是系统录音（Core Audio process tap）需要的最低版本。macOS 14.2–15 上第一次开始字幕时，系统还会询问**语音识别**权限。
+- Xcode 命令行工具（`xcode-select --install`），不需要完整 Xcode
+- 一个翻译模型：macOS 26 自带 Apple 本地翻译；也可以用 Claude Code、自己的 API 或本地模型，见“选择翻译模型”
+
+界面语言跟随系统，目前有简体中文和英文。应用在中文系统里显示为“实时翻译助手”。
+
+## 构建与安装
+
+```bash
+scripts/make-signing-cert.sh    # （只需一次）在登录钥匙串里创建本机签名证书 “LiveSub Local Signing”
+scripts/build-app.sh            # 生成 build/LiveSub.app
+scripts/build-app.sh --install  # 另外安装到 ~/Applications 并打开
+```
+
+有本机签名证书时，`build-app.sh` 用它签名：签名身份固定，重新构建后系统不会再询问麦克风/系统录音权限（换成证书签名后的第一次启动还会问一次）。没有证书时用 ad-hoc 签名，每次重新构建都要重新授权。
+
+开发时：`swift build`，单元测试：`scripts/test.sh`。
+
+## 首次使用
+
+1. **准备翻译模型**：使用 Claude Code 时，在终端运行 `claude`，输入 `/login` 按提示登录（只需一次）。
+   VS Code 插件里的登录和终端命令行的登录是分开的。没登录时 LiveSub 会提示；macOS 26 上会自动改用 Apple 本地翻译。
+   使用自己的 API 或本地模型，见下面“选择翻译模型”。
+2. 打开 LiveSub，菜单栏会出现字幕图标。点 **开始字幕**。
+3. 按系统提示允许 **麦克风** 和/或 **系统录音** 权限。
+4. 第一次识别某种语言时，系统会自动下载语音识别模型（英语约十几秒）。
+5. （可选，macOS 26）想要 Apple 兜底翻译：系统设置 → 通用 → 语言与地区 → 翻译语言，下载对应语言。
+
+## 使用
+
+- **菜单栏图标**：左键点——字幕收起时打开字幕，否则弹出菜单；右键点——总是弹出菜单（开始/停止、音源、显示方式、翻译模型、字幕记录、笔记、导出字幕、设置）。第一次运行时图标放在 Wi-Fi 旁边，免得被刘海挡住；⌘-拖动可以换位置，系统会记住。
+- **收起到菜单栏**：字幕上的“−”按钮把字幕收起来（识别继续在后台跑，图标是实心的就表示还在听）。再打开：点菜单栏图标、按 **⌃⌥L**，或用 Spotlight 再打开一次 LiveSub。
+- **悬浮字幕**：按住拖动；鼠标移上去出现快捷按钮。**锁定**后字幕点不到、不挡操作（在菜单栏图标 → *锁定字幕* 解锁）。全屏视频上也能显示。
+- **大小固定**：字幕窗口的大小只随设置变化，出字幕时不会忽高忽低。新字幕在框里从下往上滚动，正在说的那句固定显示在最下面一行。高度默认正好放下“显示最近 N 句”（每句按一行原文、一行译文算）。
+- **调整大小**：拖动字幕的上下左右边框或四角。只拖左右改宽度；拖上下边框改成自己想要的高度，会被记住。双击上/下边框恢复按“显示最近 N 句”算的高度。设置 → 字幕里也能调。
+- **往回看**：在字幕上向上滚动。停在底部时自动跟随最新一句，往上翻时不会被拽走，点“返回实时”回到底部。
+- **字幕记录**：字幕上的“⋯”菜单或菜单栏 → 字幕记录…，打开单独的窗口查看本次的全部字幕，可以生成笔记、在 Finder 中打开记录文件。
+- **快捷按钮**（鼠标移到字幕上出现）：开始/停止、锁定、“⋯”菜单（显示内容、字幕记录、AI 助手、设置）、收起到菜单栏。
+- **设置**（一页，改了自动生效，不用重新开始）：翻译（语言、音源、翻译模型、模型服务、过滤中文）、字幕（显示方式、字号、背景、显示句数、恢复默认大小）。“更多”里是状态条、自动纠正口音（以及纠正时保留识别原文）、**启用 Opus 模型**（打开后翻译模型和 AI 助手的列表里一直有 Opus，选中的模型会被记住）、锁定、记录文件夹、claude 路径。
+- **记录**：每句话实时写入 `~/Documents/LiveSub/<时间> 字幕记录.md`；笔记保存在同一文件夹。
+- **过滤中文说话声**（macOS 26，设置里默认开启）：旁边有人用中文交谈时，英语识别器会把它硬听成乱七八糟的英语。LiveSub 同时跑一个中文识别器当“哨兵”：它听到中文会输出汉字、听到英语（包括口音很重的英语）只会输出拉丁字母，据此逐词去掉中文部分。代价是系统语音服务多用约 60 MB 内存，字幕最多晚 1.5 秒（等哨兵确认）。
+- **自动纠正口音**（设置 › 更多，默认关闭）：打开后不用手动设置口音。LiveSub 统计识别器对最近几十个词的平均置信度（实测口音较重的讲课约 0.73，清晰英语 0.9 以上），偏低时自动让大模型按发音和上下文纠正近音词（如 “sub sub problems” → subproblems），字幕原文也换成纠正后的版本，变清晰后自动停止；口音、语速快、噪音大都会触发。系统没有识别“是哪种口音”的能力（需要专门的模型），纠正也不需要知道口音名称。打开后下面会出现“纠正时保留识别原文”（默认关闭），打开它，记录文件和字幕记录窗口里会同时保留识别器原来的文字。没打开自动纠正时，状态条仍会提示“识别较难”。
+- **状态条**（字幕底部一小行，可在“更多”里关掉）：有没有收到声音（音量条）、识别清晰还是较难、当前翻译模型（点它可以切换）、翻译积压几句、最近的错误。
+- **麦克风降噪**（可选，音源包含麦克风时出现）：打开系统语音处理（降噪、回声消除、自动增益）。嘈杂环境下可以试试；它偏向离麦克风近的人声，远处讲者可能反而被压低，可以对照状态条的“识别清晰/较难”决定开不开。回声消除还能减少“两者同时”模式下外放被再录一遍的重复字幕。
+- **导出字幕**：菜单栏 → 导出字幕 → SRT / WebVTT。每句记录了它在音频里的起止时间（相对本次记录开始录音的时刻），可以给同时录下的视频/会议配字幕；文字按当前“显示内容”（双语/仅译文/仅原文）。
+
+## 选择翻译模型
+
+翻译模型在菜单栏图标 → 翻译模型、字幕底部状态条，或设置 → 翻译模型中切换。分为三档：
+
+| 档位 | 需要准备 | 翻译质量 | 自动纠错、AI 助手、笔记 |
+|---|---|---|---|
+| 基础 | 无，免费且离线 | 一般 | 不可用 |
+| 云端模型 | 本机已登录的 Claude Code，或自己的 API 密钥 | 好 | 可用 |
+| 本地模型 | 在本机运行 Ollama 或 LM Studio | 取决于模型和电脑配置 | 可用 |
+
+### 使用 Claude Code
+
+安装 [Claude Code](https://claude.com/claude-code) 后，在终端运行 `claude` 并输入 `/login` 登录一次。LiveSub 会自动找到 `claude` 命令，翻译模型中选择 Claude Haiku 即可。如果你在终端里用环境变量登录（例如 `claude setup-token` 生成的 `CLAUDE_CODE_OAUTH_TOKEN`、`ANTHROPIC_API_KEY`，或 Bedrock、Vertex、代理设置），写在 `~/.zshrc` 或 `~/.zprofile` 里即可，LiveSub 会读取终端的这些变量。Haiku 速度最快，适合实时字幕；Sonnet 更准确，适合 AI 助手和笔记。
+
+### 使用自己的 API
+
+1. 打开菜单栏图标 → 翻译模型 → **管理模型服务…**，或设置 → 模型服务 → **管理…**。
+2. 点 **添加模型服务**，选择服务商模板。模板已填好接口格式和地址。
+3. 填入 API 密钥。密钥保存在系统钥匙串中，不写入设置文件。
+4. 点 **获取列表** 读取可用模型，删去不需要的；也可以直接手动填写模型名，多个用逗号分隔。
+5. 点 **测试**：会用第一个模型翻译一句话，并显示译文和用时。
+6. 在翻译模型或 AI 助手的模型列表中选择刚添加的模型。
+
+| 服务 | 接口格式 | 接口地址 | 获取 API 密钥 |
+|---|---|---|---|
+| Anthropic | Anthropic | `https://api.anthropic.com` | Claude 开发者平台 |
+| OpenAI | OpenAI 兼容 | `https://api.openai.com/v1` | <https://platform.openai.com/api-keys> |
+| DeepSeek | OpenAI 兼容 | `https://api.deepseek.com/v1` | <https://platform.deepseek.com> |
+| 通义千问 | OpenAI 兼容 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 阿里云百炼控制台 |
+| Gemini | OpenAI 兼容 | `https://generativelanguage.googleapis.com/v1beta/openai` | <https://aistudio.google.com> |
+| OpenRouter | OpenAI 兼容 | `https://openrouter.ai/api/v1` | <https://openrouter.ai/keys> |
+
+其他提供 OpenAI 兼容接口的服务，选择“自定义”并填写服务商给出的地址即可。
+
+建议：
+
+- 实时字幕对速度要求高，选择各家的快速、低价模型，例如 Anthropic 的 `claude-haiku-5-5`、DeepSeek 的 `deepseek-chat`。模型名以服务商当前文档或“获取列表”的结果为准。
+- 费用按服务商的价格计算。每句翻译都会带上系统提示和最近 12 轮对话作为上下文，一小时连续讲话大约需要 100 万输入 token 和几万输出 token。以 Claude Haiku 5.5 为例，每小时约 0.1 到 0.2 美元；Anthropic 接口会自动使用提示缓存降低费用。其他服务以其价格为准。
+
+### 使用本地模型
+
+本地模型完全在你的电脑上运行，不需要账号和网络，但会占用较多内存和算力。
+
+**Ollama**
+
+1. 从 <https://ollama.com> 下载安装并启动 Ollama。
+2. 在终端下载一个模型，例如中文能力较好的通义千问系列：`ollama pull qwen2.5:7b`。
+3. 在 LiveSub 的模型服务中添加 **Ollama** 模板，地址为 `http://localhost:11434/v1`，不需要 API 密钥。
+4. 点 **获取列表** 和 **测试**，然后在翻译模型中选择。
+
+**LM Studio**
+
+1. 从 <https://lmstudio.ai> 下载安装，在应用内搜索并下载一个模型。
+2. 在 LM Studio 中启动本地服务器，默认地址为 `http://localhost:1234/v1`。
+3. 在 LiveSub 的模型服务中添加 **LM Studio** 模板，后续步骤同上。
+
+硬件参考：7B 到 8B 参数的量化模型大约需要 6 到 8 GB 空闲内存，建议在 16 GB 以上内存的 Apple 芯片电脑上使用。本地模型的翻译速度明显慢于云端模型，可以先用“测试”看用时是否能接受。
+
+### 隐私
+
+- 语音识别始终在本机完成，音频不会上传。
+- 选择 Claude Code 或自己的 API 时，识别出的文字会发送给对应服务商，用于翻译、AI 助手和笔记。
+- 选择 Apple 本地翻译或本地模型时，所有内容都留在本机。
+
+## AI 助手（边听边问）
+
+字幕旁边的 AI 助手面板（字幕快捷按钮里的 ✨，或菜单栏 → AI 助手）连着本机 Claude Code。默认收起，打开面板时才启动它的 Claude 进程：
+
+- 每次点“开始字幕”新开一个对话；它能看到这次开始以来的全部字幕，问“刚才那个表格怎么填的？”不用再解释上下文。
+- 实现上不是每句字幕都发给 Claude（那样每句都会触发一次回答），而是提问时把上次提问以来新增的字幕和正在说的半句一起带上；Claude 进程中途重启时会自动重新带上全部字幕。
+- 默认用 Sonnet，面板右上角可以换 Haiku / Opus；有“总结最近几分钟”等快捷问题。
+- 第一次打开时放在字幕旁边（右边放不下就放左边）。按住面板顶部的标题栏可以拖到任何地方，位置会被记住；之后拖动字幕或字幕变化时，面板都不跟着动。拖边框调大小。菜单栏 → *字幕移回屏幕底部* 会把面板也放回字幕旁边。打字时不会把焦点从你正在用的 App 抢走。
+
+## 工作流程
+
+```
+音频采集 ──▶ SpeechAnalyzer（临时结果 + 确认结果）
+                 │临时结果 ──▶ 悬浮字幕“正在说”的一行
+                 │确认结果 ──▶ Segmenter 分句 ──▶ 翻译队列 ──▶ Claude 流式译文 ──▶ 字幕 + 记录文件
+```
+
+- **分句**（`Sources/LiveSubCore/Segmenter.swift`）：完整句子立即送翻；太短的句子与下一句合并；过长的句子在逗号处切开；讲者停顿约 1.6 秒后把剩余内容送出。
+- **防积压**：翻译跟不上语速、积压 2 句以上时，把积压的句子合并成一次请求，延迟不会越拖越长。
+- **上下文**：Claude 会话里前面的句子就是上下文；每 40 句换新会话防止变慢，新会话第一句附带最近 6 句作为参考。
+
+## 目录结构
+
+```
+Sources/LiveSubCore/     纯逻辑（可单测）：分句、Claude stream-json 解析、提示词、记录格式
+Sources/LiveSub/Audio/   麦克风、系统声音（process tap）、测试音频文件
+Sources/LiveSub/Speech/  SpeechAnalyzer 封装与音频格式转换
+Sources/LiveSub/Translation/  Claude CLI 翻译器、Apple 翻译器
+Sources/LiveSub/App/     控制器（整条链路）、设置、记录、菜单栏、入口
+Sources/LiveSub/UI/      悬浮字幕、设置、字幕记录窗口
+Tests/LiveSubCoreTests/  单元测试
+scripts/                 构建与测试脚本
+```
+
+## 自检命令（不启动界面）
+
+```bash
+B=.build/debug/LiveSub
+$B --transcribe-file lecture.aiff --locale en-US     # 测语音识别 + 分句
+$B --transcribe-file mixed.wav --guard zh-CN --realtime   # 测中文过滤（按真实速度播放，延迟才真实）
+$B --translate "First sentence." "Second one." --engine claude --model haiku   # 测 Claude 翻译和延迟
+$B --translate "use dynamic program." --correct      # 测识别纠错（✎ 行是纠正后的原文）
+$B --translate "Hello." --engine api --format openai --base-url http://localhost:11434/v1 --model qwen2.5:7b   # 测 API 或本地模型（密钥放在环境变量 LIVESUB_API_KEY）
+$B --render-window out.png    # 用真实字幕窗口离屏截图（含滚动区域）
+$B --render-assistant out.png # AI 助手面板截图
+$B --assistant-test "~/Documents/LiveSub/xxx 字幕记录.md"   # 用真实记录测 AI 助手（真的调用 Claude）
+$B --export-test talk.aiff out.srt   # 整条链路（按真实速度识别 + Claude 翻译）后导出 SRT，检查时间轴
+$B --translate "Hello everyone." --engine apple      # 测 Apple 本地翻译（macOS 26）
+# 在 macOS 26 上改用旧版识别器，检查 macOS 14.2–15 的识别路径（要通过 App 包启动，语音识别权限才会记在本应用上）：
+open -n --stdout out.txt --stderr out.txt --env LIVESUB_LEGACY_SPEECH=1 build/LiveSub.app --args --transcribe-file lecture.aiff --realtime
+# 用音频文件代替真实声音跑完整界面：
+LIVESUB_TEST_AUDIO_FILE=$PWD/lecture.aiff LIVESUB_AUTOSTART=1 $B
+```
+
+可以用 `say -o lecture.aiff "..."` 生成测试音频。
+
+## 已知限制
+
+- 使用 ad-hoc 签名时，每次重新构建后系统都会重新询问麦克风与系统录音权限。先运行一次 `scripts/make-signing-cert.sh` 创建本机签名证书即可避免。
+- macOS 14.2–15 的旧版识别器只给出整段的临时文字。LiveSub 在讲者停顿约 1 秒时结束一段；连续说话时，一个完整句子的文字稳定 1 秒后提前确认。识别准确度比 macOS 26 低，字幕时间轴也是估计值。
+- 音源为“麦克风和系统音频”时，扬声器外放的声音可能被麦克风再次录入，产生重复字幕。打开“麦克风降噪”的回声消除可以减轻；现场交谈建议只用麦克风，视频与会议建议只用系统音频。
+- `Package.swift` 显式写入链接的 SDK 版本（`LIVESUB_SDK_VERSION`），否则 Translation 框架会误报语言包未安装。
+- 命令行工具链没有 SwiftUI 宏插件，界面代码不使用 `@State`，改用 `@Observable` 小对象。
+
+## Windows 版本
+
+`windows/` 目录是 Windows 10/11 版本（C#、WPF），说明和测试清单见 [windows/README.md](windows/README.md)。
+
+## 路线图
+
+开源准备、多模型支持与 Windows 版本的计划见 [ROADMAP.md](ROADMAP.md)。
+
+## 许可证
+
+[MIT](LICENSE) © 2026 Shuo Yang（杨朔）

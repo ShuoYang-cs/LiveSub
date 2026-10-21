@@ -1,0 +1,293 @@
+import AppKit
+import LiveSubCore
+import SwiftUI
+
+/// AI 助手面板：第一次打开时放在字幕旁边，按住标题栏可以单独拖到别处，可以打字提问。
+/// 不激活应用（不把焦点从正在用的 App 抢走），只有点输入框时才成为 key 窗口。
+final class AssistantPanel: NSPanel {
+    init() {
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 380, height: 420),
+                   styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered, defer: false)
+        isFloatingPanel = true
+        level = .statusBar
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        backgroundColor = .clear
+        isOpaque = false
+        hasShadow = true
+        hidesOnDeactivate = false
+        becomesKeyOnlyIfNeeded = true
+        isReleasedWhenClosed = false
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+@MainActor
+final class AssistantWindowController {
+    let panel = AssistantPanel()
+    private let settings: AppSettings
+    private let overlay: NSWindow
+    static let minSize = NSSize(width: 280, height: 220)
+    private static let gap: CGFloat = 8
+    private static let originKey = "assistantOrigin"
+    /// 程序自己摆放面板时不记位置：用户没拖过时，每次打开都重新放到字幕旁边。
+    private var placing = false
+
+    init(assistant: AssistantSession, settings: AppSettings, overlay: NSWindow, onClose: @escaping () -> Void) {
+        self.settings = settings
+        self.overlay = overlay
+        let hosting = NSHostingView(rootView: AssistantView(assistant: assistant, settings: settings, onClose: onClose))
+        hosting.sizingOptions = []
+        panel.contentView = ResizeHandleView.container(
+            around: hosting, size: panel.frame.size,
+            onResize: { [weak self] frame, edges in self?.userResized(to: frame, edges: edges) })
+        // 用户拖动标题栏或边框后记住位置。面板和字幕窗口各自独立，字幕窗口移动、改大小时不跟着走。
+        NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: panel, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.savePosition() }
+        }
+    }
+
+    var isVisible: Bool { panel.isVisible }
+
+    func show() {
+        place()
+        panel.orderFrontRegardless()
+    }
+
+    func hide() { panel.orderOut(nil) }
+
+    /// 忘掉用户拖到的位置，回到字幕旁边。
+    func resetPosition() {
+        UserDefaults.standard.removeObject(forKey: Self.originKey)
+        if panel.isVisible { place() }
+    }
+
+    /// 放到用户上次拖到的位置；没拖过，或那里已经不在任何屏幕上（换了显示器），就放在字幕旁边。
+    private func place() {
+        let size = NSSize(width: settings.assistantWidth, height: settings.assistantHeight)
+        var frame = NSRect(origin: besideOverlay(size: size), size: size)
+        if let saved = UserDefaults.standard.array(forKey: Self.originKey) as? [Double], saved.count == 2 {
+            let candidate = NSRect(x: saved[0], y: saved[1], width: size.width, height: size.height)
+            // 标题栏要在屏幕上，才能再拖回来。
+            let header = NSRect(x: candidate.minX, y: candidate.maxY - 36, width: candidate.width, height: 36)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(header) }) { frame = candidate }
+        }
+        guard panel.frame != frame else { return }
+        placing = true
+        panel.setFrame(frame, display: true)
+        placing = false
+    }
+
+    /// 字幕右边；右边放不下就放左边。字幕在屏幕上半部分时顶边对齐，否则底边对齐。
+    private func besideOverlay(size: NSSize) -> NSPoint {
+        guard let screen = (overlay.screen ?? NSScreen.main)?.visibleFrame else { return overlay.frame.origin }
+        let o = overlay.frame
+        var x = o.maxX + Self.gap
+        if x + size.width > screen.maxX {
+            let left = o.minX - Self.gap - size.width
+            x = left >= screen.minX ? left : screen.maxX - size.width
+        }
+        var y = o.midY > screen.midY ? o.maxY - size.height : o.minY
+        y = min(max(y, screen.minY), screen.maxY - size.height)
+        return NSPoint(x: x, y: y)
+    }
+
+    private func userResized(to proposed: NSRect, edges: ResizeHandleView.Edges) {
+        let frame = ResizeHandleView.clamped(proposed, edges: edges, minSize: Self.minSize, screen: panel.screen)
+        panel.setFrame(frame, display: true)
+        settings.assistantWidth = Double(frame.width)
+        settings.assistantHeight = Double(frame.height)
+    }
+
+    private func savePosition() {
+        guard !placing else { return }
+        let o = panel.frame.origin
+        UserDefaults.standard.set([o.x, o.y], forKey: Self.originKey)
+    }
+}
+
+/// 按住拖动就移动所在的窗口。面板无边框，没有系统标题栏，AI 助手的标题栏靠它拖动。
+struct WindowDragArea: NSViewRepresentable {
+    final class DragView: NSView {
+        // 本应用从不成为活动程序，第一下点击就要能拖。
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+    }
+
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+struct AssistantView: View {
+    @Bindable var assistant: AssistantSession
+    @Bindable var settings: AppSettings
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(Color.white.opacity(0.12))
+            messagesView
+            quickQuestions
+            inputBar
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(max(settings.backgroundOpacity, 0.8)))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            // 图标和标题不接收点击，按在上面也是拖动面板。
+            Group {
+                Image(systemName: "sparkles").foregroundStyle(.yellow)
+                Text("AI 助手").font(.system(size: 13, weight: .semibold))
+            }
+            .allowsHitTesting(false)
+            Spacer()
+            Picker("模型", selection: $settings.assistantModel) {
+                ForEach(settings.modelGroups(includeApple: false)) { group in
+                    Section(group.title) {
+                        ForEach(group.choices, id: \.self) { choice in
+                            Text(settings.displayName(choice)).tag(choice)
+                        }
+                    }
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            .controlSize(.small)
+            .help("回答使用的模型")
+            iconButton("square.and.pencil", "新对话") { assistant.newConversation() }
+            iconButton("xmark", "收起") { onClose() }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(WindowDragArea())
+    }
+
+    private var messagesView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if assistant.messages.isEmpty {
+                        Text("AI 助手可以读取本次开始以来的全部字幕，可随时就其中内容提问。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                    ForEach(assistant.messages) { message in
+                        bubble(message).id(message.id)
+                    }
+                    Color.clear.frame(height: 1).id("bottom")
+                }
+                .padding(12)
+            }
+            .scrollIndicators(.automatic)
+            .onChange(of: assistant.messages.last?.text) { proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: assistant.messages.count) { proxy.scrollTo("bottom", anchor: .bottom) }
+        }
+    }
+
+    @ViewBuilder
+    private func bubble(_ message: AssistantSession.Message) -> some View {
+        switch message.role {
+        case .user:
+            HStack {
+                Spacer(minLength: 40)
+                Text(message.text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.blue.opacity(0.75)))
+                    .textSelection(.enabled)
+            }
+        case .assistant:
+            if message.text.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("正在回答…").font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+                }
+            } else {
+                Text(Self.markdown(message.text))
+                    .font(.system(size: 13.5))
+                    .lineSpacing(3)
+                    .foregroundStyle(message.failed ? Color.orange : Color.white)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var quickQuestions: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                ForEach(AssistantPrompt.quickQuestions, id: \.self) { question in
+                    Button { assistant.ask(question) } label: {
+                        Text(L(question))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.white.opacity(0.1)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(assistant.isAnswering)
+                }
+            }
+            .padding(.horizontal, 10)
+        }
+        .scrollIndicators(.never)
+        .padding(.vertical, 6)
+    }
+
+    private var inputBar: some View {
+        HStack(spacing: 6) {
+            TextField("输入问题", text: $assistant.draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .onSubmit { assistant.send() }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.08)))
+            Button { assistant.send() } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 22))
+                    .foregroundStyle(canSend ? Color.blue : Color.white.opacity(0.3))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSend)
+            .help("发送")
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+    }
+
+    private var canSend: Bool {
+        !assistant.isAnswering && !assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func iconButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(width: 22, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L(help))
+    }
+
+    /// 回答里的粗体、行内代码等（保留换行，列表按原样显示）。
+    static func markdown(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+}

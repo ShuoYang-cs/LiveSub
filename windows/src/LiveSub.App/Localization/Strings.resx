@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="AppName" xml:space="preserve"><value>LiveSub</value></data>
+  <data name="Menu_Start" xml:space="preserve"><value>Start Subtitles</value></data>
+  <data name="Menu_Stop" xml:space="preserve"><value>Stop Subtitles</value></data>
+  <data name="Menu_AudioSource" xml:space="preserve"><value>Audio Source</value></data>
+  <data name="Source_Microphone" xml:space="preserve"><value>Microphone</value></data>
+  <data name="Source_System" xml:space="preserve"><value>System Audio</value></data>
+  <data name="Menu_Model" xml:space="preserve"><value>Translation Model</value></data>
+  <data name="Menu_Display" xml:space="preserve"><value>Display</value></data>
+  <data name="Display_Bilingual" xml:space="preserve"><value>Bilingual</value></data>
+  <data name="Display_TranslationOnly" xml:space="preserve"><value>Translation Only</value></data>
+  <data name="Display_SourceOnly" xml:space="preserve"><value>Original Only</value></data>
+  <data name="Menu_ShowOverlay" xml:space="preserve"><value>Show Subtitles</value></data>
+  <data name="Menu_HideOverlay" xml:space="preserve"><value>Hide Subtitles</value></data>
+  <data name="Menu_Lock" xml:space="preserve"><value>Lock Subtitles</value></data>
+  <data name="Menu_ResetPosition" xml:space="preserve"><value>Move Subtitles to Bottom</value></data>
+  <data name="Menu_Export" xml:space="preserve"><value>Export Subtitles</value></data>
+  <data name="Menu_History" xml:space="preserve"><value>History…</value></data>
+  <data name="Menu_NewSession" xml:space="preserve"><value>New Transcript</value></data>
+  <data name="Menu_OpenFolder" xml:space="preserve"><value>Open Transcript Folder</value></data>
+  <data name="Menu_Settings" xml:space="preserve"><value>Settings…</value></data>
+  <data name="Menu_Quit" xml:space="preserve"><value>Quit</value></data>
+  <data name="Group_ClaudeCode" xml:space="preserve"><value>Claude Code</value></data>
+  <data name="Group_Anthropic" xml:space="preserve"><value>Anthropic API</value></data>
+  <data name="Model_NotConfigured" xml:space="preserve"><value>No Model Set</value></data>
+  <data name="Model_NoKey" xml:space="preserve"><value>API Key Required</value></data>
+  <data name="Status_NotStarted" xml:space="preserve"><value>Not started</value></data>
+  <data name="Status_Preparing" xml:space="preserve"><value>Preparing…</value></data>
+  <data name="Status_DownloadingModel" xml:space="preserve"><value>Downloading speech model {0}: {1}%</value></data>
+  <data name="Status_LoadingModel" xml:space="preserve"><value>Loading speech model…</value></data>
+  <data name="Status_Listening" xml:space="preserve"><value>Listening: {0} · {1} → {2} · {3}</value></data>
+  <data name="Status_Stopped" xml:space="preserve"><value>Stopped</value></data>
+  <data name="Status_NewSession" xml:space="preserve"><value>New transcript started</value></data>
+  <data name="Status_Filtered" xml:space="preserve"><value>{0} Chinese segments filtered</value></data>
+  <data name="Status_Exported" xml:space="preserve"><value>Subtitles exported: {0}</value></data>
+  <data name="Status_StartFailed" xml:space="preserve"><value>Failed to start: {0}</value></data>
+  <data name="Overlay_Listening" xml:space="preserve"><value>Listening…</value></data>
+  <data name="Overlay_Ready" xml:space="preserve"><value>{0} is ready · {1}</value></data>
+  <data name="Overlay_TranslationFailed" xml:space="preserve"><value>Translation failed</value></data>
+  <data name="Overlay_NoInput" xml:space="preserve"><value>No audio input</value></data>
+  <data name="Overlay_Receiving" xml:space="preserve"><value>Receiving</value></data>
+  <data name="Overlay_Quiet" xml:space="preserve"><value>Silent</value></data>
+  <data name="Overlay_RecognitionHard" xml:space="preserve"><value>Hard to recognize · Correcting</value></data>
+  <data name="Overlay_RecognitionClear" xml:space="preserve"><value>Clear recognition</value></data>
+  <data name="Tip_RecognitionHard" xml:space="preserve"><value>Recognition confidence is low. Misheard words are corrected by sound.</value></data>
+  <data name="Tip_RecognitionClear" xml:space="preserve"><value>Recognition confidence is normal.</value></data>
+  <data name="Overlay_Backlog" xml:space="preserve"><value>{0} waiting</value></data>
+  <data name="Overlay_BackToLive" xml:space="preserve"><value>Back to Live</value></data>
+  <data name="Tip_ModelMenu" xml:space="preserve"><value>Click to change the translation model.</value></data>
+  <data name="Tool_Start" xml:space="preserve"><value>Start</value></data>
+  <data name="Tool_Stop" xml:space="preserve"><value>Stop</value></data>
+  <data name="Tool_CycleDisplay" xml:space="preserve"><value>Change display</value></data>
+  <data name="Tool_Lock" xml:space="preserve"><value>Lock subtitles. Locked subtitles ignore the mouse; unlock them from the tray menu.</value></data>
+  <data name="Tool_History" xml:space="preserve"><value>History</value></data>
+  <data name="Tool_Settings" xml:space="preserve"><value>Settings</value></data>
+  <data name="Tool_Hide" xml:space="preserve"><value>Hide subtitles. Press {0} to show them again.</value></data>
+  <data name="Tool_HideNoKey" xml:space="preserve"><value>Hide subtitles. Show them again from the tray menu.</value></data>
+  <data name="Tip_Tray" xml:space="preserve"><value>{0} · {1}</value></data>
+  <data name="Error_ClaudeNotFound" xml:space="preserve"><value>The claude command was not found. Install Claude Code or set its path in Settings.</value></data>
+  <data name="Error_NotLoggedIn" xml:space="preserve"><value>Claude Code is not signed in. Run claude in a terminal and enter /login.</value></data>
+  <data name="Error_Unauthorized" xml:space="preserve"><value>The API key was rejected: {0}</value></data>
+  <data name="Error_MissingKey" xml:space="preserve"><value>Enter an API key for {0} in Settings.</value></data>
+  <data name="Error_MissingModel" xml:space="preserve"><value>Choose a model for {0} in Settings.</value></data>
+  <data name="Error_Timeout" xml:space="preserve"><value>Translation timed out.</value></data>
+  <data name="Error_ProcessExited" xml:space="preserve"><value>The Claude process exited: {0}</value></data>
+  <data name="Error_NoOutput" xml:space="preserve"><value>no output</value></data>
+  <data name="Error_Http" xml:space="preserve"><value>Translation error ({0}): {1}</value></data>
+  <data name="Error_Network" xml:space="preserve"><value>Cannot reach the translation service: {0}</value></data>
+  <data name="Error_Refused" xml:space="preserve"><value>The model declined to translate this line.</value></data>
+  <data name="Error_Other" xml:space="preserve"><value>Translation error: {0}</value></data>
+  <data name="Error_Microphone" xml:space="preserve"><value>Cannot use the microphone: {0}. Allow desktop apps to use the microphone in Windows Settings › Privacy &amp; security › Microphone.</value></data>
+  <data name="Error_SystemAudio" xml:space="preserve"><value>Cannot capture system audio: {0}</value></data>
+  <data name="Error_AudioStopped" xml:space="preserve"><value>Audio capture stopped: {0}</value></data>
+  <data name="Error_ModelDownload" xml:space="preserve"><value>Speech model download failed: {0}</value></data>
+  <data name="Error_Recognizer" xml:space="preserve"><value>Speech recognition error: {0}</value></data>
+  <data name="Error_ExportFailed" xml:space="preserve"><value>Export failed: {0}</value></data>
+  <data name="Error_HotKey" xml:space="preserve"><value>{0} is already used by another app. Choose another shortcut in Settings.</value></data>
+  <data name="Error_Busy" xml:space="preserve"><value>Still finishing the previous action. Try again in a moment.</value></data>
+  <data name="Info_DeviceChanged" xml:space="preserve"><value>Audio device changed.</value></data>
+  <data name="Settings_Title" xml:space="preserve"><value>Settings</value></data>
+  <data name="Section_Translation" xml:space="preserve"><value>Translation</value></data>
+  <data name="Label_SourceLanguage" xml:space="preserve"><value>Spoken Language</value></data>
+  <data name="Label_TargetLanguage" xml:space="preserve"><value>Subtitle Language</value></data>
+  <data name="Label_AudioSource" xml:space="preserve"><value>Audio Source</value></data>
+  <data name="Label_Engine" xml:space="preserve"><value>Translation Service</value></data>
+  <data name="Label_Model" xml:space="preserve"><value>Model</value></data>
+  <data name="Label_ClaudePath" xml:space="preserve"><value>claude Path</value></data>
+  <data name="Tip_ClaudePath" xml:space="preserve"><value>Leave empty to find it automatically.</value></data>
+  <data name="Status_ClaudeFound" xml:space="preserve"><value>Found: {0}</value></data>
+  <data name="Status_ClaudeMissing" xml:space="preserve"><value>The claude command was not found.</value></data>
+  <data name="Button_Browse" xml:space="preserve"><value>Browse…</value></data>
+  <data name="Label_ApiKey" xml:space="preserve"><value>API Key</value></data>
+  <data name="Tip_ApiKey" xml:space="preserve"><value>The key is encrypted with Windows Data Protection and stored on this PC, separate from the settings file.</value></data>
+  <data name="Status_KeySaved" xml:space="preserve"><value>Saved</value></data>
+  <data name="Button_FetchModels" xml:space="preserve"><value>Fetch Models</value></data>
+  <data name="Section_Providers" xml:space="preserve"><value>OpenAI-Compatible Services</value></data>
+  <data name="Button_AddProvider" xml:space="preserve"><value>Add</value></data>
+  <data name="Button_RemoveProvider" xml:space="preserve"><value>Remove</value></data>
+  <data name="Preset_Custom" xml:space="preserve"><value>Custom</value></data>
+  <data name="Label_ProviderName" xml:space="preserve"><value>Name</value></data>
+  <data name="Label_BaseUrl" xml:space="preserve"><value>Base URL</value></data>
+  <data name="Tip_BaseUrl" xml:space="preserve"><value>For example https://api.openai.com/v1. Local servers need no key.</value></data>
+  <data name="Button_Test" xml:space="preserve"><value>Test Translation</value></data>
+  <data name="Status_Testing" xml:space="preserve"><value>Testing…</value></data>
+  <data name="Status_TestOk" xml:space="preserve"><value>Result: {0}</value></data>
+  <data name="Status_FetchedModels" xml:space="preserve"><value>{0} models found</value></data>
+  <data name="Status_Fetching" xml:space="preserve"><value>Fetching…</value></data>
+  <data name="Section_Recognition" xml:space="preserve"><value>Speech Recognition</value></data>
+  <data name="Label_WhisperModel" xml:space="preserve"><value>Speech Model</value></data>
+  <data name="Tip_WhisperModel" xml:space="preserve"><value>Larger models are more accurate but slower. The model is downloaded on first use.</value></data>
+  <data name="Model_Downloaded" xml:space="preserve"><value>Downloaded</value></data>
+  <data name="Model_NotDownloaded" xml:space="preserve"><value>Not downloaded</value></data>
+  <data name="Button_Download" xml:space="preserve"><value>Download</value></data>
+  <data name="Label_UseGpu" xml:space="preserve"><value>GPU Acceleration</value></data>
+  <data name="Tip_UseGpu" xml:space="preserve"><value>Use the GPU when a GPU runtime is installed. Takes effect after restart.</value></data>
+  <data name="Label_LivePreview" xml:space="preserve"><value>Live Preview</value></data>
+  <data name="Tip_LivePreview" xml:space="preserve"><value>Show a draft while someone is still speaking. Uses more CPU.</value></data>
+  <data name="Label_FilterChinese" xml:space="preserve"><value>Filter Chinese Speech</value></data>
+  <data name="Tip_FilterChinese" xml:space="preserve"><value>When the spoken language is not Chinese, drop segments detected as Chinese. Adds one language check per segment.</value></data>
+  <data name="Label_ModelMirror" xml:space="preserve"><value>Model Download Host</value></data>
+  <data name="Tip_ModelMirror" xml:space="preserve"><value>The default is https://huggingface.co. Use a mirror if it is unreachable.</value></data>
+  <data name="Section_Overlay" xml:space="preserve"><value>Subtitles</value></data>
+  <data name="Label_DisplayMode" xml:space="preserve"><value>Display</value></data>
+  <data name="Label_TranslationFontSize" xml:space="preserve"><value>Translation Size</value></data>
+  <data name="Label_SourceFontSize" xml:space="preserve"><value>Original Size</value></data>
+  <data name="Label_Opacity" xml:space="preserve"><value>Background Opacity</value></data>
+  <data name="Label_VisibleLines" xml:space="preserve"><value>Lines Shown</value></data>
+  <data name="Label_ShowStatusBar" xml:space="preserve"><value>Status Bar</value></data>
+  <data name="Tip_ShowStatusBar" xml:space="preserve"><value>Show the input level, recognition state, model and backlog below the subtitles.</value></data>
+  <data name="Label_Lock" xml:space="preserve"><value>Lock Subtitles</value></data>
+  <data name="Label_HotKey" xml:space="preserve"><value>Shortcut</value></data>
+  <data name="Tip_HotKey" xml:space="preserve"><value>Shows or hides the subtitles. On some keyboard layouts, such as Polish, Ctrl+Alt acts as AltGr, so that choice blocks characters typed with AltGr.</value></data>
+  <data name="HotKey_None" xml:space="preserve"><value>None</value></data>
+  <data name="Tip_Lock" xml:space="preserve"><value>Locked subtitles ignore the mouse so you can click the window below. Unlock them from the tray menu.</value></data>
+  <data name="Button_ResetOverlay" xml:space="preserve"><value>Reset Size and Position</value></data>
+  <data name="Section_Records" xml:space="preserve"><value>Transcripts</value></data>
+  <data name="Label_TranscriptFolder" xml:space="preserve"><value>Transcript Folder</value></data>
+  <data name="Button_Open" xml:space="preserve"><value>Open</value></data>
+  <data name="Label_KeepOriginal" xml:space="preserve"><value>Keep Recognized Text</value></data>
+  <data name="Tip_KeepOriginal" xml:space="preserve"><value>When auto-correction changes the original text, also keep the recognizer's text in the transcript.</value></data>
+  <data name="History_Title" xml:space="preserve"><value>History</value></data>
+  <data name="History_Empty" xml:space="preserve"><value>No subtitles yet.</value></data>
+  <data name="Button_OpenTranscript" xml:space="preserve"><value>Open Transcript</value></data>
+  <data name="Export_FilterSrt" xml:space="preserve"><value>SRT Subtitles</value></data>
+  <data name="Export_FilterVtt" xml:space="preserve"><value>WebVTT Subtitles</value></data>
+  <data name="Export_DefaultName" xml:space="preserve"><value>Subtitles</value></data>
+  <data name="Transcript_Name" xml:space="preserve"><value>Transcript</value></data>
+</root>

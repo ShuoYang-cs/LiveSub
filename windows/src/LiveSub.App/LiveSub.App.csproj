@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Windows 托盘应用：WPF 悬浮字幕 + WinForms 托盘图标。设置 EnableWindowsTargeting 后在 macOS/Linux 上也能编译（不能运行）。 -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>LiveSub.App</RootNamespace>
+    <AssemblyName>LiveSub</AssemblyName>
+    <AssemblyTitle>LiveSub</AssemblyTitle>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <SelfContained Condition="'$(SelfContained)' == ''">false</SelfContained>
+    <NeutralLanguage>en</NeutralLanguage>
+    <!-- LibraryImport 生成的互操作代码需要。 -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- WFO0003：WinForms 建议用 API 设置 DPI；本程序以 WPF 为主，DPI 感知按 WPF 的做法写在 app.manifest 里。 -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF 与 WinForms 同时启用时类型重名（Application、MessageBox 等），只保留 WPF 的隐式 using。 -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
+    <PackageReference Include="Whisper.net" Version="1.9.1" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+    <PackageReference Include="Anthropic" Version="12.58.0" />
+  </ItemGroup>
+
+  <!-- 可选的显卡运行库：dotnet build -p:LiveSubGpu=vulkan（或 cuda）。默认只带处理器版本，安装包小。 -->
+  <ItemGroup Condition="'$(LiveSubGpu)' == 'vulkan'">
+    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.1" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(LiveSubGpu)' == 'cuda'">
+    <PackageReference Include="Whisper.net.Runtime.Cuda" Version="1.9.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../LiveSub.Core/LiveSub.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "LiveSub";
+"NSMicrophoneUsageDescription" = "LiveSub uses the microphone to recognize speech and show live subtitles.";
+"NSAudioCaptureUsageDescription" = "LiveSub records the audio your Mac is playing to show subtitles for videos and meetings.";
+"NSSpeechRecognitionUsageDescription" = "LiveSub uses on-device speech recognition to turn speech into text.";

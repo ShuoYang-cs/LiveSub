@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 纯逻辑：分句、提示词、译文清理、流式解析、字幕导出。不依赖 Windows，可在任意平台单测。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>LiveSub.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="LiveSub.Core.Tests" />
+  </ItemGroup>
+</Project>

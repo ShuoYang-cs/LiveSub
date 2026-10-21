@@ -1,0 +1,4 @@
+"CFBundleDisplayName" = "实时翻译助手";
+"NSMicrophoneUsageDescription" = "实时翻译助手需要使用麦克风识别说话内容并生成实时字幕。";
+"NSAudioCaptureUsageDescription" = "实时翻译助手需要录制系统正在播放的声音，为视频和会议生成实时字幕。";
+"NSSpeechRecognitionUsageDescription" = "实时翻译助手使用系统本地语音识别将说话内容转换为文字。";
