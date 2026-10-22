@@ -36,8 +36,8 @@ macOS 菜单栏小工具：实时监听**麦克风**（现场交谈、讲座、�
 
 ### 下载安装（推荐）
 
-1. 打开 [Releases 页面](https://github.com/ShuoYang-cs/LiveSub/releases/latest)，下载 `LiveSub-版本号-macOS.zip`。
-2. 双击解压，把 `LiveSub.app` 拖进“应用程序”文件夹。在中文系统里它显示为“实时翻译助手”。
+1. 打开 [Releases 页面](https://github.com/ShuoYang-cs/LiveSub/releases/latest)，下载 `LiveSub-版本号-macOS.dmg`。
+2. 双击打开下载的 dmg，在弹出的窗口里把 `LiveSub.app` 拖到旁边的“应用程序”文件夹上，然后推出这个磁盘。在中文系统里它显示为“实时翻译助手”。同一页也有 zip 版本，解压后同样拖进“应用程序”即可。
 3. 第一次打开时，系统会提示“Apple 无法验证……”，这是因为 LiveSub 没有经过苹果公证（公证需要付费的开发者账号）。点“完成”，然后打开 **系统设置 › 隐私与安全性**，在页面下方找到“已阻止打开‘实时翻译助手’”，点 **仍要打开**，输入电脑的登录密码。之后就能正常双击打开。
 4. 接着看下面的“首次使用”。
 
@@ -65,7 +65,7 @@ macOS 菜单栏小工具：实时监听**麦克风**（现场交谈、讲座、�
 
 开发时：`swift build`，单元测试：`scripts/test.sh`。
 
-发布新版本（维护者）：改 `Resources/Info.plist` 里的版本号，运行 `scripts/package-release.sh`，生成 Apple 芯片和 Intel 通用的 `build/LiveSub-版本号-macOS.zip`，上传到 GitHub Releases。必须在有“LiveSub Local Signing”证书的那台电脑上打包：换了证书，系统会把新版本当成另一个 App，用户要重新授权。
+发布新版本（维护者）：改 `Resources/Info.plist` 里的版本号，运行 `scripts/package-release.sh`，生成 Apple 芯片和 Intel 通用的 `build/LiveSub-版本号-macOS.dmg` 和 `.zip`，上传到 GitHub Releases。必须在有“LiveSub Local Signing”证书的那台电脑上打包：换了证书，系统会把新版本当成另一个 App，用户要重新授权。
 
 ## 首次使用
 
