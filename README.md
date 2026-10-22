@@ -26,22 +26,46 @@ macOS 菜单栏小工具：实时监听**麦克风**（现场交谈、讲座、�
   | 识别困难时自动纠错 | 不可用（旧版识别器不提供置信度） | 可用 |
 
   macOS 14.2 是系统录音（Core Audio process tap）需要的最低版本。macOS 14.2–15 上第一次开始字幕时，系统还会询问**语音识别**权限。
-- Xcode 命令行工具（`xcode-select --install`），不需要完整 Xcode
+- Apple 芯片和 Intel 芯片的 Mac 都可以用。
+- 只有从源码构建时才需要 Xcode 命令行工具；下载安装包不需要。
 - 一个翻译模型：macOS 26 自带 Apple 本地翻译；也可以用 Claude Code、自己的 API 或本地模型，见“选择翻译模型”
 
 界面语言跟随系统，目前有简体中文和英文。应用在中文系统里显示为“实时翻译助手”。
 
-## 构建与安装
+## 安装
 
-```bash
-scripts/make-signing-cert.sh    # （只需一次）在登录钥匙串里创建本机签名证书 “LiveSub Local Signing”
-scripts/build-app.sh            # 生成 build/LiveSub.app
-scripts/build-app.sh --install  # 另外安装到 ~/Applications 并打开
-```
+### 下载安装（推荐）
+
+1. 打开 [Releases 页面](https://github.com/ShuoYang-cs/LiveSub/releases/latest)，下载 `LiveSub-版本号-macOS.zip`。
+2. 双击解压，把 `LiveSub.app` 拖进“应用程序”文件夹。在中文系统里它显示为“实时翻译助手”。
+3. 第一次打开时，系统会提示“Apple 无法验证……”，这是因为 LiveSub 没有经过苹果公证（公证需要付费的开发者账号）。点“完成”，然后打开 **系统设置 › 隐私与安全性**，在页面下方找到“已阻止打开‘实时翻译助手’”，点 **仍要打开**，输入电脑的登录密码。之后就能正常双击打开。
+4. 接着看下面的“首次使用”。
+
+**更新**：下载新版本，替换“应用程序”里的旧版。每次替换后第一次打开，还要在“隐私与安全性”里再点一次“仍要打开”；麦克风和系统录音权限会保留，不用重新允许。
+
+### 从源码构建
+
+适合想自己修改代码的用户。
+
+1. 安装 Xcode 命令行工具：在“终端”里运行 `xcode-select --install`，按提示安装。不需要完整的 Xcode。
+2. 下载代码：
+   ```bash
+   git clone https://github.com/ShuoYang-cs/LiveSub.git
+   cd LiveSub
+   ```
+   不用 git 的话，也可以在仓库页面点 **Code › Download ZIP**，解压后在终端里用 `cd` 进入这个文件夹。
+3. 构建并安装：
+   ```bash
+   scripts/make-signing-cert.sh    # 只需一次：在登录钥匙串里创建本机签名证书“LiveSub Local Signing”
+   scripts/build-app.sh --install  # 构建，安装到 ~/Applications 并打开
+   ```
+   只想生成 App 不安装时，运行 `scripts/build-app.sh`，结果在 `build/LiveSub.app`。
 
 有本机签名证书时，`build-app.sh` 用它签名：签名身份固定，重新构建后系统不会再询问麦克风/系统录音权限（换成证书签名后的第一次启动还会问一次）。没有证书时用 ad-hoc 签名，每次重新构建都要重新授权。
 
 开发时：`swift build`，单元测试：`scripts/test.sh`。
+
+发布新版本（维护者）：改 `Resources/Info.plist` 里的版本号，运行 `scripts/package-release.sh`，生成 Apple 芯片和 Intel 通用的 `build/LiveSub-版本号-macOS.zip`，上传到 GitHub Releases。必须在有“LiveSub Local Signing”证书的那台电脑上打包：换了证书，系统会把新版本当成另一个 App，用户要重新授权。
 
 ## 首次使用
 
@@ -194,6 +218,8 @@ LIVESUB_TEST_AUDIO_FILE=$PWD/lecture.aiff LIVESUB_AUTOSTART=1 $B
 
 ## 已知限制
 
+- 下载的安装包没有经过苹果公证：第一次打开，以及每次更新后第一次打开，都要在“系统设置 › 隐私与安全性”里点“仍要打开”。
+- Intel 芯片的版本能编译，但还没在 Intel Mac 上实际运行过。
 - 使用 ad-hoc 签名时，每次重新构建后系统都会重新询问麦克风与系统录音权限。先运行一次 `scripts/make-signing-cert.sh` 创建本机签名证书即可避免。
 - macOS 14.2–15 的旧版识别器只给出整段的临时文字。LiveSub 在讲者停顿约 1 秒时结束一段；连续说话时，一个完整句子的文字稳定 1 秒后提前确认。识别准确度比 macOS 26 低，字幕时间轴也是估计值。
 - 音源为“麦克风和系统音频”时，扬声器外放的声音可能被麦克风再次录入，产生重复字幕。打开“麦克风降噪”的回声消除可以减轻；现场交谈建议只用麦克风，视频与会议建议只用系统音频。
