@@ -199,6 +199,7 @@ struct OverlayView: View {
                 .fill(Color.black.opacity(settings.backgroundOpacity))
         )
         .overlay(alignment: .topTrailing) {
+            // 锁定时右上角的锁不画在这里：字幕窗口点击穿透，锁要能点，放在单独的小窗口里（LockBadgePanel）。
             if (state.isHovering || state.menuOpen) && !settings.clickThrough { toolbar.padding(6) }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -470,7 +471,7 @@ struct OverlayView: View {
     private var toolbar: some View {
         HStack(spacing: 4) {
             toolButton(controller.isRunning ? "pause.fill" : "play.fill", controller.isRunning ? "停止" : "开始", actions.toggleRunning)
-            toolButton("lock", "锁定字幕", actions.lock)
+            toolButton("lock.open", "锁定字幕", actions.lock)
             moreMenu
             toolButton("minus", "收起到菜单栏", actions.minimize)
         }
@@ -519,4 +520,26 @@ struct OverlayView: View {
         .buttonStyle(.plain)
         .help(L(help))
     }
+}
+
+/// 锁定后鼠标移到字幕上时右上角的锁：和快捷按钮同样的位置和样式，点一下解锁。
+struct LockBadge: View {
+    let onUnlock: () -> Void
+
+    var body: some View {
+        Button(action: onUnlock) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 22)
+                .padding(4)
+                .background(Capsule().fill(.black.opacity(0.8)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(L("解锁字幕"))
+        .environment(\.colorScheme, .dark)
+    }
+
+    static let size = NSSize(width: 32, height: 30)
 }

@@ -218,7 +218,7 @@ if arguments.contains("--test-watchdog") {
     dispatchMain()
 }
 
-// AI 助手端到端自检（真的调用 Claude）：--assistant-test <字幕记录.md>
+// AI 助手端到端自检（真的调用 Claude）：--assistant-test <字幕记录.md> [--ask "问题"]
 // 先只给前一半字幕问一次，再给全部字幕问一次（验证“新会话带全部字幕 / 之后只带新增字幕”）。
 if let path = option("--assistant-test") {
     MainActor.assumeIsolated {
@@ -247,6 +247,16 @@ if let path = option("--assistant-test") {
             assistant.ask(q)
             while assistant.isAnswering { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
             print(String(format: "[%.1fs] Q: %@\nA: %@\n", Date().timeIntervalSince(t0), q, assistant.messages.last?.text ?? ""))
+        }
+        if let question = option("--ask") {
+            // 自定义问题（例如让它把总结存成文件），带上全部字幕。
+            visible = entries
+            ask(question)
+            for file in assistant.messages.last?.files ?? [] {
+                print("[file] \(file.url?.path ?? "-") \(file.error ?? "")")
+            }
+            assistant.shutdown()
+            exit(0)
         }
         print("[lines] first half \(visible.count) / all \(entries.count)")
         ask("在讲哪个算法？一句话。")

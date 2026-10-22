@@ -22,6 +22,26 @@ final class OverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// 锁定时右上角的锁（LockBadge）：单独的小窗口，只有它能点，字幕窗口本身仍然点击穿透。
+final class LockBadgePanel: NSPanel {
+    init() {
+        super.init(contentRect: NSRect(origin: .zero, size: LockBadge.size),
+                   styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered, defer: false)
+        isFloatingPanel = true
+        level = .statusBar
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        backgroundColor = .clear
+        isOpaque = false
+        hasShadow = false
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
 /// 允许在字幕背景上按住拖动窗口。
 final class DraggableHostingView<Content: View>: NSHostingView<Content> {
     override var mouseDownCanMoveWindow: Bool { true }
@@ -202,6 +222,9 @@ final class OverlayWindowController {
     let state = OverlayState()
     private let settings: AppSettings
     private static let originKey = "overlayOrigin"
+    /// 锁定后窗口收不到鼠标事件，onHover 不再触发：改为定时看鼠标在不在字幕上（显示锁定标志用）。
+    private var lockedHoverTimer: Timer?
+    private let lockBadge = LockBadgePanel()
 
     init(controller: SubtitleController, settings: AppSettings, actions: OverlayActions) {
         self.settings = settings
@@ -212,6 +235,9 @@ final class OverlayWindowController {
         let hosting = DraggableHostingView(rootView: root)
         hosting.sizingOptions = []
         panel.contentView = makeContainer(hosting: hosting)
+        let badge = NSHostingView(rootView: LockBadge(onUnlock: { [weak self] in self?.unlock() }))
+        badge.sizingOptions = []
+        lockBadge.contentView = badge
         restorePosition()
         applyClickThrough()
         NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: panel, queue: .main) { [weak self] _ in
@@ -222,10 +248,51 @@ final class OverlayWindowController {
     var isVisible: Bool { panel.isVisible }
 
     func show() { panel.orderFrontRegardless() }
-    func hide() { panel.orderOut(nil) }
+    func hide() {
+        // 先取下锁定标志：子窗口会跟着字幕窗口下次显示时一起出现。
+        showLockBadge(false)
+        panel.orderOut(nil)
+    }
 
     func applyClickThrough() {
         panel.ignoresMouseEvents = settings.clickThrough
+        lockedHoverTimer?.invalidate()
+        lockedHoverTimer = nil
+        if settings.clickThrough {
+            let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateHoverFromMouse() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            lockedHoverTimer = timer
+        }
+        // 锁定、解锁的那一刻鼠标多半就在字幕上，onHover 不会补发，这里直接按鼠标位置更新一次。
+        updateHoverFromMouse()
+    }
+
+    private func updateHoverFromMouse() {
+        let inside = panel.isVisible && panel.frame.contains(NSEvent.mouseLocation)
+        if state.isHovering != inside { state.isHovering = inside }
+        showLockBadge(settings.clickThrough && inside)
+    }
+
+    /// 点锁定标志：解锁（和菜单栏里取消“锁定字幕”一样）。
+    private func unlock() {
+        settings.clickThrough = false
+        applyClickThrough()
+    }
+
+    /// 锁定标志放在快捷按钮的位置（右上角）；作为子窗口总在字幕上面。
+    private func showLockBadge(_ show: Bool) {
+        if show {
+            let size = LockBadge.size
+            let origin = NSPoint(x: panel.frame.maxX - 6 - size.width, y: panel.frame.maxY - 6 - size.height)
+            if lockBadge.frame.origin != origin { lockBadge.setFrameOrigin(origin) }
+            if lockBadge.parent == nil { panel.addChildWindow(lockBadge, ordered: .above) }
+            if !lockBadge.isVisible { lockBadge.orderFrontRegardless() }
+        } else if lockBadge.parent != nil || lockBadge.isVisible {
+            panel.removeChildWindow(lockBadge)
+            lockBadge.orderOut(nil)
+        }
     }
 
     func resetPosition() {

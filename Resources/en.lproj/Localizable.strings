@@ -21,7 +21,6 @@
 "LiveSub 笔记" = "LiveSub Notes";
 "LiveSub 设置" = "LiveSub Settings";
 "OpenAI 兼容" = "OpenAI-compatible";
-"Opus 准确度最高但速度较慢。启用后可在翻译引擎与 AI 助手中选择，所选模型会被记住。" = "Opus is the most accurate but slower. Once enabled, it can be chosen for translation and the assistant, and your choice is remembered.";
 "两者" = "Both";
 "中文过滤不可用：%@" = "Chinese speech filter unavailable: %@";
 "云端模型" = "Cloud Models";
@@ -43,7 +42,6 @@
 "名称" = "Name";
 "启动失败：%@" = "Failed to start: %@";
 "启动系统音频采集" = "Starting system audio capture";
-"启用 Opus 模型" = "Enable Opus";
 "回答使用的模型" = "Model used for answers";
 "在 Finder 中显示记录" = "Show Transcript in Finder";
 "在字幕底部显示音频输入、识别与翻译状态。" = "Shows audio input, recognition and translation status below the subtitles.";
@@ -56,7 +54,7 @@
 "字幕移回屏幕底部" = "Move Subtitles to Bottom of Screen";
 "字幕记录" = "Transcript";
 "字幕语言" = "Subtitle Language";
-"实时字幕建议选择速度快的模型，例如 Claude Haiku。Apple 本地翻译可离线使用。" = "For live subtitles, choose a fast model such as Claude Haiku. Apple Translation works offline.";
+"实时字幕建议选择速度快的模型，例如 Claude Haiku；Opus 最准确但最慢。Apple 本地翻译可离线使用。" = "For live subtitles, choose a fast model such as Claude Haiku; Opus is the most accurate but the slowest. Apple Translation works offline.";
 "导出失败：%@" = "Export failed: %@";
 "导出字幕" = "Export Subtitles";
 "已停止" = "Stopped";
@@ -165,6 +163,7 @@
 "退出 LiveSub" = "Quit LiveSub";
 "通义千问" = "Qwen";
 "锁定字幕" = "Lock Subtitles";
+"解锁字幕" = "Unlock Subtitles";
 "韩语" = "Korean";
 "音源" = "Audio Source";
 "麦克风" = "Microphone";
@@ -185,3 +184,7 @@
 "纠正修改了原文时，在字幕记录中同时保留识别器原来的文字。" = "When a correction changes the text, also keep the recognizer's original text in the transcript.";
 "识别较难" = "Hard to Recognize";
 "识别置信度较低。可以在设置 › 更多中打开“自动纠正口音”。" = "Recognition confidence is low. You can turn on “Correct Accented Speech Automatically” in Settings › More.";
+"正在保存文件…" = "Saving file…";
+"已保存：%@" = "Saved: %@";
+"保存失败：%@" = "Couldn't save: %@";
+"在 Finder 中显示" = "Show in Finder";

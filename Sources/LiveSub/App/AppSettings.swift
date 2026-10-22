@@ -87,15 +87,6 @@ final class AppSettings {
     var autoCorrect: Bool { didSet { save("autoCorrect", autoCorrect) } }
     /// 纠正改过原文时，在记录和字幕记录窗口里同时保留识别器原来给出的文字。
     var keepOriginalText: Bool { didSet { save("keepOriginalText", keepOriginalText) } }
-    /// 在模型列表里提供 Opus（最强但最慢，放在“更多”里打开）。关掉时，正在用 Opus 的地方换回默认模型。
-    var opusEnabled: Bool {
-        didSet {
-            save("opusEnabled", opusEnabled)
-            guard !opusEnabled else { return }
-            if translationModel == .claudeCode("opus") { translationModel = .claudeCode("haiku") }
-            if assistantModel == .claudeCode("opus") { assistantModel = .claudeCode("sonnet") }
-        }
-    }
     /// AI 助手和笔记使用的模型（必须是大模型），以及面板是否显示、大小。
     var assistantModel: ModelChoice { didSet { saveJSON("assistantModelChoice", assistantModel) } }
     /// AI 助手面板是否打开：每次启动都默认收起，用到时才打开（不保存）。
@@ -135,9 +126,6 @@ final class AppSettings {
         keepOriginalText = d.object(forKey: "keepOriginalText") as? Bool ?? false
         showStatusBar = d.object(forKey: "showStatusBar") as? Bool ?? true
         micNoiseReduction = d.object(forKey: "micNoiseReduction") as? Bool ?? false
-        // 以前就在用 Opus 的话默认打开，保持原来的习惯。
-        opusEnabled = d.object(forKey: "opusEnabled") as? Bool
-            ?? (translation == .claudeCode("opus") || assistant == .claudeCode("opus"))
         assistantWidth = d.object(forKey: "assistantWidth") as? Double ?? 380
         assistantHeight = d.object(forKey: "assistantHeight") as? Double ?? 420
         displayMode = DisplayMode(rawValue: d.string(forKey: "displayMode") ?? "") ?? .bilingual
@@ -200,11 +188,8 @@ final class AppSettings {
 
     /// 可选的模型，分为基础、云端（Claude Code 与自己的 API）、本地三组。
     func modelGroups(includeApple: Bool) -> [ModelGroup] {
-        var claude = ["haiku", "sonnet"]
-        if opusEnabled || translationModel == .claudeCode("opus") || assistantModel == .claudeCode("opus") {
-            claude.append("opus")
-        }
-        let cloud = claude.map(ModelChoice.claudeCode)
+        // Opus 最准确但最慢，也一直列出来（以前要在“更多”里打开，用户觉得为一个模型单设开关多余）。
+        let cloud = ["haiku", "sonnet", "opus"].map(ModelChoice.claudeCode)
             + endpoints.filter { !$0.isLocal }.flatMap { e in e.models.map { ModelChoice.endpoint(e.id, $0) } }
         let local = endpoints.filter(\.isLocal).flatMap { e in e.models.map { ModelChoice.endpoint(e.id, $0) } }
         var groups: [ModelGroup] = []

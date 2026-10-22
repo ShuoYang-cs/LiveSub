@@ -23,6 +23,7 @@ macOS 14.2+ 菜单栏应用：麦克风/系统声音 → 本地语音识别（ma
 - 旧版识别器（macOS 14.2–15 的路径）在 macOS 26 上用 `LIVESUB_LEGACY_SPEECH=1` 测。它要“语音识别”权限，命令行直接跑会把权限记到终端上，要通过 App 包启动：`open -n --stdout out.txt --stderr out.txt --env LIVESUB_LEGACY_SPEECH=1 build/LiveSub.app --args --transcribe-file x.aiff --realtime`。实测（2026-10-20）：本机识别的确认结果是空的，临时结果没有逐词时间和置信度，说完后还会反复改写标点，所以停顿判断（`PauseDetector`）看声音和字数增长，连续说话时由 `PartialCommitter` 提前确认稳定的句子。
 
 - 运行日志（卡住、没字幕时先看）：`/usr/bin/log show --last 1h --predicate 'subsystem == "com.livesub.app"'`（zsh 里裸写 `log` 是 shell 内置命令，什么也查不到）。主线程卡住超过 5 秒时，`MainThreadWatchdog` 会把调用栈存到 `~/Library/Logs/LiveSub/hang-*.txt`。
+- 换翻译器不能留空档：打开“自动纠正口音”时，识别状态每切换一次就要换一个翻译进程，而触发切换的那句马上就要翻译。以前先置空、再异步准备新进程，结果每次切换都有一句“翻译失败”（2026-10-21 实测：失败的句子全部在切换的同一秒，一节课几十句）。现在 `updateQuality` 先同步建好新会话再替换，旧进程 30 秒后才关（`retire`）。字幕记录里只有原文、没有译文的句子就是失败的句子，可以拿来和日志里 `recognition difficult/clear` 的时间对照。
 - `LIVESUB_DEBUG_CLAUDE=1`：把发给 Claude 的原文和原始回复打到 stderr（排查译文异常时用）。`LIVESUB_DEBUG_LATENCY=1` 配合 `--export-test` 打印每句各阶段耗时（说完→入队、开始→首字、总计）。
 - 延迟实测（2026-10-19）：识别器每句说完后 0.6–1.0 秒确认，Claude Haiku 首字 0.7–0.9 秒，合计约 1.5–1.9 秒。临时结果没有标点，不能靠“临时文本里的句号”提前确认（试过，永远不触发）。中文哨兵的等待最多 1.5 秒，只在汉字占比 ≥0.3 且这句有低置信度词时才等。`--export-test 音频 out.srt` 跑整条链路并导出字幕。
 - 字幕窗口高度只随设置变化（`OverlayView.height`：拖出来的高度，或按“显示最近 N 句”和字号算），不随内容变。不要改回按内容自动高度：出字幕时窗口会忽高忽低（用户提出过）。
@@ -37,4 +38,6 @@ macOS 14.2+ 菜单栏应用：麦克风/系统声音 → 本地语音识别（ma
 ## 结构
 - `Sources/LiveSubCore`：纯逻辑（分句、stream-json 解析、提示词），改动要配单元测试。
 - `Sources/LiveSub/App/SubtitleController.swift`：整条链路与翻译队列（积压合并、Claude 失败自动 Apple 兜底）。
+- 系统对话框（选文件夹、导出字幕）一律用 `FilePanel.present`：字幕和 AI 助手在 `.statusBar` 层，比对话框高；用 `runModal` 时对话框的按钮被面板挡住，面板又拖不开，用户以为程序卡死了（2026-10-21 发生过）。
+- AI 助手存文件：模型没有写文件的工具（Claude Code 以 `--tools ""` 运行，API 和本地模型也没有工具），系统提示让它在回答末尾用 `@@save: 文件名 … @@end` 块写出文件，App 解析（`LiveSubCore/Assistant.swift` 的 `AssistantFiles`）后只存进记录文件夹下的“AI 助手”文件夹，不覆盖已有文件。用户要求面板里不提示这个功能，只写在 README 里。
 - `Sources/LiveSub/App/AssistantSession.swift` + `UI/AssistantWindow.swift`：AI 助手。复用 `ClaudeTranslator.request(newSessionMessage:ongoingMessage:)` 的长驻进程；提问时才把新增字幕带上（不要改成每句都发，会每句触发一次回答）。用户点“开始”时新对话，设置引起的自动重启不清空。

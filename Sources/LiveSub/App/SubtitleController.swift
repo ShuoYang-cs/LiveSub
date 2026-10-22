@@ -94,6 +94,8 @@ final class SubtitleController {
     @ObservationIgnored private var quality = RecognitionQualityMonitor()
     /// 当前翻译会话是按“讲者难识别”的提示词建立的吗（重新开始时状态清零，要和它对得上）。
     @ObservationIgnored private var translatorBuiltDifficult = false
+    /// 翻译器刚被换掉、新的还在准备（resetTranslators 到 prepareTranslators 结束）。
+    @ObservationIgnored private var translatorPending = false
     @ObservationIgnored private var alertAt = Date.distantPast
     /// 这份记录对应的录音从什么时候开始（导出字幕的时间零点）。
     @ObservationIgnored private var sessionStart: Date?
@@ -276,10 +278,20 @@ final class SubtitleController {
     }
 
     private func resetTranslators() {
-        translator?.shutdown()
+        retire(translator)
         translator = nil
         fallback = nil
         usingFallback = false
+        translatorPending = true
+    }
+
+    /// 旧翻译器过一会儿再关：正在翻译的那句还要用它，立刻关会让那一句翻译失败。
+    private func retire(_ old: Translator?) {
+        guard let old else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(30))
+            old.shutdown()
+        }
     }
 
     private func updateListeningStatus() {
@@ -296,6 +308,7 @@ final class SubtitleController {
     // MARK: - 翻译器
 
     private func prepareTranslators() async {
+        defer { translatorPending = false }
         // 上次 Claude 不可用（例如未登录）的话，每次“开始”都重新试一次：用户可能已经登录了。
         if usingFallback {
             translator?.shutdown()
@@ -322,14 +335,7 @@ final class SubtitleController {
             return
         }
         do {
-            let session = try ChatSessionFactory.make(
-                settings.translationModel, settings: settings,
-                systemPrompt: Prompts.translatorSystemPrompt(source: source, target: target,
-                                                             correctMishearings: correcting),
-                maxTurns: 40, historyTurns: 12, timeout: 25)
-            session.warmUp()
-            translator = session
-            translatorBuiltDifficult = correcting
+            translator = try makeModelSession()
         } catch {
             // 所选模型用不了（没装 Claude Code、服务被删除）：先用 Apple 本地翻译顶上。
             translator = fallback
@@ -337,6 +343,18 @@ final class SubtitleController {
             status = error.localizedDescription
             showAlert(error.localizedDescription)
         }
+    }
+
+    /// 所选大模型的翻译会话；提示词里带不带“按发音纠正”看当前是否识别困难。
+    private func makeModelSession() throws -> ChatSession {
+        let session = try ChatSessionFactory.make(
+            settings.translationModel, settings: settings,
+            systemPrompt: Prompts.translatorSystemPrompt(source: settings.source, target: settings.target,
+                                                         correctMishearings: correcting),
+            maxTurns: 40, historyTurns: 12, timeout: 25)
+        session.warmUp()
+        translatorBuiltDifficult = correcting
+        return session
     }
 
     // MARK: - 识别事件
@@ -398,15 +416,16 @@ final class SubtitleController {
         let average = quality.averageConfidence.map { String(format: "%.2f", $0) } ?? "-"
         appLog.notice("recognition \(self.recognitionDifficult ? "difficult" : "clear", privacy: .public) (avg confidence \(average, privacy: .public))")
         // 没打开自动纠正时只在状态条上提示，不换翻译进程。
-        guard settings.autoCorrect, settings.translationModel.isLanguageModel else { return }
-        // 换一个带/不带“按发音纠正”的翻译进程；旧进程等正在翻译的句子完成后再关。
-        let old = translator
-        translator = nil
-        Task {
-            await prepareTranslators()
-            updateListeningStatus()
-            try? await Task.sleep(for: .seconds(30))
-            old?.shutdown()
+        guard settings.autoCorrect, settings.translationModel.isLanguageModel, !usingFallback, translator != nil else { return }
+        // 换一个带/不带“按发音纠正”的翻译进程：新的建好后立刻替换，中间不留空档。
+        // 以前先置空再异步准备，触发切换的这句（马上就要翻译）正好碰上没有翻译器，每次切换都有一句“翻译失败”。
+        // 新进程冷启动只比热进程慢不到 1 秒，所以不等它准备好。旧进程等正在翻译的句子完成后再关。
+        do {
+            let fresh = try makeModelSession()
+            retire(translator)
+            translator = fresh
+        } catch {
+            appLog.error("rebuild translator failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -458,13 +477,14 @@ final class SubtitleController {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = (store?.fileURL.deletingPathExtension().lastPathComponent ?? L("LiveSub 字幕")) + "." + format.rawValue
         panel.directoryURL = store?.fileURL.deletingLastPathComponent()
-        NSApp.activate()
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try content.write(to: url, atomically: true, encoding: .utf8)
-            status = L("字幕已导出：%@", url.lastPathComponent)
-        } catch {
-            showAlert(L("导出失败：%@", error.localizedDescription))
+        FilePanel.present(panel) { [weak self] url in
+            guard let self, let url else { return }
+            do {
+                try content.write(to: url, atomically: true, encoding: .utf8)
+                status = L("字幕已导出：%@", url.lastPathComponent)
+            } catch {
+                showAlert(L("导出失败：%@", error.localizedDescription))
+            }
         }
     }
 
@@ -530,6 +550,11 @@ final class SubtitleController {
             return
         }
 
+        // 换翻译器（改了设置、重新开始）时，新的准备好之前先等一会儿，不要直接判翻译失败。
+        let deadline = Date().addingTimeInterval(5)
+        while translator == nil, translatorPending, Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
         let primary = usingFallback ? nil : translator
         if let primary {
             do {
@@ -549,13 +574,19 @@ final class SubtitleController {
                 appLog.error("translate failed: \(error.localizedDescription, privacy: .public)")
             }
         }
-        if let fallback, fallback !== primary,
-           let result = try? await fallback.translate(source, context: context, onPartial: { _ in }) {
-            finishLine(id, translation: result, note: L("Apple 备用"))
-        } else {
-            if let j = index(of: id) { lines[j].state = .failed }
-            persist(id)
+        if let fallback, fallback !== primary {
+            do {
+                let result = try await fallback.translate(source, context: context, onPartial: { _ in })
+                finishLine(id, translation: result, note: L("Apple 备用"))
+                return
+            } catch {
+                appLog.error("fallback translate failed: \(error.localizedDescription, privacy: .public)")
+            }
+        } else if primary == nil {
+            appLog.error("translate failed: no translator available")
         }
+        if let j = index(of: id) { lines[j].state = .failed }
+        persist(id)
     }
 
     private func updatePartial(_ id: UUID, _ partial: String) {

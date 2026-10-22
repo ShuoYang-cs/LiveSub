@@ -48,7 +48,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                .help("实时字幕建议选择速度快的模型，例如 Claude Haiku。Apple 本地翻译可离线使用。")
+                .help("实时字幕建议选择速度快的模型，例如 Claude Haiku；Opus 最准确但最慢。Apple 本地翻译可离线使用。")
                 LabeledContent("模型服务") {
                     HStack {
                         Text(settings.endpoints.isEmpty ? L("可添加自己的 API 或本地模型") : L("已添加 %d 个", settings.endpoints.count))
@@ -95,8 +95,6 @@ struct SettingsView: View {
                             .help("纠正修改了原文时，在字幕记录中同时保留识别器原来的文字。")
                             .padding(.leading, 14)
                     }
-                    Toggle("启用 Opus 模型", isOn: $settings.opusEnabled)
-                        .help("Opus 准确度最高但速度较慢。启用后可在翻译引擎与 AI 助手中选择，所选模型会被记住。")
                     Toggle("锁定字幕", isOn: $settings.clickThrough)
                         .onChange(of: settings.clickThrough) { onAppearanceChanged() }
                     LabeledContent("记录文件夹") {
@@ -143,7 +141,7 @@ struct SettingsView: View {
     private var translationKey: String {
         [settings.sourceLanguage, settings.targetLanguage, settings.audioSource.rawValue,
          settings.displayName(settings.translationModel), settings.claudePath,
-         String(settings.filterChinese), String(settings.opusEnabled), String(settings.micNoiseReduction),
+         String(settings.filterChinese), String(settings.micNoiseReduction),
          String(settings.autoCorrect)].joined(separator: "\u{1}")
     }
 
@@ -159,8 +157,8 @@ struct SettingsView: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.directoryURL = URL(fileURLWithPath: (settings.transcriptFolder as NSString).expandingTildeInPath)
-        if panel.runModal() == .OK, let url = panel.url {
-            settings.transcriptFolder = url.path
+        FilePanel.present(panel) { [settings] url in
+            if let url { settings.transcriptFolder = url.path }
         }
     }
 }

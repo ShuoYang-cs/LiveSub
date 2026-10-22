@@ -209,19 +209,46 @@ struct AssistantView: View {
                     .textSelection(.enabled)
             }
         case .assistant:
-            if message.text.isEmpty {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("正在回答…").font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+            VStack(alignment: .leading, spacing: 6) {
+                if message.text.isEmpty && !message.writingFile && message.files.isEmpty {
+                    progress("正在回答…")
+                } else if !message.text.isEmpty {
+                    Text(Self.markdown(message.text))
+                        .font(.system(size: 13.5))
+                        .lineSpacing(3)
+                        .foregroundStyle(message.failed ? Color.orange : Color.white)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            } else {
-                Text(Self.markdown(message.text))
-                    .font(.system(size: 13.5))
-                    .lineSpacing(3)
-                    .foregroundStyle(message.failed ? Color.orange : Color.white)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if message.writingFile { progress("正在保存文件…") }
+                ForEach(message.files, id: \.name) { file in savedFile(file) }
             }
+        }
+    }
+
+    private func progress(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text(L(text)).font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+        }
+    }
+
+    /// 替用户保存的文件：点一下在 Finder 里选中它。
+    @ViewBuilder
+    private func savedFile(_ file: AssistantSession.SavedFile) -> some View {
+        if let url = file.url {
+            Button { NSWorkspace.shared.activateFileViewerSelecting([url]) } label: {
+                Label(L("已保存：%@", file.name), systemImage: "doc.text")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color.accentColor)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("在 Finder 中显示"))
+        } else {
+            Label(L("保存失败：%@", file.error ?? file.name), systemImage: "exclamationmark.triangle")
+                .font(.system(size: 12.5))
+                .foregroundStyle(.orange)
         }
     }
 
