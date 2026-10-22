@@ -110,11 +110,14 @@ final class AppSettings {
         let d = UserDefaults.standard
         sourceLanguage = d.string(forKey: "sourceLanguage") ?? "en-US"
         targetLanguage = d.string(forKey: "targetLanguage") ?? "zh-Hans"
-        audioSource = AudioSourceMode(rawValue: d.string(forKey: "audioSource") ?? "") ?? .system
+        audioSource = AudioSourceMode(rawValue: d.string(forKey: "audioSource") ?? "") ?? .both
         // 旧版本只有“引擎 + Claude 模型”两个设置，迁移过来保持原来的选择。
+        // 新用户默认用 Apple 本地翻译（离线、不需要账号）；macOS 26 以前没有它，用 Claude Haiku。
         let legacyModel = d.string(forKey: "claudeModel") ?? "haiku"
+        let legacyEngine = d.string(forKey: "engine")
         let translation = Self.loadJSON(ModelChoice.self, "translationModel")
-            ?? (d.string(forKey: "engine") == "apple" ? .apple : .claudeCode(legacyModel))
+            ?? (legacyEngine == "apple" ? .apple
+                : legacyEngine != nil || !Self.appleTranslationAvailable ? .claudeCode(legacyModel) : .apple)
         translationModel = translation
         endpoints = Self.loadJSON([ModelEndpoint].self, "endpoints") ?? []
         claudePath = d.string(forKey: "claudePath") ?? ""

@@ -2,7 +2,7 @@
 
 **新对话先读 [HANDOFF.md](HANDOFF.md)**：未完成的工作、用户已定的决定和偏好。
 
-macOS 14.2+ 菜单栏应用：麦克风/系统声音 → 本地语音识别（macOS 26 用 SpeechAnalyzer，更早用 SFSpeechRecognizer）→ 所选大模型翻译（默认 Claude CLI，也支持 API 和本地模型）→ 悬浮双语字幕。详见 README.md。
+macOS 14.2+ 菜单栏应用：麦克风/系统声音 → 本地语音识别（macOS 26 用 SpeechAnalyzer，更早用 SFSpeechRecognizer）→ 所选模型翻译（新用户默认 Apple 本地翻译、英语 → 简体中文；macOS 26 以前默认 Claude Haiku；也支持 Claude CLI、API 和本地模型）→ 悬浮双语字幕。详见 README.md。
 
 ## 用户偏好
 - 本机 16GB 内存，**不要在本地跑大模型**；重计算交给 Claude（通过本机 `claude` CLI，用户额度很高）或系统自带框架。
@@ -15,7 +15,7 @@ macOS 14.2+ 菜单栏应用：麦克风/系统声音 → 本地语音识别（ma
 ## 构建与验证
 - 发布 macOS 版：`scripts/package-release.sh` 生成 Apple 芯片和 Intel 通用的 dmg 和 zip（`build-app.sh --universal`；`--dmg-only` 用现成的 build/LiveSub.app 只做 dmg），上传到 GitHub Releases（tag 用 `macos-版本号`）。签名必须用这台电脑登录钥匙串里的“LiveSub Local Signing”：换了证书，用户的系统会把新版当成另一个 App，要重新授权。这个 SwiftPM 版本不管编哪种芯片，结果都放在同一个输出目录（`.build/out/Products/Release`），后编的覆盖先编的。这台电脑没装 Rosetta，Intel 版只能编译，不能在这里运行。
 - `swift build`；`scripts/test.sh`；`scripts/build-app.sh [--install]` 生成 .app（用登录钥匙串里的 “LiveSub Local Signing” 证书签名，见 `scripts/make-signing-cert.sh`；不要改回 ad-hoc，否则每次重装都会重新弹麦克风权限）。
-- 不用界面的自检：`.build/debug/LiveSub --transcribe-file x.aiff [--guard zh-CN] [--realtime]`、`--translate "..." --engine claude|apple [--accent ...]`、`--render-window out.png`（真实窗口截图；命令行版设置在 `defaults` 的 `LiveSub` 域。字幕都在 ScrollView 里，`ImageRenderer` 画不出来，所以没有纯 SwiftUI 的截图命令）。
+- 不用界面的自检：`.build/debug/LiveSub --transcribe-file x.aiff [--guard zh-CN] [--realtime]`、`--translate "..." --engine claude|apple [--accent ...]`、`--render-window out.png`（真实窗口截图）、`--render-settings out.png [--more] [--dark]`（设置窗口截图；命令行版设置在 `defaults` 的 `LiveSub` 域。字幕都在 ScrollView 里，`ImageRenderer` 画不出来，所以没有纯 SwiftUI 的截图命令）。
 - 测识别时间/延迟要加 `--realtime`：不加时整个文件瞬间喂完，临时结果的时间范围会失真。
 - SpeechTranscriber 的临时结果没有逐词时间（整段一个 run），只有确认结果有；哨兵过滤只能靠确认结果。`LIVESUB_DEBUG_GUARD=1` 打印每句等待哨兵的时间。
 - 用文件代替真实声音跑整个界面：`LIVESUB_TEST_AUDIO_FILE=... LIVESUB_AUTOSTART=1 .build/debug/LiveSub`。

@@ -105,6 +105,8 @@ macOS 菜单栏小工具：实时监听**麦克风**（现场交谈、讲座、�
 | 云端模型 | 本机已登录的 Claude Code，或自己的 API 密钥 | 好 | 可用 |
 | 本地模型 | 在本机运行 Ollama 或 LM Studio | 取决于模型和电脑配置 | 可用 |
 
+第一次使用时，音源默认是麦克风和系统音频，翻译默认是英语 → 简体中文、Apple 本地翻译（macOS 26 以前的系统默认 Claude Haiku）。Apple 本地翻译需要先下载语言包：设置里会提示还没下载，点“下载…”即可，也可以在“系统设置 › 通用 › 语言与地区 › 翻译语言”中下载。
+
 ### 使用 Claude Code
 
 安装 [Claude Code](https://claude.com/claude-code) 后，在终端运行 `claude` 并输入 `/login` 登录一次。LiveSub 会自动找到 `claude` 命令，翻译模型中选择 Claude Haiku 即可。如果你在终端里用环境变量登录（例如 `claude setup-token` 生成的 `CLAUDE_CODE_OAUTH_TOKEN`、`ANTHROPIC_API_KEY`，或 Bedrock、Vertex、代理设置），写在 `~/.zshrc` 或 `~/.zprofile` 里即可，LiveSub 会读取终端的这些变量。Haiku 速度最快，适合实时字幕；Sonnet 更准确，适合 AI 助手和笔记。

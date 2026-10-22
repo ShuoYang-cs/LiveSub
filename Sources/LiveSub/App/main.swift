@@ -149,6 +149,29 @@ if let out = option("--render-window") {
     exit(0)
 }
 
+// 设置窗口离屏截图：--render-settings out.png [--more]（展开“更多”）[--dark]
+if let out = option("--render-settings") {
+    MainActor.assumeIsolated {
+        let state = SettingsViewState()
+        state.showMore = arguments.contains("--more")
+        let view = SettingsView(settings: AppSettings.shared, state: state,
+                                onTranslationSettingsChanged: {}, onAppearanceChanged: {}, onManageModels: {})
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -20000, y: -20000), size: host.fittingSize),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: arguments.contains("--dark") ? .darkAqua : .aqua)
+        window.contentView = host
+        window.setContentSize(host.fittingSize)
+        window.orderFrontRegardless()
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+        print("saved \(out) \(host.bounds.size)")
+    }
+    exit(0)
+}
+
 // 字幕窗口压力测试（离屏）：快速追加字幕、不停更新“正在说”，报告主线程最长卡顿、窗口高度有没有变，
 // 以及最后是否还停在最新一句。加 --streaming：句子先“翻译中”再逐字出译文（检查贴底跟随）。
 // 用户拖出来的高度先 `defaults write LiveSub overlayHeight -float 130`。

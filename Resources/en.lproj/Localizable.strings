@@ -188,3 +188,7 @@
 "已保存：%@" = "Saved: %@";
 "保存失败：%@" = "Couldn't save: %@";
 "在 Finder 中显示" = "Show in Finder";
+"离线翻译，速度快，不需要账号；不支持自动纠正口音。" = "Works offline, fast, no account needed. Accented speech correction is not available.";
+"尚未下载“%@ → %@”语言包" = "%@ → %@ languages are not downloaded";
+"下载…" = "Download…";
+"识别置信度较低。" = "Recognition confidence is low.";
