@@ -262,7 +262,8 @@ struct OverlayView: View {
             Text(controller.correcting ? L("识别较难 · 已自动纠正")
                  : controller.recognitionDifficult ? L("识别较难") : L("识别清晰"))
                 .help(controller.correcting ? L("识别置信度较低，已自动按发音纠正识别错误。")
-                      : controller.recognitionDifficult ? L("识别置信度较低。可以在设置中打开“自动纠正口音”。")
+                      : controller.recognitionDifficult
+                        ? (settings.translationModel == .apple ? L("识别置信度较低。") : L("识别置信度较低。可以在设置中打开“自动纠正口音”。"))
                       : L("识别置信度正常。"))
             separator
             modelMenu

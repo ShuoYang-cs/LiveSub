@@ -327,11 +327,12 @@ if let path = option("--export-test"), let i = arguments.firstIndex(of: "--expor
     dispatchMain()
 }
 
-// 设置窗口离屏截图：--render-settings out.png [--height 1100]
+// 设置窗口离屏截图：--render-settings out.png [--height 1100] [--dark]（深色模式）
 if let out = option("--render-settings") {
     MainActor.assumeIsolated {
         let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(
             settings: AppSettings.shared, onTranslationSettingsChanged: {}, onAppearanceChanged: {}, onManageModels: {}, onShowHistory: {})))
+        window.appearance = NSAppearance(named: arguments.contains("--dark") ? .darkAqua : .aqua)
         if let height = option("--height").flatMap(Double.init) { window.setContentSize(NSSize(width: 480, height: height)) }
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderFrontRegardless()
