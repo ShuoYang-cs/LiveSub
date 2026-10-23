@@ -29,12 +29,20 @@ public interface IAudioSource : IDisposable
 ///
 /// 系统没有播放任何声音时，环回采集根本不送数据（不是送静音）。为了让分段器看到“停顿”、
 /// 让导出字幕的时间轴与真实时间对齐，超过 200 毫秒没收到数据时按真实时间补静音。
+///
+/// 麦克风降噪：按“通话”类别打开麦克风（WithCommunicationsMode，在初始化前设置 AudioStreamCategory.Communications），
+/// 系统和声卡驱动对它做通话用的语音处理：降噪、回声消除，较新的 Windows 11 上还有“语音清晰度”（Voice Clarity）。
+/// 具体做哪些处理取决于驱动。设置类别失败时写日志，改为不降噪地打开，不让字幕因此启动失败。
+/// 环回采集（系统声音）不用通话类别。
 /// </summary>
 public sealed class WasapiSource : IAudioSource
 {
     private readonly bool loopback;
+    private readonly bool noiseReduction;
     private readonly object gate = new();
     private WasapiRecorder? recorder;
+    /// <summary>正在录音的麦克风（环回采集时为 null，由 NAudio 自己找默认输出设备）。</summary>
+    private MMDevice? device;
     private AudioConverter? converter;
     private Timer? filler;
     private DateTime startedAt;
@@ -44,36 +52,108 @@ public sealed class WasapiSource : IAudioSource
     /// <summary>最近一次收到真实数据包的时刻（补静音用）。</summary>
     private DateTime lastPacketAt;
 
+    /// <summary>
+    /// 麦克风、环回采集各自上次写进日志的采集格式。每次打开都会新建一个 WasapiSource（麦克风被隐私设置挡住时每几秒重试一次），
+    /// 只在第一次打开或格式变了时写，免得日志被同一行刷满。
+    /// </summary>
+    private static readonly Dictionary<bool, string> LoggedFormats = [];
+
     public event Action<float[]>? Samples;
     public event Action<Exception>? Failed;
 
     public float Level { get; private set; }
     public DateTime LastDataAt { get; private set; } = DateTime.UtcNow;
 
-    public WasapiSource(bool loopback)
+    /// <param name="noiseReduction">麦克风降噪（只对麦克风有效）。</param>
+    public WasapiSource(bool loopback, bool noiseReduction = false)
     {
         this.loopback = loopback;
+        this.noiseReduction = noiseReduction && !loopback;
     }
+
+    private static WasapiRecorderBuilder NewBuilder() => new WasapiRecorderBuilder().WithSharedMode().WithEventSync().WithBufferLength(50);
 
     public void Start()
     {
-        var builder = new WasapiRecorderBuilder().WithSharedMode().WithEventSync().WithBufferLength(50);
-        if (loopback) builder = builder.WithLoopbackCapture();
-        var r = builder.Build();
-        var format = r.WaveFormat;
-        converter = new AudioConverter(format.SampleRate, format.Channels, SampleFormatOf(format));
-        AppLog.Info($"audio: {(loopback ? "loopback" : "microphone")} {format.SampleRate} Hz, {format.Channels} ch, {format.Encoding} {format.BitsPerSample} bit");
-        r.DataAvailable += OnData;
-        r.RecordingStopped += (_, e) =>
+        if (loopback)
         {
-            if (!stopping && e.Exception is not null) Failed?.Invoke(e.Exception);
-        };
-        recorder = r;
-        startedAt = DateTime.UtcNow;
-        LastDataAt = lastPacketAt = startedAt;
-        emitted = 0;
-        r.StartRecording();
-        if (loopback) filler = new Timer(_ => FillSilence(), null, 100, 100);
+            Begin(NewBuilder().WithLoopbackCapture().Build(), "loopback");
+            filler = new Timer(_ => FillSilence(), null, 100, 100);
+            return;
+        }
+        using (var enumerator = new MMDeviceEnumerator())
+        {
+            device = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
+        }
+        KeepOtherSoundsAtFullVolume(device);
+        if (noiseReduction)
+        {
+            try
+            {
+                Begin(NewBuilder().WithDevice(device).WithCommunicationsMode().Build(), "microphone (noise reduction)");
+                return;
+            }
+            catch (Exception e) when (!MicrophonePrivacy.IsAccessDenied(e))
+            {
+                // 例如驱动不支持通话类别：不降噪也照常录音。权限问题照常抛出，由控制器提示去隐私设置里打开。
+                AppLog.Error("audio: noise reduction unavailable, capturing without it", e);
+            }
+        }
+        Begin(NewBuilder().WithDevice(device).Build(), "microphone");
+    }
+
+    /// <summary>开始录音。失败时关掉这个录音器再抛出，可以换一种方式重新打开。</summary>
+    private void Begin(WasapiRecorder r, string kind)
+    {
+        try
+        {
+            var format = r.WaveFormat;
+            converter = new AudioConverter(format.SampleRate, format.Channels, SampleFormatOf(format));
+            r.DataAvailable += OnData;
+            r.RecordingStopped += (_, e) =>
+            {
+                if (!stopping && e.Exception is not null) Failed?.Invoke(e.Exception);
+            };
+            recorder = r;
+            startedAt = DateTime.UtcNow;
+            LastDataAt = lastPacketAt = startedAt;
+            emitted = 0;
+            r.StartRecording();
+            // 打开成功后再写：降噪打不开、换成普通方式时，日志里只有真正在用的这一种。
+            LogFormat($"{kind} {format.SampleRate} Hz, {format.Channels} ch, {format.Encoding} {format.BitsPerSample} bit");
+        }
+        catch
+        {
+            recorder = null;
+            r.Dispose();
+            throw;
+        }
+    }
+
+    private void LogFormat(string description)
+    {
+        lock (LoggedFormats)
+        {
+            if (LoggedFormats.TryGetValue(loopback, out var last) && last == description) return;
+            LoggedFormats[loopback] = description;
+        }
+        AppLog.Info($"audio: {description}");
+    }
+
+    /// <summary>
+    /// 按通话类别录音时（麦克风同时是“默认通信设备”时也可能），Windows 会按“检测到通信活动时降低其他声音的音量”
+    /// 把其他声音调小，“两者”模式下正在识别的系统声音也会变小。开始录音前让这个会话不触发它；做不到时只写日志。
+    /// </summary>
+    private static void KeepOtherSoundsAtFullVolume(MMDevice device)
+    {
+        try
+        {
+            device.AudioSessionManager.AudioSessionControl.SetDuckingPreference(true);
+        }
+        catch (Exception e)
+        {
+            AppLog.Error("audio: cannot opt out of ducking", e);
+        }
     }
 
     public void Stop()
@@ -96,6 +176,8 @@ public sealed class WasapiSource : IAudioSource
         Stop();
         recorder?.Dispose();
         recorder = null;
+        device?.Dispose();
+        device = null;
     }
 
     private void OnData(ReadOnlySpan<byte> buffer, AudioClientBufferFlags flags, long devicePosition, long qpcPosition)

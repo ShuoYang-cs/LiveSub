@@ -19,8 +19,6 @@ public sealed record AnthropicModelPolicy(bool DisableThinking, string? Effort)
     /// <summary>翻译默认用最快的 Haiku。</summary>
     public const string DefaultModel = Haiku;
 
-    public static readonly IReadOnlyList<string> KnownModels = [Haiku, Sonnet, Opus];
-
     /// <summary>不支持 effort 参数的旧模型（传了会报错）。</summary>
     private static readonly string[] NoEffortPrefixes =
     [
@@ -29,19 +27,12 @@ public sealed record AnthropicModelPolicy(bool DisableThinking, string? Effort)
 
     public static AnthropicModelPolicy For(string model)
     {
+        // 其他兼容 Anthropic 格式的服务（模型名不是 claude-…）不一定认识这些参数，什么都不加（与 macOS 相同）。
+        if (!model.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)) return new(false, null);
         if (model.StartsWith("claude-haiku", StringComparison.OrdinalIgnoreCase)) return new(true, null);
         if (NoEffortPrefixes.Any(p => model.StartsWith(p, StringComparison.OrdinalIgnoreCase))) return new(false, null);
         return new(false, "low");
     }
-
-    /// <summary>状态条上显示的短名称：claude-sonnet-5-5 → Claude Sonnet 5.5。</summary>
-    public static string DisplayName(string model) => model switch
-    {
-        Haiku => "Claude Haiku 5.5",
-        Sonnet => "Claude Sonnet 5.5",
-        Opus => "Claude Opus 5.5",
-        _ => model,
-    };
 }
 
 /// <summary>请求体构造（JSON 文本），便于单测与调试。</summary>
@@ -112,21 +103,6 @@ public static class RequestBodies
     }
 }
 
-/// <summary>OpenAI 兼容接口的预设：只填好接口地址，密钥和模型由用户提供。</summary>
-public sealed record ProviderPreset(string Id, string Name, string ChineseName, string BaseUrl, bool RequiresKey)
-{
-    public static readonly IReadOnlyList<ProviderPreset> All =
-    [
-        new("openai", "OpenAI", "OpenAI", "https://api.openai.com/v1", true),
-        new("deepseek", "DeepSeek", "DeepSeek", "https://api.deepseek.com/v1", true),
-        new("dashscope", "Qwen", "通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", true),
-        new("gemini", "Gemini", "Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", true),
-        new("openrouter", "OpenRouter", "OpenRouter", "https://openrouter.ai/api/v1", true),
-        new("ollama", "Ollama", "Ollama", "http://localhost:11434/v1", false),
-        new("lmstudio", "LM Studio", "LM Studio", "http://localhost:1234/v1", false),
-    ];
-}
-
 /// <summary>
 /// OpenAI 兼容的 Chat Completions 接口。一个实现覆盖 OpenAI、DeepSeek、通义千问兼容模式、Gemini 兼容接口、
 /// OpenRouter，以及 Ollama、LM Studio 等本地服务。
@@ -144,19 +120,6 @@ public sealed class OpenAICompatibleTransport : IChatTransport
         this.baseUrl = NormalizeBaseUrl(baseUrl);
         this.apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
         this.model = model;
-    }
-
-    /// <summary>
-    /// 本机或局域网里的服务（Ollama、LM Studio 等）一般不需要密钥；云服务需要。
-    /// 判断依据是接口地址的主机名：localhost、回环地址、私有网段。
-    /// </summary>
-    public static bool IsLocalServer(string url)
-    {
-        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)) return false;
-        if (uri.IsLoopback || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return true;
-        if (!System.Net.IPAddress.TryParse(uri.Host, out var ip)) return uri.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase);
-        var b = ip.GetAddressBytes();
-        return b.Length == 4 && (b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168));
     }
 
     /// <summary>去掉末尾的斜杠；用户误填了完整的 /chat/completions 时也去掉。</summary>
@@ -242,42 +205,14 @@ public sealed class OpenAICompatibleTransport : IChatTransport
         }
     }
 
-    /// <summary>列出可用模型：<c>GET {baseUrl}/models</c>。</summary>
-    public async Task<List<string>> ListModelsAsync(CancellationToken cancellationToken)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Get, baseUrl + "/models");
-        Authorize(request);
-        HttpResponseMessage response;
-        try
-        {
-            response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        }
-        catch (HttpRequestException e)
-        {
-            throw new ChatProviderException(ChatErrorKind.Network, e.Message, inner: e);
-        }
-        using (response)
-        {
-            if (!response.IsSuccessStatusCode) throw await HttpError(response, cancellationToken).ConfigureAwait(false);
-            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                return OpenAIStream.ParseModelList(body);
-            }
-            catch (JsonException e)
-            {
-                throw new ChatProviderException(ChatErrorKind.Other, OpenAIStream.ErrorFromBody(body), inner: e);
-            }
-        }
-    }
-
     private void Authorize(HttpRequestMessage request)
     {
         // 本地服务（Ollama、LM Studio）不需要密钥，不发 Authorization 头。
         if (apiKey is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
     }
 
-    private static async Task<ChatProviderException> HttpError(HttpResponseMessage response, CancellationToken cancellationToken)
+    /// <summary>HTTP 错误响应 → 异常（两种接口格式共用）。</summary>
+    internal static async Task<ChatProviderException> HttpError(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         string body = "";
         try

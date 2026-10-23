@@ -8,8 +8,8 @@ using Whisper.net.LibraryLoader;
 
 namespace LiveSub.App.Speech;
 
-/// <summary>一段确认的识别结果；时间是音频时间轴上的秒数（从开始采集算起）。</summary>
-public sealed record RecognitionResult(string Text, double Start, double End, IReadOnlyList<double> Confidences);
+/// <summary>一段确认的识别结果；时间是音频时间轴上的秒数（从开始采集算起）。<paramref name="Source"/> 是送来这段语音的音源序号。</summary>
+public sealed record RecognitionResult(int Source, string Text, double Start, double End, IReadOnlyList<double> Confidences);
 
 /// <summary>识别模型的下载与存放：%LOCALAPPDATA%\LiveSub\models。</summary>
 public static class WhisperModels
@@ -73,6 +73,8 @@ public static class WhisperModels
 /// <summary>
 /// Whisper.net 本地识别。Whisper 不是流式的：由 <see cref="SpeechChunker"/> 在停顿处切好一段段音频，
 /// 这里在一个后台线程上逐段识别。确认结果优先；空闲时可以识别“正在说的这一段”作为实时预览。
+/// “两者”模式下麦克风和系统音频共用这一个模型（不加载两份）：两个音源的语音段按送来的先后识别，
+/// 每段带着音源序号，结果也带着它。
 /// </summary>
 public sealed class WhisperRecognizer : IAsyncDisposable
 {
@@ -80,24 +82,33 @@ public sealed class WhisperRecognizer : IAsyncDisposable
     private readonly WhisperProcessor processor;
     private readonly string language;
     private readonly bool filterChinese;
-    private readonly Channel<SpeechChunk> finals = Channel.CreateUnbounded<SpeechChunk>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly Channel<(int Source, SpeechChunk Chunk)> finals =
+        Channel.CreateUnbounded<(int Source, SpeechChunk Chunk)>(new UnboundedChannelOptions { SingleReader = true });
     private readonly CancellationTokenSource stop = new();
     private readonly Task worker;
-    private SpeechChunk? previewRequest;
-    private readonly object previewGate = new();
+    /// <summary>实时预览的请求和各音源排队的确认段数，都由 <see cref="gate"/> 保护。</summary>
+    private readonly PreviewQueue<SpeechChunk> previews = new();
+    private readonly Dictionary<int, int> queuedBySource = [];
+    private readonly object gate = new();
     private readonly SemaphoreSlim wake = new(0);
     private int queued;
 
     /// <summary>确认结果（在后台线程上触发）。</summary>
     public event Action<RecognitionResult>? Final;
-    /// <summary>实时预览：这一段的开始样本序号与到目前为止的文字。</summary>
-    public event Action<long, string>? Preview;
-    /// <summary>因为判断为中文而丢掉了一段。</summary>
-    public event Action? Filtered;
+    /// <summary>实时预览：音源序号、这一段的开始样本序号与到目前为止的文字。</summary>
+    public event Action<int, long, string>? Preview;
+    /// <summary>因为判断为中文而丢掉了某个音源的一段。</summary>
+    public event Action<int>? Filtered;
     public event Action<Exception>? Error;
 
-    /// <summary>还有没识别完的确认段。</summary>
+    /// <summary>还有没识别完的确认段（任何音源）。</summary>
     public bool Busy => Volatile.Read(ref queued) > 0;
+
+    /// <summary>这个音源还有没识别完的确认段。</summary>
+    public bool IsBusy(int source)
+    {
+        lock (gate) return queuedBySource.GetValueOrDefault(source) > 0;
+    }
 
     /// <summary>最近一段的识别耗时与音频时长之比（越小越快）；用来决定要不要做实时预览。</summary>
     public double RealTimeFactor { get; private set; }
@@ -128,19 +139,23 @@ public sealed class WhisperRecognizer : IAsyncDisposable
         worker = Task.Run(RunAsync);
     }
 
-    /// <summary>送入一段确认的语音。</summary>
-    public void Enqueue(SpeechChunk chunk)
+    /// <summary>送入某个音源的一段确认的语音。</summary>
+    public void Enqueue(SpeechChunk chunk, int source)
     {
         Interlocked.Increment(ref queued);
-        lock (previewGate) previewRequest = null;
-        finals.Writer.TryWrite(chunk);
+        lock (gate)
+        {
+            queuedBySource[source] = queuedBySource.GetValueOrDefault(source) + 1;
+            previews.Remove(source);
+        }
+        finals.Writer.TryWrite((source, chunk));
         wake.Release();
     }
 
-    /// <summary>请求识别正在说的这一段（只保留最新的一次请求）。</summary>
-    public void RequestPreview(SpeechChunk snapshot)
+    /// <summary>请求识别某个音源正在说的这一段（每个音源只保留最新的一次请求）。</summary>
+    public void RequestPreview(SpeechChunk snapshot, int source)
     {
-        lock (previewGate) previewRequest = snapshot;
+        lock (gate) previews.Request(source, snapshot);
         wake.Release();
     }
 
@@ -166,27 +181,26 @@ public sealed class WhisperRecognizer : IAsyncDisposable
             }
             try
             {
-                if (finals.Reader.TryRead(out var chunk))
+                if (finals.Reader.TryRead(out var item))
                 {
                     try
                     {
-                        await RecognizeFinal(chunk).ConfigureAwait(false);
+                        await RecognizeFinal(item.Source, item.Chunk).ConfigureAwait(false);
                     }
                     finally
                     {
                         // 识别出错也要减掉，否则 Busy 一直为 true，分句和实时预览都会受影响。
                         Interlocked.Decrement(ref queued);
+                        lock (gate) queuedBySource[item.Source] = Math.Max(0, queuedBySource.GetValueOrDefault(item.Source) - 1);
                     }
                     continue;
                 }
                 if (finals.Reader.Completion.IsCompleted) break;
+                bool hasPreview;
+                int previewSource;
                 SpeechChunk? preview;
-                lock (previewGate)
-                {
-                    preview = previewRequest;
-                    previewRequest = null;
-                }
-                if (preview is not null) await RecognizePreview(preview).ConfigureAwait(false);
+                lock (gate) hasPreview = previews.TryTake(out previewSource, out preview);
+                if (hasPreview && preview is not null) await RecognizePreview(previewSource, preview).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested)
             {
@@ -200,7 +214,7 @@ public sealed class WhisperRecognizer : IAsyncDisposable
         }
     }
 
-    private async Task RecognizeFinal(SpeechChunk chunk)
+    private async Task RecognizeFinal(int source, SpeechChunk chunk)
     {
         var watch = Stopwatch.StartNew();
         if (filterChinese)
@@ -209,7 +223,7 @@ public sealed class WhisperRecognizer : IAsyncDisposable
             var (detected, probability) = processor.DetectLanguageWithProbability(chunk.Samples, [language, "zh"]);
             if (RecognitionText.IsForeignChinese(detected, probability, language))
             {
-                Filtered?.Invoke();
+                Filtered?.Invoke(source);
                 return;
             }
         }
@@ -220,19 +234,19 @@ public sealed class WhisperRecognizer : IAsyncDisposable
                 (segment.Tokens ?? []).Select(t => new TokenProbability(t.Text ?? "", t.Probability)));
             double start = chunk.StartSeconds + Math.Max(0, segment.Start.TotalSeconds);
             double end = chunk.StartSeconds + Math.Min(chunk.DurationSeconds, segment.End.TotalSeconds);
-            Final?.Invoke(new RecognitionResult(text, start, Math.Max(start, end), confidences));
+            Final?.Invoke(new RecognitionResult(source, text, start, Math.Max(start, end), confidences));
         }
         RealTimeFactor = watch.Elapsed.TotalSeconds / Math.Max(0.5, chunk.DurationSeconds);
     }
 
-    private async Task RecognizePreview(SpeechChunk snapshot)
+    private async Task RecognizePreview(int source, SpeechChunk snapshot)
     {
         var parts = new List<string>();
         await foreach (var segment in processor.ProcessAsync(snapshot.Samples, stop.Token).ConfigureAwait(false))
         {
             if (RecognitionText.Clean(segment.Text) is { } text) parts.Add(text);
         }
-        Preview?.Invoke(snapshot.StartSample, string.Join(" ", parts));
+        Preview?.Invoke(source, snapshot.StartSample, string.Join(" ", parts));
     }
 
     public async ValueTask DisposeAsync()

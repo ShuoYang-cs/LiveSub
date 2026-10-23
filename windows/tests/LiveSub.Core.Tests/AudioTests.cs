@@ -1,4 +1,5 @@
 using LiveSub.Core.Audio;
+using LiveSub.Core.Speech;
 
 namespace LiveSub.Core.Tests;
 
@@ -167,5 +168,149 @@ public class SpeechChunkerTests
         var c = new SpeechChunker();
         Assert.Empty(Run(c, new float[Rate * 3]));
         Assert.Equal(Rate * 3, c.ProcessedSamples);
+    }
+}
+
+public class MicrophoneAccessTests
+{
+    private static readonly TimeSpan Soon = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan Later = TimeSpan.FromMinutes(5);
+
+    [Fact]
+    public void AnyDenySwitchMeansDenied()
+    {
+        Assert.True(MicrophoneAccess.IsDenied(["Allow", "Allow", "Deny"]));
+        Assert.True(MicrophoneAccess.IsDenied([null, "deny ", null]));
+        Assert.False(MicrophoneAccess.IsDenied(["Allow", "Allow", "Allow"]));
+        // 读不到开关（键或值不存在）时不能断定被关闭。
+        Assert.False(MicrophoneAccess.IsDenied([null, null, null]));
+    }
+
+    [Fact]
+    public void DenySwitchOrAccessDeniedIsCertain()
+    {
+        Assert.Equal(MicrophoneBlock.Certain, MicrophoneAccess.Classify(true, false, true, Later, true));
+        Assert.Equal(MicrophoneBlock.Certain, MicrophoneAccess.Classify(false, true, false, TimeSpan.Zero, true));
+    }
+
+    [Fact]
+    public void EarlyDisconnectWithMicrophonePresentIsLikely()
+    {
+        Assert.Equal(MicrophoneBlock.Likely, MicrophoneAccess.Classify(false, false, true, Soon, true));
+    }
+
+    [Fact]
+    public void UnpluggedOrLateDisconnectIsNotPermission()
+    {
+        // 麦克风被拔掉：没有默认录音设备了。
+        Assert.Equal(MicrophoneBlock.None, MicrophoneAccess.Classify(false, false, true, Soon, false));
+        // 用了很久才断开：多半是设备或采样率变了，重新打开就好。
+        Assert.Equal(MicrophoneBlock.None, MicrophoneAccess.Classify(false, false, true, Later, true));
+        // 其他错误。
+        Assert.Equal(MicrophoneBlock.None, MicrophoneAccess.Classify(false, false, false, Soon, true));
+    }
+}
+
+public class SourceMixTests
+{
+    [Fact]
+    public void LevelIsTheLoudestAndSilenceTheShortest()
+    {
+        var mix = SourceMix.Combine([new SourceInput(0.02f, 0.1), new SourceInput(0.3f, 12)]);
+        Assert.Equal(0.3f, mix.Level);
+        Assert.Equal(0.1, mix.SilentFor);
+    }
+
+    [Fact]
+    public void LostSourcesAreIgnored()
+    {
+        // 麦克风被挡住、正在等它恢复：系统音频照常收到声音时不算“无音频输入”。
+        var mix = SourceMix.Combine([null, new SourceInput(0.1f, 0.2)]);
+        Assert.Equal(0.1f, mix.Level);
+        Assert.Equal(0.2, mix.SilentFor);
+        var none = SourceMix.Combine([null, null]);
+        Assert.Equal(0f, none.Level);
+        Assert.True(double.IsPositiveInfinity(none.SilentFor));
+        Assert.True(double.IsPositiveInfinity(SourceMix.Combine([]).SilentFor));
+    }
+
+    [Fact]
+    public void LiveRowsKeepSourceOrderAndDropNoise()
+    {
+        var rows = SourceMix.LiveRows([new LiveRow("麦克风", "."), new LiveRow("系统音频", "so the next step"), new LiveRow(null, "")]);
+        Assert.Equal([new LiveRow("系统音频", "so the next step")], rows);
+        var both = SourceMix.LiveRows([new LiveRow("麦克风", "我想问"), new LiveRow("系统音频", "eigen 2")]);
+        Assert.Equal(["麦克风", "系统音频"], both.Select(r => r.Label));
+    }
+
+    [Fact]
+    public void SpeakingJoinsSourcesWithSpaces()
+    {
+        Assert.Equal("first part second part", SourceMix.Speaking(["first part ", "", " second part"]));
+        Assert.Equal("", SourceMix.Speaking(["", "  "]));
+    }
+}
+
+public class PreviewQueueTests
+{
+    [Fact]
+    public void KeepsOnlyTheNewestRequestPerSource()
+    {
+        var queue = new PreviewQueue<string>();
+        queue.Request(0, "mic 1");
+        queue.Request(0, "mic 2");
+        Assert.Equal(1, queue.Count);
+        Assert.True(queue.TryTake(out var source, out var item));
+        Assert.Equal((0, "mic 2"), (source, item));
+        Assert.False(queue.TryTake(out _, out _));
+    }
+
+    [Fact]
+    public void SourcesTakeTurns()
+    {
+        // 麦克风先请求，系统音频接着请求；麦克风还在排队时再次请求，只换成新的内容，仍排在前面。
+        var queue = new PreviewQueue<string>();
+        queue.Request(0, "mic 1");
+        queue.Request(1, "system 1");
+        queue.Request(0, "mic 2");
+        Assert.True(queue.TryTake(out var first, out var firstItem));
+        Assert.Equal((0, "mic 2"), (first, firstItem));
+        // 麦克风识别过之后再请求：排到系统音频后面。
+        queue.Request(0, "mic 3");
+        Assert.True(queue.TryTake(out var second, out var secondItem));
+        Assert.True(queue.TryTake(out var third, out var thirdItem));
+        Assert.Equal((1, "system 1"), (second, secondItem));
+        Assert.Equal((0, "mic 3"), (third, thirdItem));
+    }
+
+    [Fact]
+    public void SourceRequestingFirstEveryTickDoesNotStarveTheOther()
+    {
+        // 识别一次预览比请求间隔慢：每轮两个音源都再请求一次（麦克风总是先请求），识别器只来得及取一个。
+        var queue = new PreviewQueue<string>();
+        var served = new int[2];
+        for (int tick = 0; tick < 20; tick++)
+        {
+            queue.Request(0, $"mic {tick}");
+            queue.Request(1, $"system {tick}");
+            Assert.True(queue.TryTake(out var source, out var item));
+            Assert.EndsWith($" {tick}", item);
+            served[source]++;
+        }
+        Assert.Equal([10, 10], served);
+    }
+
+    [Fact]
+    public void RemovingASourceKeepsTheOther()
+    {
+        var queue = new PreviewQueue<string>();
+        queue.Request(0, "mic");
+        queue.Request(1, "system");
+        queue.Remove(0);
+        Assert.True(queue.TryTake(out var source, out _));
+        Assert.Equal(1, source);
+        queue.Request(0, "mic");
+        queue.Clear();
+        Assert.Equal(0, queue.Count);
     }
 }

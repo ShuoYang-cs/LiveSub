@@ -31,14 +31,51 @@ public class RecognitionQualityTests
     [Fact]
     public void HysteresisAvoidsFlipping()
     {
+        var t0 = new DateTime(2026, 10, 21, 13, 0, 0, DateTimeKind.Utc);
         var m = new RecognitionQualityMonitor();
-        m.Add(Repeat(0.7, 40));
+        m.Add(Repeat(0.7, 60), t0);
         Assert.True(m.IsDifficult);
         // 0.83 介于两个阈值之间：保持难识别
-        m.Add(Repeat(0.83, 40));
+        m.Add(Repeat(0.83, 60), t0.AddSeconds(5));
         Assert.True(m.IsDifficult);
-        var recovered = m.Add(Repeat(0.92, 40));
+        // 清楚了，但要连续清楚 60 秒才恢复
+        Assert.False(m.Add(Repeat(0.92, 60), t0.AddSeconds(10)));
+        Assert.False(m.Add(Repeat(0.92, 12), t0.AddSeconds(40)));
+        var recovered = m.Add(Repeat(0.92, 12), t0.AddSeconds(70));
         Assert.True(recovered);
+        Assert.False(m.IsDifficult);
+    }
+
+    [Fact]
+    public void BriefClearSpellKeepsCorrection()
+    {
+        // 口音重的讲者中间有二十几秒说得清楚：不要关掉纠正。每 5 秒一句，每句 12 个词。
+        var t0 = new DateTime(2026, 10, 21, 13, 0, 0, DateTimeKind.Utc);
+        var m = new RecognitionQualityMonitor();
+        m.Add(Repeat(0.72, 60), t0);
+        Assert.True(m.IsDifficult);
+        int changes = 0;
+        void Say(double confidence, double second)
+        {
+            if (m.Add(Repeat(confidence, 12), t0.AddSeconds(second))) changes++;
+        }
+        for (double s = 5; s <= 25; s += 5) Say(0.97, s);   // 第 15 秒起平均高于 0.86，开始计时
+        Say(0.3, 30);                                          // 一句没认准：平均掉下来，重新计时
+        for (double s = 35; s <= 80; s += 5) Say(0.97, s);  // 第 55 秒起重新计时
+        // 不重新计时的话，第 75 秒（15 + 60）就恢复了
+        Assert.Equal(0, changes);
+        Assert.True(m.IsDifficult);
+        for (double s = 85; s <= 115; s += 5) Say(0.97, s);
+        Assert.Equal(1, changes);
+        Assert.False(m.IsDifficult);
+    }
+
+    [Fact]
+    public void OneUnclearSentenceDoesNotStartCorrection()
+    {
+        var m = new RecognitionQualityMonitor();
+        m.Add(Repeat(0.92, 48));
+        Assert.False(m.Add(Repeat(0.55, 12)));
         Assert.False(m.IsDifficult);
     }
 
@@ -160,5 +197,16 @@ public class AssistantPromptTests
         Assert.Equal("# 2026-10-19 09.05 Transcript\n\n- Started：2026-10-19 09:05\n- Language：American English → Simplified Chinese\n\n", english);
         var entry = TranscriptFormat.Entry(started, "麦克风", "a", "一\n二");
         Assert.Equal("**[09:05:00] 麦克风** a\n> 一\n> 二\n\n", entry);
+    }
+
+    [Fact]
+    public void SourceLabelFollowsTheTimeInBold()
+    {
+        // “两者”模式下每句带音源标签，和时间一起加粗（与 macOS 版相同）；只有一个音源时没有标签。
+        var time = new DateTime(2026, 10, 21, 14, 3, 9, DateTimeKind.Local);
+        Assert.Equal("**[14:03:09] 系统音频** next slide.\n> 下一页。\n\n", TranscriptFormat.Entry(time, "系统音频", "next slide.", "下一页。"));
+        Assert.Equal("**[14:03:09] Microphone** a question.\n*识别原文：a quest in.*\n\n",
+            TranscriptFormat.Entry(time, "Microphone", "a question.", "", "a quest in."));
+        Assert.Equal("**[14:03:09]** next slide.\n\n", TranscriptFormat.Entry(time, null, "next slide.", ""));
     }
 }

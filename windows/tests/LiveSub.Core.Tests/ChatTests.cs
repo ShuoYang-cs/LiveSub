@@ -125,6 +125,7 @@ public class RequestBodyTests
         Assert.Equal(new AnthropicModelPolicy(false, "low"), AnthropicModelPolicy.For("claude-sonnet-5-5"));
         Assert.Equal(new AnthropicModelPolicy(false, "low"), AnthropicModelPolicy.For("claude-opus-5-5"));
         Assert.Equal(new AnthropicModelPolicy(false, null), AnthropicModelPolicy.For("claude-sonnet-4-5"));
+        Assert.Equal(new AnthropicModelPolicy(false, null), AnthropicModelPolicy.For("deepseek-chat"));
         Assert.Equal("claude-haiku-5-5", AnthropicModelPolicy.DefaultModel);
     }
 
@@ -138,23 +139,56 @@ public class RequestBodyTests
     [Fact]
     public void LocalServersAreRecognized()
     {
-        Assert.True(OpenAICompatibleTransport.IsLocalServer("http://localhost:11434/v1"));
-        Assert.True(OpenAICompatibleTransport.IsLocalServer("http://127.0.0.1:1234/v1"));
-        Assert.True(OpenAICompatibleTransport.IsLocalServer("http://192.168.1.20:11434/v1"));
-        Assert.True(OpenAICompatibleTransport.IsLocalServer("http://[::1]:8080/v1"));
-        Assert.False(OpenAICompatibleTransport.IsLocalServer("https://api.deepseek.com/v1"));
-        Assert.False(OpenAICompatibleTransport.IsLocalServer("http://8.8.8.8/v1"));
-        Assert.False(OpenAICompatibleTransport.IsLocalServer(""));
-        // 预设与地址判断一致。
-        Assert.All(ProviderPreset.All, p => Assert.Equal(!p.RequiresKey, OpenAICompatibleTransport.IsLocalServer(p.BaseUrl)));
+        Assert.True(ChatEndpoints.IsLocal("http://localhost:11434/v1"));
+        Assert.True(ChatEndpoints.IsLocal("http://127.0.0.1:1234/v1"));
+        Assert.True(ChatEndpoints.IsLocal("http://192.168.1.20:11434/v1"));
+        Assert.True(ChatEndpoints.IsLocal("http://[::1]:8080/v1"));
+        Assert.True(ChatEndpoints.IsLocal("http://studio.local:1234/v1"));
+        Assert.False(ChatEndpoints.IsLocal("https://api.deepseek.com/v1"));
+        Assert.False(ChatEndpoints.IsLocal("http://8.8.8.8/v1"));
+        Assert.False(ChatEndpoints.IsLocal(""));
+        // 预设里只有本地服务不需要密钥。
+        Assert.All(ChatEndpointPreset.All, p => Assert.Equal(!p.RequiresKey, ChatEndpoints.IsLocal(p.BaseUrl)));
     }
 
     [Fact]
-    public void PresetsHaveDistinctIdsAndLocalOnesNeedNoKey()
+    public void PresetsMatchMacOS()
     {
-        Assert.Equal(ProviderPreset.All.Count, ProviderPreset.All.Select(p => p.Id).Distinct().Count());
-        Assert.False(ProviderPreset.All.Single(p => p.Id == "ollama").RequiresKey);
-        Assert.Equal("http://localhost:1234/v1", ProviderPreset.All.Single(p => p.Id == "lmstudio").BaseUrl);
+        var all = ChatEndpointPreset.All;
+        Assert.Equal(all.Count, all.Select(p => p.Id).Distinct().Count());
+        Assert.Equal(["Anthropic", "OpenAI", "DeepSeek", "Qwen", "Gemini", "OpenRouter", "Ollama", "LM Studio"], all.Select(p => p.Name));
+        var anthropic = all[0];
+        Assert.Equal(ChatApiFormat.Anthropic, anthropic.Format);
+        Assert.Equal("https://api.anthropic.com", anthropic.BaseUrl);
+        Assert.Equal(["claude-haiku-5-5", "claude-sonnet-5-5"], anthropic.ExampleModels);
+        Assert.All(all.Skip(1), p => Assert.Equal(ChatApiFormat.OpenAI, p.Format));
+        Assert.Equal("通义千问", all.Single(p => p.Id == "dashscope").ChineseName);
+        Assert.Equal(["deepseek-chat"], all.Single(p => p.Id == "deepseek").ExampleModels);
+        Assert.False(all.Single(p => p.Id == "ollama").RequiresKey);
+        Assert.Equal("http://localhost:1234/v1", all.Single(p => p.Id == "lmstudio").BaseUrl);
+    }
+
+    [Fact]
+    public void BaseUrlValidity()
+    {
+        Assert.True(ChatEndpoints.IsValidBaseUrl("https://api.deepseek.com/v1"));
+        Assert.True(ChatEndpoints.IsValidBaseUrl(" http://localhost:11434/v1 "));
+        // 新加的“自定义服务”只有 https://，还不能用。
+        Assert.False(ChatEndpoints.IsValidBaseUrl("https://"));
+        Assert.False(ChatEndpoints.IsValidBaseUrl("api.deepseek.com"));
+        Assert.False(ChatEndpoints.IsValidBaseUrl("ftp://example.com"));
+        Assert.False(ChatEndpoints.IsValidBaseUrl(""));
+    }
+
+    [Fact]
+    public void AnthropicRootDropsV1()
+    {
+        Assert.Equal("https://api.anthropic.com", ChatEndpoints.AnthropicBaseUrl(" https://api.anthropic.com/ "));
+        Assert.Equal("https://api.anthropic.com", ChatEndpoints.AnthropicBaseUrl("https://api.anthropic.com/v1"));
+        Assert.Equal("https://api.anthropic.com", ChatEndpoints.AnthropicBaseUrl("https://api.anthropic.com/v1/messages"));
+        Assert.Equal("https://proxy.example.com/anthropic", ChatEndpoints.AnthropicBaseUrl("https://proxy.example.com/anthropic/v1/"));
+        Assert.Equal("https://api.anthropic.com/v1/models?limit=1000", ChatEndpoints.ModelsUrl(ChatApiFormat.Anthropic, "https://api.anthropic.com/v1"));
+        Assert.Equal("https://api.deepseek.com/v1/models", ChatEndpoints.ModelsUrl(ChatApiFormat.OpenAI, "https://api.deepseek.com/v1/"));
     }
 }
 
@@ -303,8 +337,37 @@ public class OpenAICompatibleTransportTests
     public async Task ListsModels()
     {
         var handler = new FakeHandler(HttpStatusCode.OK, """{"data":[{"id":"b"},{"id":"a"}]}""", "application/json");
-        var transport = new OpenAICompatibleTransport(new HttpClient(handler), "https://api.example.com/v1", "k", "");
-        Assert.Equal(["a", "b"], await transport.ListModelsAsync(CancellationToken.None));
+        var models = await ChatEndpoints.ListModelsAsync(new HttpClient(handler), ChatApiFormat.OpenAI, "https://api.example.com/v1", "k",
+                                                         CancellationToken.None);
+        Assert.Equal(["a", "b"], models);
         Assert.Equal("https://api.example.com/v1/models", handler.Request!.RequestUri!.ToString());
+        Assert.Equal("Bearer", handler.Request.Headers.Authorization!.Scheme);
+    }
+
+    [Fact]
+    public async Task ListsAnthropicModelsWithAnthropicHeaders()
+    {
+        var handler = new FakeHandler(HttpStatusCode.OK, """{"data":[{"id":"claude-sonnet-5-5","type":"model"},{"id":"claude-haiku-5-5","type":"model"}],"has_more":false}""",
+                                      "application/json");
+        var models = await ChatEndpoints.ListModelsAsync(new HttpClient(handler), ChatApiFormat.Anthropic, "https://api.anthropic.com", "sk-ant",
+                                                         CancellationToken.None);
+        Assert.Equal(["claude-haiku-5-5", "claude-sonnet-5-5"], models);
+        var request = handler.Request!;
+        Assert.Equal("https://api.anthropic.com/v1/models?limit=1000", request.RequestUri!.ToString());
+        Assert.Equal("sk-ant", request.Headers.GetValues("x-api-key").Single());
+        Assert.Equal(ChatEndpoints.AnthropicVersion, request.Headers.GetValues("anthropic-version").Single());
+        Assert.Null(request.Headers.Authorization);
+    }
+
+    [Fact]
+    public async Task ModelListErrorsAreSurfaced()
+    {
+        var handler = new FakeHandler(HttpStatusCode.Unauthorized, """{"error":{"message":"invalid x-api-key"}}""", "application/json");
+        var e = await Assert.ThrowsAsync<ChatProviderException>(() => ChatEndpoints.ListModelsAsync(
+            new HttpClient(handler), ChatApiFormat.Anthropic, "http://localhost:4000", null, CancellationToken.None));
+        Assert.Equal(ChatErrorKind.Unauthorized, e.Kind);
+        Assert.Equal("invalid x-api-key", e.Detail);
+        // 没有密钥时不发密钥头。
+        Assert.False(handler.Request!.Headers.Contains("x-api-key"));
     }
 }

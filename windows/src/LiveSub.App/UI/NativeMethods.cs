@@ -16,6 +16,8 @@ internal static partial class NativeMethods
     public const int WM_HOTKEY = 0x0312;
     public const int WM_MOUSEACTIVATE = 0x0021;
     public const int MA_NOACTIVATE = 3;
+    public const int WM_SYSCOMMAND = 0x0112;
+    public const int SC_CLOSE = 0xF060;
     public const uint MOD_ALT = 0x0001;
     public const uint MOD_CONTROL = 0x0002;
     public const uint MOD_NOREPEAT = 0x4000;
@@ -23,12 +25,24 @@ internal static partial class NativeMethods
     public const uint SWP_NOMOVE = 0x0002;
     public const uint SWP_NOACTIVATE = 0x0010;
     public static readonly IntPtr HWND_TOPMOST = new(-1);
+    public const int VK_LBUTTON = 0x01;
+    public const int VK_RBUTTON = 0x02;
+    public const int VK_MBUTTON = 0x04;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT
     {
         public int X;
         public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
@@ -55,7 +69,31 @@ internal static partial class NativeMethods
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool DestroyIcon(IntPtr hIcon);
+
+    [LibraryImport("user32.dll")]
+    public static partial short GetAsyncKeyState(int vKey);
+
+    [LibraryImport("user32.dll")]
+    public static partial IntPtr WindowFromPoint(POINT point);
+
+    [LibraryImport("user32.dll")]
+    public static partial uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    /// <summary>鼠标键正按在别的程序的窗口上（看的是物理按键，本程序不在前台时也能用）。</summary>
+    public static bool MouseDownInOtherProcess()
+    {
+        bool down = GetAsyncKeyState(VK_LBUTTON) < 0 || GetAsyncKeyState(VK_RBUTTON) < 0 || GetAsyncKeyState(VK_MBUTTON) < 0;
+        if (!down || !GetCursorPos(out var p)) return false;
+        var hwnd = WindowFromPoint(p);
+        if (hwnd == IntPtr.Zero) return true;
+        GetWindowThreadProcessId(hwnd, out uint processId);
+        return processId != (uint)Environment.ProcessId;
+    }
 
     public static void SetExStyle(IntPtr hwnd, int add, int remove)
     {

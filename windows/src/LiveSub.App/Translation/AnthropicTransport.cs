@@ -1,12 +1,13 @@
 using Anthropic;
 using Anthropic.Exceptions;
 using Anthropic.Models.Messages;
+using LiveSub.Core;
 using LiveSub.Core.Chat;
 
 namespace LiveSub.App.Translation;
 
 /// <summary>
-/// Anthropic Messages API（官方 C# SDK），流式输出。
+/// Anthropic Messages API（官方 C# SDK），流式输出。接口地址可以换成其他兼容 Anthropic 格式的服务。
 /// 低延迟设置见 <see cref="AnthropicModelPolicy"/>：Haiku 关掉思考；Sonnet / Opus 不能关思考，改用 effort = low。
 /// </summary>
 public sealed class AnthropicTransport : IChatTransport
@@ -14,9 +15,21 @@ public sealed class AnthropicTransport : IChatTransport
     private readonly AnthropicClient client;
     private readonly string model;
 
-    public AnthropicTransport(string apiKey, string model)
+    /// <param name="apiKey">本地服务可以没有密钥（不发 x-api-key）。</param>
+    /// <param name="baseUrl">根地址，例如 https://api.anthropic.com；SDK 自己加 /v1/messages。</param>
+    /// <param name="requestTimeout">
+    /// 会话每次请求的超时（翻译 25 秒，AI 助手 180 秒，笔记 600 秒）。SDK 的超时包括读完整个流式回复，
+    /// 设得比它长 5 秒，由会话按自己的超时结束请求。
+    /// </param>
+    public AnthropicTransport(string? apiKey, string model, string baseUrl, TimeSpan? requestTimeout = null)
     {
-        client = new AnthropicClient { ApiKey = apiKey, MaxRetries = 1, Timeout = TimeSpan.FromSeconds(30) };
+        client = new AnthropicClient
+        {
+            ApiKey = apiKey,
+            BaseUrl = ChatEndpoints.AnthropicBaseUrl(baseUrl),
+            MaxRetries = 1,
+            Timeout = (requestTimeout ?? ClaudeCli.Timeout) + TimeSpan.FromSeconds(5),
+        };
         this.model = model;
     }
 
@@ -120,32 +133,5 @@ public sealed class AnthropicTransport : IChatTransport
             Messages = turns,
             CacheControl = new CacheControlEphemeral(),
         };
-    }
-
-    /// <summary>列出账号可用的模型 ID。</summary>
-    public static async Task<List<string>> ListModelsAsync(string apiKey, CancellationToken cancellationToken)
-    {
-        var client = new AnthropicClient { ApiKey = apiKey, MaxRetries = 1, Timeout = TimeSpan.FromSeconds(20) };
-        try
-        {
-            var page = await client.Models.List(cancellationToken: cancellationToken).ConfigureAwait(false);
-            return page.Items.Select(m => m.ID).Where(id => id.StartsWith("claude-", StringComparison.Ordinal)).ToList();
-        }
-        catch (AnthropicUnauthorizedException e)
-        {
-            throw new ChatProviderException(ChatErrorKind.Unauthorized, e.Message, 401, e);
-        }
-        catch (AnthropicApiException e)
-        {
-            throw new ChatProviderException(ChatErrorKind.Http, e.Message, inner: e);
-        }
-        catch (AnthropicIOException e)
-        {
-            throw new ChatProviderException(ChatErrorKind.Network, e.Message, inner: e);
-        }
-        catch (AnthropicException e)
-        {
-            throw new ChatProviderException(ChatErrorKind.Other, e.Message, inner: e);
-        }
     }
 }

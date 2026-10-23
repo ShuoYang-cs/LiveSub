@@ -3,10 +3,12 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using LiveSub.App.Audio;
 using LiveSub.App.Localization;
 using LiveSub.App.Services;
 using LiveSub.App.Translation;
 using LiveSub.App.UI;
+using LiveSub.Core.Chat;
 using LiveSub.Core.Subtitles;
 
 namespace LiveSub.App;
@@ -89,20 +91,30 @@ public static class Program
     }
 }
 
-/// <summary>托盘程序：持有设置、控制器、悬浮字幕、托盘图标、快捷键和各个窗口，并提供菜单动作。</summary>
+/// <summary>
+/// 托盘程序：持有设置、控制器、悬浮字幕、AI 助手面板、托盘图标、快捷键和各个窗口，并提供菜单动作。
+/// AI 助手面板跟着字幕一起显示和隐藏：字幕隐藏时它也隐藏，字幕再显示时，打开着的面板一起回来。
+/// </summary>
 public sealed class AppShell : IDisposable
 {
     private readonly System.Windows.Application app;
     private OverlayWindow? overlay;
+    /// <summary>第一次打开 AI 助手时才创建。</summary>
+    private AssistantWindow? assistantWindow;
     private TrayIcon? tray;
     private GlobalHotKey? hotKey;
     private SettingsWindow? settingsWindow;
+    private ModelServicesWindow? modelServicesWindow;
     private HistoryWindow? historyWindow;
     private DispatcherTimer? trayTimer;
 
-    public SettingsService Settings { get; } = new();
-    public SecretStore Secrets { get; } = new();
+    public SecretStore Secrets { get; }
+    public SettingsService Settings { get; }
     public SubtitleController Controller { get; }
+
+    /// <summary>音源的选项（设置和托盘菜单共用）：托盘菜单用完整的名字，设置里的分段按钮用简短的名字（与 macOS 相同）。</summary>
+    public static readonly IReadOnlyList<(AudioSourceMode Mode, string Title, string ShortTitle)> AudioSources =
+        AudioSourceModes.All.Select(m => (m, m.Title(), m.ShortTitle())).ToList();
 
     public static readonly IReadOnlyList<(DisplayMode Mode, string Title)> DisplayModes =
     [
@@ -114,6 +126,9 @@ public sealed class AppShell : IDisposable
     public AppShell(System.Windows.Application app)
     {
         this.app = app;
+        // 先读密钥：迁移旧版设置时要把旧的 Anthropic API 密钥搬到新的服务名下。
+        Secrets = new SecretStore();
+        Settings = new SettingsService(Secrets);
         Controller = new SubtitleController(Settings, Secrets, app.Dispatcher);
     }
 
@@ -121,12 +136,14 @@ public sealed class AppShell : IDisposable
     {
         overlay = new OverlayWindow(Controller, Settings, new OverlayActions(
             ToggleRunning: ToggleRunning,
-            CycleDisplayMode: CycleDisplayMode,
             Lock: ToggleLock,
+            SelectDisplayMode: SelectDisplayMode,
             ShowHistory: ShowHistory,
+            ToggleAssistant: ToggleAssistant,
             ShowSettings: ShowSettings,
             Hide: HideOverlay,
-            ShowModelMenu: ShowModelMenu));
+            ModelMenu: ModelMenu,
+            OpenMicrophoneSettings: MicrophonePrivacy.OpenSettings));
         tray = new TrayIcon(this);
         // 托盘提示文字与图标跟着状态变，但不必每次字幕变化都更新。
         trayTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -138,6 +155,8 @@ public sealed class AppShell : IDisposable
         {
             if (Settings.Current.HotKey != registeredHotKey) ApplyHotKey();
         };
+        // secrets.bin 读不出来：这次运行不会写它（见 SecretStore.Unreadable），告诉用户密钥暂时不能用、也存不上。
+        if (Secrets.Unreadable) Controller.ShowAlert(Strings.Error_SecretsUnreadable);
 
         overlay.ShowNoActivate();
         if (Environment.GetEnvironmentVariable("LIVESUB_AUTOSTART") == "1") ToggleRunning();
@@ -159,9 +178,22 @@ public sealed class AppShell : IDisposable
 
     public bool OverlayVisible => overlay?.IsVisible == true;
 
-    public void ShowOverlay() => overlay?.ShowNoActivate();
+    /// <summary>AI 助手面板是否打开（字幕隐藏时它也隐藏，但仍算打开，字幕再显示时一起回来）。</summary>
+    public bool AssistantVisible => Settings.Current.AssistantVisible;
 
-    public void HideOverlay() => overlay?.Hide();
+    /// <summary>显示字幕，以及打开着的 AI 助手。</summary>
+    public void ShowOverlay()
+    {
+        overlay?.ShowNoActivate();
+        if (Settings.Current.AssistantVisible) ShowAssistant();
+    }
+
+    /// <summary>字幕和 AI 助手一起隐藏（快捷按钮、快捷键、托盘菜单）。</summary>
+    public void HideOverlay()
+    {
+        assistantWindow?.Hide();
+        overlay?.Hide();
+    }
 
     public void ToggleOverlay()
     {
@@ -169,8 +201,45 @@ public sealed class AppShell : IDisposable
         else ShowOverlay();
     }
 
+    /// <summary>打开 AI 助手面板；这时才启动它的会话（不用就不占资源）。</summary>
+    private void ShowAssistant()
+    {
+        if (overlay is null) return;
+        if (assistantWindow is null)
+        {
+            assistantWindow = new AssistantWindow(Controller.Assistant, Settings, overlay, ToggleAssistant);
+            assistantWindow.Closed += (_, _) =>
+            {
+                assistantWindow = null;
+                if (overlay is not null) overlay.KeepAbove = null;
+            };
+            // 字幕定时提到最上层时把面板提到它上面（面板自己不再定时提）。
+            overlay.KeepAbove = assistantWindow;
+        }
+        assistantWindow.ShowNoActivate();
+        Controller.Assistant.WarmUp();
+    }
+
+    /// <summary>打开或收起 AI 助手（面板上的“收起”和字幕上的“⋯”菜单）。字幕隐藏着时只记下状态。</summary>
+    public void ToggleAssistant()
+    {
+        var s = Settings.Current;
+        s.AssistantVisible = !s.AssistantVisible;
+        if (s.AssistantVisible && OverlayVisible) ShowAssistant();
+        else assistantWindow?.Hide();
+    }
+
+    /// <summary>托盘菜单里的“AI 助手”：字幕隐藏着时先把字幕显示出来。</summary>
+    public void ToggleAssistantFromMenu()
+    {
+        if (!OverlayVisible) overlay?.ShowNoActivate();
+        ToggleAssistant();
+    }
+
     public async void ToggleRunning()
     {
+        // 与 macOS 相同：从托盘菜单开始字幕时，收起的字幕（和打开着的 AI 助手）也显示出来。
+        if (!OverlayVisible && !Controller.IsRunning && !Controller.IsStarting) ShowOverlay();
         await Controller.Toggle();
         tray?.Update();
     }
@@ -184,7 +253,8 @@ public sealed class AppShell : IDisposable
 
     public void SelectModel(ModelChoice choice)
     {
-        TranslationEngines.Select(Settings.Current, choice);
+        if (Settings.Current.TranslationModel == choice) return;
+        Settings.Current.TranslationModel = choice;
         Settings.Commit(SettingsChange.Translation);
     }
 
@@ -194,54 +264,56 @@ public sealed class AppShell : IDisposable
         Settings.Commit(SettingsChange.Appearance);
     }
 
-    private void CycleDisplayMode()
-    {
-        var modes = DisplayModes.Select(m => m.Mode).ToList();
-        SelectDisplayMode(modes[(modes.IndexOf(Settings.Current.DisplayMode) + 1) % modes.Count]);
-    }
-
     public void ToggleLock()
     {
         Settings.Current.ClickThrough = !Settings.Current.ClickThrough;
         Settings.Commit(SettingsChange.Appearance);
     }
 
+    /// <summary>字幕移回屏幕底部；AI 助手也忘掉拖到的位置，回到字幕旁边。</summary>
     public void ResetOverlayPosition()
     {
         ShowOverlay();
         overlay?.ResetPosition();
+        Settings.Current.AssistantLeft = null;
+        Settings.Current.AssistantTop = null;
+        Settings.Commit(SettingsChange.None);
+        assistantWindow?.ResetPosition();
     }
 
-    /// <summary>状态条上点模型名称：弹出模型菜单。</summary>
-    private void ShowModelMenu(FrameworkElement anchor)
+    /// <summary>状态条上点模型名称时的菜单（与托盘菜单里的“翻译模型”相同），由字幕窗口弹出。</summary>
+    private ContextMenu ModelMenu()
     {
-        var menu = new ContextMenu { PlacementTarget = anchor, Placement = System.Windows.Controls.Primitives.PlacementMode.Top };
+        var menu = new ContextMenu();
         bool first = true;
-        foreach (var group in TranslationEngines.Choices(Settings.Current, Secrets))
+        foreach (var group in TranslationEngines.TranslationMenu(Settings.Current))
         {
             if (!first) menu.Items.Add(new Separator());
             first = false;
             menu.Items.Add(new MenuItem { Header = group.Title, IsEnabled = false });
-            foreach (var choice in group.Choices)
+            foreach (var entry in group.Items)
             {
-                var item = new MenuItem { Header = choice.Title, IsCheckable = false, IsChecked = choice.Selected, IsEnabled = choice.Enabled };
-                item.Click += (_, _) => SelectModel(choice);
-                menu.Items.Add(item);
+                menu.Items.Add(PopupMenus.Item(entry.Title, () => SelectModel(entry.Choice), entry.Selected));
             }
         }
-        menu.IsOpen = true;
+        menu.Items.Add(new Separator());
+        menu.Items.Add(PopupMenus.Item(Strings.Menu_ManageModels, ShowModelServices));
+        return menu;
     }
 
     public void Export(SubtitleFileFormat format) => Controller.ExportSubtitles(format);
+
+    public void GenerateNotes() => Controller.GenerateNotes();
 
     public void ShowHistory()
     {
         if (historyWindow is null)
         {
-            historyWindow = new HistoryWindow(Controller);
+            historyWindow = new HistoryWindow(Controller, Settings);
             historyWindow.Closed += (_, _) => historyWindow = null;
         }
         historyWindow.Show();
+        if (historyWindow.WindowState == WindowState.Minimized) historyWindow.WindowState = WindowState.Normal;
         historyWindow.Activate();
     }
 
@@ -249,7 +321,7 @@ public sealed class AppShell : IDisposable
     {
         if (settingsWindow is null)
         {
-            settingsWindow = new SettingsWindow(Settings, Secrets, this);
+            settingsWindow = new SettingsWindow(Settings, this);
             settingsWindow.Closed += (_, _) => settingsWindow = null;
         }
         settingsWindow.Show();
@@ -257,16 +329,49 @@ public sealed class AppShell : IDisposable
         settingsWindow.Activate();
     }
 
+    /// <summary>“模型服务”窗口：只开一个，已经打开时提到前面。</summary>
+    public void ShowModelServices()
+    {
+        if (modelServicesWindow is null)
+        {
+            modelServicesWindow = new ModelServicesWindow(Settings, Secrets);
+            modelServicesWindow.Closed += (_, _) => modelServicesWindow = null;
+        }
+        modelServicesWindow.Show();
+        if (modelServicesWindow.WindowState == WindowState.Minimized) modelServicesWindow.WindowState = WindowState.Normal;
+        modelServicesWindow.Activate();
+    }
+
     public async void NewSession()
     {
         await Controller.NewSession();
+        // 新的记录也是新的对话；面板开着时提前启动它的会话。
+        if (AssistantVisible && OverlayVisible) Controller.Assistant.WarmUp();
         tray?.Update();
     }
 
+    /// <summary>打开记录文件夹；已经有记录文件时选中它（与 macOS 相同）。</summary>
     public void OpenTranscriptFolder()
     {
-        var folder = Controller.TranscriptPath is { } path ? Path.GetDirectoryName(path)! : Settings.Current.TranscriptFolder;
-        OpenInExplorer(folder);
+        if (Controller.TranscriptPath is { } path && File.Exists(path))
+        {
+            RevealInExplorer(path);
+            return;
+        }
+        OpenInExplorer(Controller.TranscriptPath is { } p ? Path.GetDirectoryName(p)! : Settings.Current.TranscriptFolder);
+    }
+
+    /// <summary>在资源管理器中打开文件所在的文件夹，并选中这个文件。</summary>
+    public static void RevealInExplorer(string file)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file}\"") { UseShellExecute = true });
+        }
+        catch (Exception e)
+        {
+            AppLog.Error("reveal file failed", e);
+        }
     }
 
     public static void OpenInExplorer(string path)
@@ -289,6 +394,7 @@ public sealed class AppShell : IDisposable
         tray?.Dispose();
         tray = null;
         trayTimer?.Stop();
+        assistantWindow?.Hide();
         overlay?.Hide();
         try
         {

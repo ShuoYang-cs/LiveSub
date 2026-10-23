@@ -5,24 +5,31 @@ namespace LiveSub.Core;
 ///
 /// macOS 实测：口音较重的讲课平均置信度约 0.73，清晰的英语 0.9 以上。判断为“难识别”时让模型按发音纠正识别错误；
 /// 用两个阈值（滞回）避免在临界值附近来回切换。Windows 版的置信度来自 Whisper 的逐词概率，刻度可能不同，需要实测校准。
+/// 进入快、退出慢：口音重的讲者中间常有几句说得清楚（macOS 2026-10-21 实测一节课里“清晰”多半只持续二十几秒），
+/// 以前一清楚就退出，一个半小时来回切换 47 次，每次都要换翻译会话。现在要连续清楚 <see cref="Config.ExitAfter"/> 才退出；
+/// 纠正多开一会儿几乎没有坏处。
 /// </summary>
 public sealed class RecognitionQualityMonitor
 {
     public sealed record Config
     {
-        /// <summary>统计最近这么多个词。</summary>
-        public int Window { get; init; } = 40;
+        /// <summary>统计最近这么多个词（讲课约 25 秒的话）。一两句没认准不会马上判为难识别；换成口音重的讲者时，大约 15 秒开始纠正。</summary>
+        public int Window { get; init; } = 60;
         /// <summary>至少有这么多个词才开始判断。</summary>
         public int MinWords { get; init; } = 20;
         /// <summary>平均置信度低于它：判定为难识别。</summary>
         public double EnterBelow { get; init; } = 0.80;
-        /// <summary>难识别状态下平均置信度高于它：恢复为清晰。</summary>
+        /// <summary>难识别状态下平均置信度高于它：开始计时，准备恢复为清晰。</summary>
         public double ExitAbove { get; init; } = 0.86;
+        /// <summary>平均置信度连续这么久都高于 <see cref="ExitAbove"/>，才恢复为清晰；中间有一次不够高就重新计时。</summary>
+        public TimeSpan ExitAfter { get; init; } = TimeSpan.FromSeconds(60);
     }
 
     public Config Settings { get; }
     public bool IsDifficult { get; private set; }
     private readonly List<double> confidences = [];
+    /// <summary>难识别状态下，从什么时候起平均置信度一直高于 ExitAbove。</summary>
+    private DateTime? clearSince;
 
     public RecognitionQualityMonitor(Config? config = null)
     {
@@ -34,15 +41,29 @@ public sealed class RecognitionQualityMonitor
         confidences.Count >= Settings.MinWords ? confidences.Sum() / confidences.Count : null;
 
     /// <summary>加入一句确认结果里各个词的置信度。返回 true 表示“难识别”状态变了。</summary>
-    public bool Add(IEnumerable<double> wordConfidences)
+    public bool Add(IEnumerable<double> wordConfidences, DateTime? now = null)
     {
+        var time = now ?? DateTime.UtcNow;
         confidences.AddRange(wordConfidences);
         if (confidences.Count > Settings.Window) confidences.RemoveRange(0, confidences.Count - Settings.Window);
         if (AverageConfidence is not { } average) return false;
-        bool difficult = IsDifficult ? average <= Settings.ExitAbove : average < Settings.EnterBelow;
-        bool changed = difficult != IsDifficult;
-        IsDifficult = difficult;
-        return changed;
+        if (!IsDifficult)
+        {
+            if (average >= Settings.EnterBelow) return false;
+            IsDifficult = true;
+            clearSince = null;
+            return true;
+        }
+        if (average <= Settings.ExitAbove)
+        {
+            clearSince = null;
+            return false;
+        }
+        clearSince ??= time;
+        if (time - clearSince.Value < Settings.ExitAfter) return false;
+        IsDifficult = false;
+        clearSince = null;
+        return true;
     }
 }
 

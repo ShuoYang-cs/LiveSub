@@ -1,37 +1,58 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Reflection;
 using System.Windows.Forms;
+using LiveSub.App.Audio;
 using LiveSub.App.Localization;
 using LiveSub.App.Services;
 using LiveSub.App.Translation;
+using LiveSub.Core.Audio;
 using LiveSub.Core.Subtitles;
 using Microsoft.Win32;
 
 namespace LiveSub.App.UI;
 
 /// <summary>
-/// 托盘图标与菜单。左键单击显示或隐藏字幕；右键弹出菜单（每次打开时按当前状态重建）。
-/// 图标是运行时画的：正在听时实心，停止时空心；按任务栏深浅色选颜色。
+/// 托盘图标与菜单（与 macOS 的菜单栏图标相同）：左键单击时，字幕收起着就把它显示出来，否则弹出菜单；右键总是弹出菜单。
+/// 菜单每次打开时按当前状态重建。图标是运行时画的：正在听时实心，停止时空心；按任务栏深浅色选颜色。
 /// </summary>
 public sealed class TrayIcon : IDisposable
 {
+    /// <summary>
+    /// NotifyIcon 右键弹菜单用的私有方法：先把程序提到前台再弹出，点菜单外面时菜单才会关上。
+    /// 左键也用它，与右键的菜单表现一致；找不到时（以后的 .NET 改了名字）直接弹出。
+    /// </summary>
+    private static readonly MethodInfo? ShowContextMenuMethod =
+        typeof(NotifyIcon).GetMethod("ShowContextMenu", BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes);
+
     private readonly AppShell shell;
     private readonly NotifyIcon icon = new();
     private readonly ContextMenuStrip menu = new();
     private IntPtr iconHandle;
     private bool? drawnRunning;
+    /// <summary>菜单开着时再点图标：按下时菜单已经关上，松开时不要又把它打开。</summary>
+    private DateTime menuClosedAt = DateTime.MinValue;
 
     public TrayIcon(AppShell shell)
     {
         this.shell = shell;
         menu.Opening += (_, _) => BuildMenu();
+        menu.Closed += (_, _) => menuClosedAt = DateTime.UtcNow;
         icon.ContextMenuStrip = menu;
         icon.MouseClick += (_, e) =>
         {
-            if (e.Button == MouseButtons.Left) shell.ToggleOverlay();
+            if (e.Button != MouseButtons.Left) return;
+            if (!shell.OverlayVisible) shell.ShowOverlay();
+            else if (DateTime.UtcNow - menuClosedAt > TimeSpan.FromMilliseconds(300)) ShowMenu();
         };
         Update();
         icon.Visible = true;
+    }
+
+    private void ShowMenu()
+    {
+        if (ShowContextMenuMethod is not null) ShowContextMenuMethod.Invoke(icon, null);
+        else menu.Show(Cursor.Position);
     }
 
     /// <summary>按运行状态更新图标和提示文字。</summary>
@@ -53,29 +74,20 @@ public sealed class TrayIcon : IDisposable
         var s = shell.Settings.Current;
         menu.Items.Clear();
         menu.Items.Add(new ToolStripMenuItem(Shorten(c.Status)) { Enabled = false });
+        // 字幕锁定后点不到提示上的按钮，托盘菜单里也放一个。
+        if (c.MicrophoneBlock != MicrophoneBlock.None) menu.Items.Add(Item(Strings.Overlay_OpenMicrophoneSettings, MicrophonePrivacy.OpenSettings));
         menu.Items.Add(new ToolStripSeparator());
 
+        // 顺序与 macOS 的菜单相同。
         bool active = c.IsRunning || c.IsStarting;
         menu.Items.Add(Item(active ? Strings.Menu_Stop : Strings.Menu_Start, shell.ToggleRunning, enabled: !c.IsBusy || c.IsStarting));
 
         var sourceMenu = new ToolStripMenuItem(Strings.Menu_AudioSource);
-        sourceMenu.DropDownItems.Add(Item(Strings.Source_Microphone, () => shell.SelectAudioSource(AudioSourceMode.Microphone), s.AudioSource == AudioSourceMode.Microphone));
-        sourceMenu.DropDownItems.Add(Item(Strings.Source_System, () => shell.SelectAudioSource(AudioSourceMode.System), s.AudioSource == AudioSourceMode.System));
-        menu.Items.Add(sourceMenu);
-
-        var modelMenu = new ToolStripMenuItem(Strings.Menu_Model);
-        bool first = true;
-        foreach (var group in TranslationEngines.Choices(s, shell.Secrets))
+        foreach (var (mode, title, _) in AppShell.AudioSources)
         {
-            if (!first) modelMenu.DropDownItems.Add(new ToolStripSeparator());
-            first = false;
-            modelMenu.DropDownItems.Add(new ToolStripMenuItem(group.Title) { Enabled = false });
-            foreach (var choice in group.Choices)
-            {
-                modelMenu.DropDownItems.Add(Item(choice.Title, () => shell.SelectModel(choice), choice.Selected, choice.Enabled));
-            }
+            sourceMenu.DropDownItems.Add(Item(title, () => shell.SelectAudioSource(mode), s.AudioSource == mode));
         }
-        menu.Items.Add(modelMenu);
+        menu.Items.Add(sourceMenu);
 
         var displayMenu = new ToolStripMenuItem(Strings.Menu_Display);
         foreach (var (mode, title) in AppShell.DisplayModes)
@@ -83,20 +95,40 @@ public sealed class TrayIcon : IDisposable
             displayMenu.DropDownItems.Add(Item(title, () => shell.SelectDisplayMode(mode), s.DisplayMode == mode));
         }
         menu.Items.Add(displayMenu);
+
+        // 翻译模型：“云端模型”“本地模型”两组（组名不可点），最后是“管理模型服务…”。
+        var modelMenu = new ToolStripMenuItem(Strings.Menu_Model);
+        bool first = true;
+        foreach (var group in TranslationEngines.TranslationMenu(s))
+        {
+            if (!first) modelMenu.DropDownItems.Add(new ToolStripSeparator());
+            first = false;
+            modelMenu.DropDownItems.Add(new ToolStripMenuItem(group.Title) { Enabled = false });
+            foreach (var item in group.Items)
+            {
+                modelMenu.DropDownItems.Add(Item(item.Title, () => shell.SelectModel(item.Choice), item.Selected));
+            }
+        }
+        modelMenu.DropDownItems.Add(new ToolStripSeparator());
+        modelMenu.DropDownItems.Add(Item(Strings.Menu_ManageModels, shell.ShowModelServices));
+        menu.Items.Add(modelMenu);
         menu.Items.Add(new ToolStripSeparator());
 
         var show = Item(shell.OverlayVisible ? Strings.Menu_HideOverlay : Strings.Menu_ShowOverlay, shell.ToggleOverlay);
         show.ShortcutKeyDisplayString = HotKeys.Text(s.HotKey) ?? "";
         menu.Items.Add(show);
+        menu.Items.Add(Item(Strings.Assistant_Title, shell.ToggleAssistantFromMenu, shell.AssistantVisible));
         menu.Items.Add(Item(Strings.Menu_Lock, shell.ToggleLock, s.ClickThrough));
         menu.Items.Add(Item(Strings.Menu_ResetPosition, shell.ResetOverlayPosition));
         menu.Items.Add(new ToolStripSeparator());
 
+        menu.Items.Add(Item(Strings.Menu_History, shell.ShowHistory));
+        menu.Items.Add(Item(c.IsGeneratingNotes ? Strings.Menu_GeneratingNotes : Strings.Menu_GenerateNotes, shell.GenerateNotes,
+            enabled: !c.IsGeneratingNotes && c.Book.Lines.Count > 0));
         var export = new ToolStripMenuItem(Strings.Menu_Export) { Enabled = c.Book.Lines.Count > 0 };
         export.DropDownItems.Add(Item("SRT…", () => shell.Export(SubtitleFileFormat.Srt)));
         export.DropDownItems.Add(Item("WebVTT…", () => shell.Export(SubtitleFileFormat.Vtt)));
         menu.Items.Add(export);
-        menu.Items.Add(Item(Strings.Menu_History, shell.ShowHistory));
         menu.Items.Add(Item(Strings.Menu_NewSession, shell.NewSession));
         menu.Items.Add(Item(Strings.Menu_OpenFolder, shell.OpenTranscriptFolder));
         menu.Items.Add(new ToolStripSeparator());

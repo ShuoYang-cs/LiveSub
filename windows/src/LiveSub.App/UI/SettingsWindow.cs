@@ -1,7 +1,9 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Threading;
+using System.Windows.Input;
+using System.Windows.Media;
 using LiveSub.App.Localization;
 using LiveSub.App.Services;
 using LiveSub.App.Speech;
@@ -9,62 +11,58 @@ using LiveSub.App.Translation;
 using LiveSub.Core;
 using LiveSub.Core.Chat;
 using LiveSub.Core.Speech;
-using LiveSub.Core.Subtitles;
 
 namespace LiveSub.App.UI;
 
 /// <summary>
-/// 设置（一页，改了自动生效）：翻译、Claude Code、Anthropic API、OpenAI 兼容接口、语音识别、字幕、记录。
+/// 设置（一页，改了自动生效），布局与 macOS 版相同：翻译、字幕，以及默认收起的“更多”（不常用的设置和 Windows 版特有的识别设置）。
+/// 托盘菜单、字幕上的按钮、模型服务窗口改了设置时，这里跟着更新。
 /// </summary>
 public sealed class SettingsWindow : Window
 {
+    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, Segoe MDL2 Assets");
+
     private readonly SettingsService settings;
-    private readonly SecretStore secrets;
     private readonly AppShell shell;
     private AppSettings S => settings.Current;
+    /// <summary>正在按设置更新控件：这时控件的改动事件不当成用户的操作。</summary>
     private bool loading = true;
+    private bool refreshQueued;
 
     private readonly StackPanel body = new() { Margin = new Thickness(20, 8, 20, 20) };
-    private readonly ComboBox engineBox = new();
+    /// <summary>按当前设置重新显示控件（值、显示/隐藏、跟着设置变的文字）。</summary>
+    private readonly List<Action> refreshers = [];
+    private readonly ComboBox modelBox = new();
+    /// <summary>模型列表上次的内容；没变时不重建，免得打断正在打开的下拉列表。</summary>
+    private string modelBoxSignature = "";
     private readonly TextBlock claudeStatus = Note();
-    private readonly ComboBox anthropicModelBox = new() { IsEditable = true };
-    private readonly TextBlock anthropicStatus = Note();
-    private readonly ListBox providerList = new() { Height = 96 };
-    private readonly StackPanel providerDetails = new();
-    private readonly TextBox providerName = new();
-    private readonly TextBox providerUrl = new();
-    private readonly PasswordBox providerKey = new();
-    private readonly ComboBox providerModel = new() { IsEditable = true };
-    private readonly TextBlock providerStatus = Note();
-    private readonly TextBlock testStatus = Note();
     private readonly TextBlock modelStatus = Note();
     private readonly Button downloadButton = new();
     private CancellationTokenSource? downloadCancel;
-    private ProviderConfig? editingProvider;
-    /// <summary>延迟保存当前服务密钥的计时器；切换服务前要先保存，否则密钥会存到别的服务名下或丢失。</summary>
-    private DispatcherTimer? providerKeyTimer;
 
-    public SettingsWindow(SettingsService settings, SecretStore secrets, AppShell shell)
+    public SettingsWindow(SettingsService settings, AppShell shell)
     {
         this.settings = settings;
-        this.secrets = secrets;
         this.shell = shell;
         Title = $"{Strings.AppName} · {Strings.Settings_Title}";
-        Width = 600;
-        Height = 760;
-        MinWidth = 480;
+        Width = 560;
+        Height = 720;
+        MinWidth = 460;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         Content = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
 
         BuildTranslation();
-        BuildClaudeCode();
-        BuildAnthropic();
-        BuildProviders();
-        BuildRecognition();
         BuildOverlay();
-        BuildRecords();
+        BuildMore();
+        Refresh();
         loading = false;
-        Closed += (_, _) => downloadCancel?.Cancel();
+
+        settings.Changed += OnSettingsChanged;
+        Closed += (_, _) =>
+        {
+            settings.Changed -= OnSettingsChanged;
+            downloadCancel?.Cancel();
+        };
     }
 
     private void Commit(SettingsChange change)
@@ -72,91 +70,222 @@ public sealed class SettingsWindow : Window
         if (!loading) settings.Commit(change);
     }
 
+    /// <summary>
+    /// 设置改了（不管是这里还是别处改的）：稍后按设置更新一遍控件。
+    /// 放到事件处理之后再做，不在控件自己的改动事件里重建它；值没变的控件不动，正在输入的文字不会被打断。
+    /// </summary>
+    private void OnSettingsChanged(SettingsChange change)
+    {
+        if (refreshQueued) return;
+        refreshQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            refreshQueued = false;
+            Refresh();
+        });
+    }
+
+    private void Refresh()
+    {
+        bool wasLoading = loading;
+        loading = true;
+        try
+        {
+            foreach (var refresh in refreshers) refresh();
+        }
+        finally
+        {
+            loading = wasLoading;
+        }
+    }
+
     // MARK: - 翻译
 
     private void BuildTranslation()
     {
         Section(Strings.Section_Translation);
-        var source = Combo(LanguageOption.Sources.Select(LanguageName), LanguageOption.Sources.ToList().FindIndex(o => o.Id == S.SourceLanguage),
-            i => { S.SourceLanguage = LanguageOption.Sources[i].Id; Commit(SettingsChange.Recognition | SettingsChange.Translation); });
-        Row(Strings.Label_SourceLanguage, source);
-        var target = Combo(LanguageOption.Targets.Select(LanguageName), LanguageOption.Targets.ToList().FindIndex(o => o.Id == S.TargetLanguage),
-            i => { S.TargetLanguage = LanguageOption.Targets[i].Id; Commit(SettingsChange.Translation | SettingsChange.Appearance); });
-        Row(Strings.Label_TargetLanguage, target);
-        var audio = Combo([Strings.Source_Microphone, Strings.Source_System], S.AudioSource == AudioSourceMode.Microphone ? 0 : 1,
-            i => { S.AudioSource = i == 0 ? AudioSourceMode.Microphone : AudioSourceMode.System; Commit(SettingsChange.Recognition); });
-        Row(Strings.Label_AudioSource, audio);
+        var sources = LanguageOption.Sources;
+        var source = Combo(sources.Select(LanguageName), () => IndexOf(sources, o => o.Id == S.SourceLanguage),
+            i => { S.SourceLanguage = sources[i].Id; Commit(SettingsChange.Recognition | SettingsChange.Translation); });
+        var targets = LanguageOption.Targets;
+        var target = Combo(targets.Select(LanguageName), () => IndexOf(targets, o => o.Id == S.TargetLanguage),
+            i => { S.TargetLanguage = targets[i].Id; Commit(SettingsChange.Translation | SettingsChange.Appearance); });
+        Row(Strings.Label_Language, LanguagePair(source, target));
 
-        RefreshEngineBox();
-        engineBox.SelectionChanged += (_, _) =>
+        var audioSources = AppShell.AudioSources;
+        Row(Strings.Label_AudioSource, Segmented(audioSources.Select(a => a.ShortTitle), () => IndexOf(audioSources, a => a.Mode == S.AudioSource),
+            i => { S.AudioSource = audioSources[i].Mode; Commit(SettingsChange.Recognition); }));
+        // 只录系统声音时用不到，不显示（与 macOS 相同）。
+        var noiseReduction = Row(Strings.Label_MicNoiseReduction,
+            Check(() => S.MicNoiseReduction, v => { S.MicNoiseReduction = v; Commit(SettingsChange.Recognition); }, Strings.Tip_MicNoiseReduction),
+            Strings.Tip_MicNoiseReduction);
+        refreshers.Add(() => noiseReduction.SetVisible(S.AudioSource != AudioSourceMode.System));
+
+        modelBox.ToolTip = Strings.Tip_TranslationModel;
+        AutomationProperties.SetName(modelBox, Strings.Label_TranslationModel);
+        modelBox.SelectionChanged += (_, _) =>
         {
-            if (loading || engineBox.SelectedItem is not ComboBoxItem { Tag: EngineChoice choice }) return;
-            S.Engine = choice.Kind;
-            if (choice.ProviderId is not null) S.ActiveProviderId = choice.ProviderId;
+            if (loading || modelBox.SelectedItem is not ComboBoxItem { Tag: ModelChoice choice } || choice == S.TranslationModel) return;
+            S.TranslationModel = choice;
             Commit(SettingsChange.Translation);
         };
-        Row(Strings.Label_Engine, engineBox);
-        var test = new Button { Content = Strings.Button_Test, Padding = new Thickness(12, 3, 12, 3), HorizontalAlignment = HorizontalAlignment.Left };
-        test.Click += async (_, _) => await TestTranslation(test);
-        Row("", Stack(test, testStatus));
+        refreshers.Add(RefreshModelBox);
+        Row(Strings.Label_TranslationModel, modelBox, Strings.Tip_TranslationModel);
+
+        var services = Note();
+        services.VerticalAlignment = VerticalAlignment.Center;
+        services.Margin = new Thickness(0);
+        refreshers.Add(() => services.Text = S.Endpoints.Count == 0
+            ? Strings.ModelServices_None
+            : Strings.Format(Strings.ModelServices_Count, S.Endpoints.Count));
+        Row(Strings.ModelServices_Title, WithButtons(services, SmallButton(Strings.Button_Manage, shell.ShowModelServices)));
+
+        // 讲话语言是中文时没有意义，不显示。
+        var filter = Row(Strings.Label_FilterChinese,
+            Check(() => S.FilterChinese, v => { S.FilterChinese = v; Commit(SettingsChange.Recognition); }, Strings.Tip_FilterChinese),
+            Strings.Tip_FilterChinese);
+        refreshers.Add(() => filter.SetVisible(!S.SourceLanguage.StartsWith("zh", StringComparison.Ordinal)));
     }
 
-    private sealed record EngineChoice(EngineKind Kind, string? ProviderId);
-
-    private void RefreshEngineBox()
+    /// <summary>翻译模型：“云端模型”“本地模型”两组，组名不可选（与 macOS 的分组菜单相同）。</summary>
+    private void RefreshModelBox()
     {
-        bool wasLoading = loading;
-        loading = true;
-        engineBox.Items.Clear();
-        engineBox.Items.Add(new ComboBoxItem { Content = Strings.Group_ClaudeCode, Tag = new EngineChoice(EngineKind.ClaudeCode, null) });
-        engineBox.Items.Add(new ComboBoxItem { Content = Strings.Group_Anthropic, Tag = new EngineChoice(EngineKind.Anthropic, null) });
-        foreach (var p in S.Providers)
+        var groups = TranslationEngines.TranslationMenu(S);
+        var signature = string.Join('\u0001', groups.SelectMany(g => g.Items.Select(i => i.Title).Prepend("#" + g.Title)));
+        if (signature != modelBoxSignature)
         {
-            engineBox.Items.Add(new ComboBoxItem { Content = p.Name, Tag = new EngineChoice(EngineKind.OpenAICompatible, p.Id) });
+            modelBoxSignature = signature;
+            modelBox.Items.Clear();
+            foreach (var group in groups)
+            {
+                modelBox.Items.Add(new ComboBoxItem { Content = group.Title, IsEnabled = false, FontWeight = FontWeights.SemiBold });
+                foreach (var item in group.Items)
+                {
+                    modelBox.Items.Add(new ComboBoxItem { Content = item.Title, Tag = item.Choice, Padding = new Thickness(16, 2, 4, 2) });
+                }
+            }
         }
-        engineBox.SelectedIndex = S.Engine switch
+        // 所选模型已不在列表里（例如从服务的模型里删掉了）时不选任何一项，与 macOS 相同。
+        modelBox.SelectedItem = modelBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => i.Tag is ModelChoice c && c == S.TranslationModel);
+    }
+
+    // MARK: - 字幕
+
+    private void BuildOverlay()
+    {
+        Section(Strings.Section_Overlay);
+        var modes = AppShell.DisplayModes;
+        Row(Strings.Label_DisplayMode, Segmented(modes.Select(m => m.Title), () => IndexOf(modes, m => m.Mode == S.DisplayMode),
+            i => { S.DisplayMode = modes[i].Mode; Commit(SettingsChange.Appearance); }));
+        // 一个滑块同时调译文和原文字号（原文约为译文的 0.62 倍）。
+        Row(Strings.Label_FontSize, SliderWithValue(14, 56, 1, () => S.TranslationFontSize, "0", v =>
         {
-            EngineKind.ClaudeCode => 0,
-            EngineKind.Anthropic => 1,
-            _ => Math.Max(0, 2 + S.Providers.FindIndex(p => p.Id == S.ActiveProviderId)),
+            S.TranslationFontSize = Math.Round(v, MidpointRounding.AwayFromZero);
+            S.SourceFontSize = Math.Round(v * 0.62, MidpointRounding.AwayFromZero);
+            Commit(SettingsChange.Appearance);
+        }));
+        Row(Strings.Label_Opacity, SliderWithValue(0, 1, 0.05, () => S.BackgroundOpacity, "0%",
+            v => { S.BackgroundOpacity = v; Commit(SettingsChange.Appearance); }));
+
+        // 拖过上下边框（高度固定）时，高度不再按句数算，不显示这一项。
+        var lines = Row("", Stepper(1, 6, () => S.VisibleLines, n => { S.VisibleLines = n; Commit(SettingsChange.Appearance); }));
+        refreshers.Add(() =>
+        {
+            lines.Label.Text = Strings.Format(Strings.Label_VisibleLines, Math.Clamp(S.VisibleLines, 1, 6));
+            lines.SetVisible(S.OverlayHeight <= 0);
+        });
+
+        var resizeNote = Note();
+        resizeNote.Text = Strings.Note_Resize;
+        resizeNote.VerticalAlignment = VerticalAlignment.Center;
+        resizeNote.Margin = new Thickness(0);
+        var reset = SmallButton(Strings.Button_ResetSize, () =>
+        {
+            S.OverlayWidth = OverlayWindow.DefaultWidth;
+            S.OverlayHeight = 0;
+            Commit(SettingsChange.Appearance);
+        });
+        Row(Strings.Label_Size, WithButtons(resizeNote, reset));
+    }
+
+    // MARK: - 更多
+
+    private void BuildMore()
+    {
+        // “更多”默认收起，不记住展开状态（与 macOS 相同）。
+        var content = new StackPanel { Visibility = Visibility.Collapsed };
+        var chevron = new TextBlock
+        {
+            Text = "", // ChevronRight
+            FontFamily = IconFont,
+            FontSize = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 2, 8, 0),
         };
-        loading = wasLoading;
+        var title = new StackPanel { Orientation = Orientation.Horizontal };
+        title.Children.Add(chevron);
+        title.Children.Add(new TextBlock { Text = Strings.Section_More, FontSize = 15, FontWeight = FontWeights.SemiBold });
+        var header = PlainButton(title);
+        header.Margin = new Thickness(0, 18, 0, 6);
+        header.Click += (_, _) =>
+        {
+            bool open = content.Visibility != Visibility.Visible;
+            content.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            chevron.Text = open ? "" : ""; // ChevronDown / ChevronRight
+        };
+        body.Children.Add(header);
+        body.Children.Add(content);
+        currentGrid = NewGrid();
+        content.Children.Add(currentGrid);
+
+        Row(Strings.Label_ShowStatusBar, Check(() => S.ShowStatusBar, v => { S.ShowStatusBar = v; Commit(SettingsChange.Appearance); }, Strings.Tip_ShowStatusBar),
+            Strings.Tip_ShowStatusBar);
+        Row(Strings.Label_AutoCorrect, Check(() => S.AutoCorrect, v => { S.AutoCorrect = v; Commit(SettingsChange.Translation); }, Strings.Tip_AutoCorrect),
+            Strings.Tip_AutoCorrect);
+        // 打开“自动纠正口音”后才出现，缩进表示从属于它。
+        var keepOriginal = Row(Strings.Label_KeepOriginal,
+            Check(() => S.KeepOriginalText, v => { S.KeepOriginalText = v; Commit(SettingsChange.None); }, Strings.Tip_KeepOriginal),
+            Strings.Tip_KeepOriginal);
+        keepOriginal.Label.Margin = new Thickness(16, 4, 12, 4);
+        refreshers.Add(() => keepOriginal.SetVisible(S.AutoCorrect));
+        Row(Strings.Label_Lock, Check(() => S.ClickThrough, v => { S.ClickThrough = v; Commit(SettingsChange.Appearance); }, Strings.Tip_Lock), Strings.Tip_Lock);
+
+        var folder = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, Opacity = 0.7 };
+        refreshers.Add(() =>
+        {
+            folder.Text = S.TranscriptFolder;
+            folder.ToolTip = S.TranscriptFolder;
+        });
+        var changeFolder = SmallButton(Strings.Button_Change, () =>
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog { InitialDirectory = Directory.Exists(S.TranscriptFolder) ? S.TranscriptFolder : "" };
+            if (SystemDialogs.Show(dialog, this) != true) return;
+            S.TranscriptFolder = dialog.FolderName;
+            Commit(SettingsChange.None);
+        });
+        Row(Strings.Label_TranscriptFolder, WithButtons(folder, changeFolder));
+
+        BuildClaudePath();
+        BuildRecognition();
+
+        var keys = HotKeys.All;
+        var hotKey = Combo(keys.Select(k => HotKeys.Text(k) ?? Strings.HotKey_None), () => IndexOf(keys, k => k == S.HotKey),
+            i => { S.HotKey = keys[i]; Commit(SettingsChange.Appearance); });
+        hotKey.ToolTip = Strings.Tip_HotKey;
+        Row(Strings.Label_HotKey, hotKey, Strings.Tip_HotKey);
     }
 
-    private async Task TestTranslation(Button button)
+    private void BuildClaudePath()
     {
-        button.IsEnabled = false;
-        testStatus.Text = Strings.Status_Testing;
-        try
+        var path = new TextBox { ToolTip = Strings.Tip_ClaudePath };
+        refreshers.Add(() =>
         {
-            using var session = TranslationEngines.Create(S, secrets,
-                Prompts.TranslatorSystemPrompt(S.Source, S.Target));
-            const string sample = "Hello everyone, can you hear me clearly?";
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            var raw = await session.RequestAsync(sample, sample, null, timeout.Token);
-            testStatus.Text = Strings.Format(Strings.Status_TestOk, TranslationOutput.Split(raw, sample, S.Target.IsCJK).Translation);
-        }
-        catch (Exception e)
-        {
-            testStatus.Text = TranslationEngines.Describe(e);
-        }
-        finally
-        {
-            button.IsEnabled = true;
-        }
-    }
-
-    // MARK: - Claude Code
-
-    private void BuildClaudeCode()
-    {
-        Section(Strings.Group_ClaudeCode);
-        var models = TranslationEngines.ClaudeCodeModels;
-        Row(Strings.Label_Model, Combo(models.Select(m => char.ToUpperInvariant(m[0]) + m[1..]), Math.Max(0, models.ToList().IndexOf(S.ClaudeCodeModel)),
-            i => { S.ClaudeCodeModel = models[i]; Commit(SettingsChange.Translation); }));
-        var path = new TextBox { Text = S.ClaudePath, ToolTip = Strings.Tip_ClaudePath };
+            if (path.Text.Trim() != S.ClaudePath) path.Text = S.ClaudePath;
+            UpdateClaudeStatus();
+        });
         path.TextChanged += (_, _) =>
         {
+            if (loading) return;
             S.ClaudePath = path.Text.Trim();
             Commit(SettingsChange.Translation);
             UpdateClaudeStatus();
@@ -164,11 +293,10 @@ public sealed class SettingsWindow : Window
         var browse = SmallButton(Strings.Button_Browse, () =>
         {
             var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "claude|claude.exe;claude.cmd|*.*|*.*" };
-            if (dialog.ShowDialog(this) == true) path.Text = dialog.FileName;
+            if (SystemDialogs.Show(dialog, this) == true) path.Text = dialog.FileName;
         });
-        Row(Strings.Label_ClaudePath, WithButtons(path, browse), Strings.Tip_ClaudePath);
+        Row(Strings.Label_ClaudePath, WithButtons(WithPlaceholder(path, Strings.Hint_ClaudePath), browse), Strings.Tip_ClaudePath);
         Row("", claudeStatus);
-        UpdateClaudeStatus();
     }
 
     private void UpdateClaudeStatus()
@@ -177,239 +305,43 @@ public sealed class SettingsWindow : Window
         claudeStatus.Text = launch is null ? Strings.Status_ClaudeMissing : Strings.Format(Strings.Status_ClaudeFound, launch.DisplayPath);
     }
 
-    // MARK: - Anthropic API
-
-    private void BuildAnthropic()
-    {
-        Section(Strings.Group_Anthropic);
-        var key = new PasswordBox { Password = secrets.Get(SecretStore.AnthropicKey) ?? "", ToolTip = Strings.Tip_ApiKey };
-        var saveTimer = Debounce(() =>
-        {
-            secrets.Set(SecretStore.AnthropicKey, key.Password);
-            anthropicStatus.Text = key.Password.Length > 0 ? Strings.Status_KeySaved : "";
-            Commit(SettingsChange.Translation);
-        });
-        key.PasswordChanged += (_, _) => Restart(saveTimer);
-        Closing += (_, _) => Flush(saveTimer);
-        Row(Strings.Label_ApiKey, key, Strings.Tip_ApiKey);
-
-        FillAnthropicModels();
-        anthropicModelBox.Text = S.AnthropicModel;
-        anthropicModelBox.AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler((_, _) =>
-        {
-            var model = anthropicModelBox.Text.Trim();
-            if (loading || model.Length == 0 || model == S.AnthropicModel) return;
-            S.AnthropicModel = model;
-            Commit(SettingsChange.Translation);
-        }));
-        var fetch = SmallButton(Strings.Button_FetchModels, async () =>
-        {
-            Flush(saveTimer);
-            if (secrets.Get(SecretStore.AnthropicKey) is not { } apiKey)
-            {
-                anthropicStatus.Text = Strings.Format(Strings.Error_MissingKey, "Anthropic API");
-                return;
-            }
-            anthropicStatus.Text = Strings.Status_Fetching;
-            try
-            {
-                var list = await AnthropicTransport.ListModelsAsync(apiKey, CancellationToken.None);
-                S.AnthropicModels = list;
-                Commit(SettingsChange.None);
-                FillAnthropicModels();
-                anthropicStatus.Text = Strings.Format(Strings.Status_FetchedModels, list.Count);
-            }
-            catch (Exception e)
-            {
-                anthropicStatus.Text = TranslationEngines.Describe(e);
-            }
-        });
-        Row(Strings.Label_Model, WithButtons(anthropicModelBox, fetch));
-        Row("", anthropicStatus);
-    }
-
-    private void FillAnthropicModels()
-    {
-        var text = anthropicModelBox.Text;
-        anthropicModelBox.Items.Clear();
-        foreach (var m in AnthropicModelPolicy.KnownModels.Concat(S.AnthropicModels).Distinct()) anthropicModelBox.Items.Add(m);
-        anthropicModelBox.Text = text;
-    }
-
-    // MARK: - OpenAI 兼容接口
-
-    private void BuildProviders()
-    {
-        Section(Strings.Section_Providers);
-        providerList.DisplayMemberPath = nameof(ProviderConfig.Name);
-        providerList.ItemsSource = S.Providers;
-        providerList.SelectionChanged += (_, _) => ShowProvider(providerList.SelectedItem as ProviderConfig);
-
-        var presets = new ComboBox { MinWidth = 140 };
-        foreach (var p in ProviderPreset.All) presets.Items.Add(new ComboBoxItem { Content = Strings.IsChinese ? p.ChineseName : p.Name, Tag = p });
-        presets.Items.Add(new ComboBoxItem { Content = Strings.Preset_Custom, Tag = null });
-        presets.SelectedIndex = 0;
-        var add = SmallButton(Strings.Button_AddProvider, () =>
-        {
-            var preset = (presets.SelectedItem as ComboBoxItem)?.Tag as ProviderPreset;
-            var config = new ProviderConfig
-            {
-                Name = preset is null ? Strings.Preset_Custom : Strings.IsChinese ? preset.ChineseName : preset.Name,
-                BaseUrl = preset?.BaseUrl ?? "",
-            };
-            S.Providers.Add(config);
-            S.ActiveProviderId ??= config.Id;
-            Commit(SettingsChange.None);
-            providerList.Items.Refresh();
-            providerList.SelectedItem = config;
-            RefreshEngineBox();
-        });
-        var remove = SmallButton(Strings.Button_RemoveProvider, () =>
-        {
-            if (providerList.SelectedItem is not ProviderConfig p) return;
-            providerKeyTimer?.Stop(); // 删掉的服务不要再保存密钥
-            S.Providers.Remove(p);
-            secrets.Set(SecretStore.ProviderKey(p.Id), null);
-            if (S.ActiveProviderId == p.Id) S.ActiveProviderId = S.Providers.FirstOrDefault()?.Id;
-            if (S.Engine == EngineKind.OpenAICompatible && S.Providers.Count == 0) S.Engine = EngineKind.ClaudeCode;
-            Commit(SettingsChange.Translation);
-            providerList.Items.Refresh();
-            ShowProvider(null);
-            RefreshEngineBox();
-        });
-        var addRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-        addRow.Children.Add(presets);
-        add.Margin = new Thickness(6, 0, 0, 0);
-        remove.Margin = new Thickness(6, 0, 0, 0);
-        addRow.Children.Add(add);
-        addRow.Children.Add(remove);
-        Row("", Stack(providerList, addRow));
-
-        // 选中的服务
-        var detailsGrid = NewGrid();
-        providerDetails.Children.Add(detailsGrid);
-        providerName.TextChanged += (_, _) =>
-        {
-            if (editingProvider is null || loading) return;
-            editingProvider.Name = providerName.Text.Trim();
-            Commit(SettingsChange.Translation);
-            providerList.Items.Refresh();
-            RefreshEngineBox();
-        };
-        AddRow(detailsGrid, Strings.Label_ProviderName, providerName, null);
-        providerUrl.TextChanged += (_, _) =>
-        {
-            if (editingProvider is null || loading) return;
-            editingProvider.BaseUrl = providerUrl.Text.Trim();
-            Commit(SettingsChange.Translation);
-        };
-        AddRow(detailsGrid, Strings.Label_BaseUrl, providerUrl, Strings.Tip_BaseUrl);
-        var keyTimer = providerKeyTimer = Debounce(() =>
-        {
-            if (editingProvider is null) return;
-            secrets.Set(SecretStore.ProviderKey(editingProvider.Id), providerKey.Password);
-            providerStatus.Text = providerKey.Password.Length > 0 ? Strings.Status_KeySaved : "";
-            Commit(SettingsChange.Translation);
-        });
-        providerKey.ToolTip = Strings.Tip_ApiKey;
-        providerKey.PasswordChanged += (_, _) =>
-        {
-            if (!loading) Restart(keyTimer);
-        };
-        Closing += (_, _) => Flush(keyTimer);
-        AddRow(detailsGrid, Strings.Label_ApiKey, providerKey, Strings.Tip_ApiKey);
-        providerModel.AddHandler(TextBoxBase.TextChangedEvent, new TextChangedEventHandler((_, _) =>
-        {
-            if (editingProvider is null || loading) return;
-            editingProvider.Model = providerModel.Text.Trim();
-            Commit(SettingsChange.Translation);
-        }));
-        var fetch = SmallButton(Strings.Button_FetchModels, async () =>
-        {
-            if (editingProvider is not { } p) return;
-            Flush(keyTimer);
-            providerStatus.Text = Strings.Status_Fetching;
-            try
-            {
-                var transport = new OpenAICompatibleTransport(TranslationEngines.Http, p.BaseUrl,
-                    secrets.Get(SecretStore.ProviderKey(p.Id)), "");
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-                p.Models = await transport.ListModelsAsync(timeout.Token);
-                Commit(SettingsChange.None);
-                FillProviderModels(p);
-                providerStatus.Text = Strings.Format(Strings.Status_FetchedModels, p.Models.Count);
-            }
-            catch (Exception e)
-            {
-                providerStatus.Text = TranslationEngines.Describe(e);
-            }
-        });
-        AddRow(detailsGrid, Strings.Label_Model, WithButtons(providerModel, fetch), null);
-        AddRow(detailsGrid, "", providerStatus, null);
-        body.Children.Add(providerDetails);
-        ShowProvider(S.ActiveProvider ?? S.Providers.FirstOrDefault());
-        if (editingProvider is not null) providerList.SelectedItem = editingProvider;
-    }
-
-    private void ShowProvider(ProviderConfig? p)
-    {
-        // 先把上一个服务还没保存的密钥存到它自己名下。
-        if (providerKeyTimer is not null) Flush(providerKeyTimer);
-        bool wasLoading = loading;
-        loading = true;
-        editingProvider = p;
-        providerDetails.Visibility = p is null ? Visibility.Collapsed : Visibility.Visible;
-        if (p is not null)
-        {
-            providerName.Text = p.Name;
-            providerUrl.Text = p.BaseUrl;
-            providerKey.Password = secrets.Get(SecretStore.ProviderKey(p.Id)) ?? "";
-            FillProviderModels(p);
-            providerModel.Text = p.Model;
-            providerStatus.Text = "";
-        }
-        loading = wasLoading;
-    }
-
-    private void FillProviderModels(ProviderConfig p)
-    {
-        bool wasLoading = loading;
-        loading = true;
-        var text = providerModel.Text;
-        providerModel.Items.Clear();
-        foreach (var m in p.Models) providerModel.Items.Add(m);
-        providerModel.Text = text;
-        loading = wasLoading;
-    }
-
-    // MARK: - 语音识别
-
+    /// <summary>Windows 版特有：Whisper 识别模型、显卡加速、实时预览、模型下载地址。</summary>
     private void BuildRecognition()
     {
-        Section(Strings.Section_Recognition);
         var models = WhisperModel.All;
-        var modelBox = Combo(models.Select(m => $"{m.Id} · {m.ApproxMegabytes} MB"), Math.Max(0, models.ToList().FindIndex(m => m.Id == S.WhisperModel)),
-            i => { S.WhisperModel = models[i].Id; Commit(SettingsChange.Recognition); UpdateModelStatus(); });
+        var modelBox = Combo(models.Select(m => $"{m.Id} · {m.ApproxMegabytes} MB"), () => IndexOf(models, m => m.Id == S.WhisperModel),
+            i => { S.WhisperModel = models[i].Id; Commit(SettingsChange.Recognition); });
         downloadButton.Content = Strings.Button_Download;
         downloadButton.Padding = new Thickness(10, 2, 10, 2);
         downloadButton.Click += async (_, _) => await DownloadModel();
         Row(Strings.Label_WhisperModel, WithButtons(modelBox, downloadButton), Strings.Tip_WhisperModel);
         Row("", modelStatus);
-        UpdateModelStatus();
+        refreshers.Add(UpdateModelStatus);
 
-        Row(Strings.Label_UseGpu, Check(S.UseGpu, v => { S.UseGpu = v; Commit(SettingsChange.None); }, Strings.Tip_UseGpu), Strings.Tip_UseGpu);
-        Row(Strings.Label_LivePreview, Check(S.LivePreview, v => { S.LivePreview = v; Commit(SettingsChange.None); }, Strings.Tip_LivePreview), Strings.Tip_LivePreview);
-        Row(Strings.Label_FilterChinese, Check(S.FilterChinese, v => { S.FilterChinese = v; Commit(SettingsChange.Recognition); }, Strings.Tip_FilterChinese), Strings.Tip_FilterChinese);
-        var mirror = new TextBox { Text = S.ModelMirror, ToolTip = Strings.Tip_ModelMirror };
-        mirror.TextChanged += (_, _) => { S.ModelMirror = mirror.Text.Trim(); Commit(SettingsChange.None); };
+        Row(Strings.Label_UseGpu, Check(() => S.UseGpu, v => { S.UseGpu = v; Commit(SettingsChange.None); }, Strings.Tip_UseGpu), Strings.Tip_UseGpu);
+        Row(Strings.Label_LivePreview, Check(() => S.LivePreview, v => { S.LivePreview = v; Commit(SettingsChange.None); }, Strings.Tip_LivePreview),
+            Strings.Tip_LivePreview);
+        var mirror = new TextBox { ToolTip = Strings.Tip_ModelMirror };
+        refreshers.Add(() =>
+        {
+            if (mirror.Text.Trim() != S.ModelMirror) mirror.Text = S.ModelMirror;
+        });
+        mirror.TextChanged += (_, _) =>
+        {
+            if (loading) return;
+            S.ModelMirror = mirror.Text.Trim();
+            Commit(SettingsChange.None);
+        };
         Row(Strings.Label_ModelMirror, mirror, Strings.Tip_ModelMirror);
     }
 
     private void UpdateModelStatus()
     {
+        // 正在下载时状态里是进度，不要覆盖。
+        if (downloadCancel is not null) return;
         bool downloaded = WhisperModels.IsDownloaded(WhisperModel.Find(S.WhisperModel));
         modelStatus.Text = downloaded ? Strings.Model_Downloaded : Strings.Model_NotDownloaded;
-        downloadButton.IsEnabled = !downloaded && downloadCancel is null;
+        downloadButton.IsEnabled = !downloaded;
     }
 
     private async Task DownloadModel()
@@ -428,8 +360,8 @@ public sealed class SettingsWindow : Window
         catch (Exception e)
         {
             AppLog.Error("model download failed", e);
-            modelStatus.Text = Strings.Format(Strings.Error_ModelDownload, e.Message);
             downloadCancel = null;
+            modelStatus.Text = Strings.Format(Strings.Error_ModelDownload, e.Message);
             downloadButton.IsEnabled = true;
             return;
         }
@@ -437,51 +369,18 @@ public sealed class SettingsWindow : Window
         UpdateModelStatus();
     }
 
-    // MARK: - 字幕
-
-    private void BuildOverlay()
-    {
-        Section(Strings.Section_Overlay);
-        var modes = AppShell.DisplayModes;
-        Row(Strings.Label_DisplayMode, Combo(modes.Select(m => m.Title), modes.Select(m => m.Mode).ToList().IndexOf(S.DisplayMode),
-            i => { S.DisplayMode = modes[i].Mode; Commit(SettingsChange.Appearance); }));
-        Row(Strings.Label_TranslationFontSize, SliderWithValue(14, 48, 1, S.TranslationFontSize, "0", v => { S.TranslationFontSize = v; Commit(SettingsChange.Appearance); }));
-        Row(Strings.Label_SourceFontSize, SliderWithValue(10, 32, 1, S.SourceFontSize, "0", v => { S.SourceFontSize = v; Commit(SettingsChange.Appearance); }));
-        Row(Strings.Label_Opacity, SliderWithValue(0, 1, 0.05, S.BackgroundOpacity, "0%", v => { S.BackgroundOpacity = v; Commit(SettingsChange.Appearance); }));
-        Row(Strings.Label_VisibleLines, Combo(Enumerable.Range(1, 6).Select(n => n.ToString()), Math.Clamp(S.VisibleLines, 1, 6) - 1,
-            i => { S.VisibleLines = i + 1; Commit(SettingsChange.Appearance); }));
-        Row(Strings.Label_ShowStatusBar, Check(S.ShowStatusBar, v => { S.ShowStatusBar = v; Commit(SettingsChange.Appearance); }, Strings.Tip_ShowStatusBar), Strings.Tip_ShowStatusBar);
-        Row(Strings.Label_Lock, Check(S.ClickThrough, v => { S.ClickThrough = v; Commit(SettingsChange.Appearance); }, Strings.Tip_Lock), Strings.Tip_Lock);
-        var keys = HotKeys.All;
-        var hotKey = Combo(keys.Select(k => HotKeys.Text(k) ?? Strings.HotKey_None), Math.Max(0, keys.ToList().IndexOf(S.HotKey)),
-            i => { S.HotKey = keys[i]; Commit(SettingsChange.Appearance); });
-        hotKey.ToolTip = Strings.Tip_HotKey;
-        Row(Strings.Label_HotKey, hotKey, Strings.Tip_HotKey);
-        var reset = new Button { Content = Strings.Button_ResetOverlay, Padding = new Thickness(12, 3, 12, 3), HorizontalAlignment = HorizontalAlignment.Left };
-        reset.Click += (_, _) => shell.ResetOverlayPosition();
-        Row("", reset);
-    }
-
-    // MARK: - 记录
-
-    private void BuildRecords()
-    {
-        Section(Strings.Section_Records);
-        var folder = new TextBox { Text = S.TranscriptFolder };
-        folder.TextChanged += (_, _) => { S.TranscriptFolder = folder.Text.Trim(); Commit(SettingsChange.None); };
-        var browse = SmallButton(Strings.Button_Browse, () =>
-        {
-            var dialog = new Microsoft.Win32.OpenFolderDialog { InitialDirectory = Directory.Exists(S.TranscriptFolder) ? S.TranscriptFolder : "" };
-            if (dialog.ShowDialog(this) == true) folder.Text = dialog.FolderName;
-        });
-        var open = SmallButton(Strings.Button_Open, () => AppShell.OpenInExplorer(S.TranscriptFolder));
-        Row(Strings.Label_TranscriptFolder, WithButtons(folder, browse, open));
-        Row(Strings.Label_KeepOriginal, Check(S.KeepOriginalText, v => { S.KeepOriginalText = v; Commit(SettingsChange.None); }, Strings.Tip_KeepOriginal), Strings.Tip_KeepOriginal);
-    }
-
-    // MARK: - 布局小工具
+    // MARK: - 布局小工具（模型服务窗口也用）
 
     private static string LanguageName(LanguageOption o) => Strings.IsChinese ? o.DisplayName : o.EnglishName;
+
+    private static int IndexOf<T>(IReadOnlyList<T> items, Func<T, bool> match)
+    {
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (match(items[i])) return i;
+        }
+        return -1;
+    }
 
     private Grid? currentGrid;
 
@@ -498,34 +397,55 @@ public sealed class SettingsWindow : Window
         body.Children.Add(currentGrid);
     }
 
-    private static Grid NewGrid()
+    /// <summary>两列：标签、控件。</summary>
+    internal static Grid NewGrid()
     {
         var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         return grid;
     }
 
-    private void Row(string label, UIElement control, string? tip = null) => AddRow(currentGrid!, label, control, tip);
+    /// <summary>一行的标签和控件，用来整行显示或隐藏。</summary>
+    internal sealed record RowParts(TextBlock Label, UIElement Control)
+    {
+        public void SetVisible(bool visible)
+        {
+            var v = visible ? Visibility.Visible : Visibility.Collapsed;
+            Label.Visibility = v;
+            Control.Visibility = v;
+        }
+    }
 
-    private static void AddRow(Grid grid, string label, UIElement control, string? tip)
+    private RowParts Row(string label, UIElement control, string? tip = null) => AddRow(currentGrid!, label, control, tip);
+
+    internal static RowParts AddRow(Grid grid, string label, UIElement control, string? tip)
     {
         int row = grid.RowDefinitions.Count;
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var text = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 4, 12, 4), ToolTip = tip };
+        // 英文标签较长，放不下时折行，不截断。
+        var text = new TextBlock
+        {
+            Text = label,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 4, 12, 4),
+            ToolTip = tip,
+        };
         Grid.SetRow(text, row);
         grid.Children.Add(text);
         if (control is FrameworkElement fe) fe.Margin = new Thickness(0, 4, 0, 4);
         Grid.SetRow(control, row);
         Grid.SetColumn(control, 1);
         grid.Children.Add(control);
+        return new RowParts(text, control);
     }
 
-    private ComboBox Combo(IEnumerable<string> items, int selected, Action<int> onChange)
+    private ComboBox Combo(IEnumerable<string> items, Func<int> selected, Action<int> onChange)
     {
         var box = new ComboBox();
         foreach (var item in items) box.Items.Add(item);
-        box.SelectedIndex = Math.Max(0, selected);
+        refreshers.Add(() => box.SelectedIndex = Math.Max(0, selected()));
         box.SelectionChanged += (_, _) =>
         {
             if (!loading && box.SelectedIndex >= 0) onChange(box.SelectedIndex);
@@ -533,18 +453,78 @@ public sealed class SettingsWindow : Window
         return box;
     }
 
-    private CheckBox Check(bool value, Action<bool> onChange, string? tip)
+    /// <summary>讲话语言 → 字幕语言，放在同一行。</summary>
+    private static FrameworkElement LanguagePair(ComboBox source, ComboBox target)
     {
-        var box = new CheckBox { IsChecked = value, ToolTip = tip, VerticalAlignment = VerticalAlignment.Center };
+        source.ToolTip = Strings.Label_SourceLanguage;
+        target.ToolTip = Strings.Label_TargetLanguage;
+        AutomationProperties.SetName(source, Strings.Label_SourceLanguage);
+        AutomationProperties.SetName(target, Strings.Label_TargetLanguage);
+        var arrow = new TextBlock { Text = "→", Opacity = 0.6, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 8, 0) };
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(arrow, 1);
+        Grid.SetColumn(target, 2);
+        grid.Children.Add(source);
+        grid.Children.Add(arrow);
+        grid.Children.Add(target);
+        return grid;
+    }
+
+    /// <summary>分段选择（相当于 macOS 的 segmented picker）：一排按钮样式的单选按钮。</summary>
+    private FrameworkElement Segmented(IEnumerable<string> titles, Func<int> selected, Action<int> onChange)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+        // 单选按钮套用切换按钮的系统样式，看起来像一组按钮；找不到样式时就是普通的单选按钮。
+        var style = TryFindResource(typeof(ToggleButton)) as Style;
+        var buttons = new List<RadioButton>();
+        foreach (var title in titles)
+        {
+            int index = buttons.Count;
+            var button = new RadioButton
+            {
+                Content = title,
+                Padding = new Thickness(12, 3, 12, 3),
+                MinWidth = 64,
+                Margin = new Thickness(0, 0, style is null ? 12 : -1, 0),
+            };
+            if (style is not null) button.Style = style;
+            button.Checked += (_, _) =>
+            {
+                if (!loading) onChange(index);
+            };
+            buttons.Add(button);
+            panel.Children.Add(button);
+        }
+        refreshers.Add(() =>
+        {
+            int i = selected();
+            for (int k = 0; k < buttons.Count; k++) buttons[k].IsChecked = k == i;
+        });
+        return panel;
+    }
+
+    private CheckBox Check(Func<bool> value, Action<bool> onChange, string? tip)
+    {
+        var box = new CheckBox { ToolTip = tip, VerticalAlignment = VerticalAlignment.Center };
+        refreshers.Add(() => box.IsChecked = value());
         box.Checked += (_, _) => { if (!loading) onChange(true); };
         box.Unchecked += (_, _) => { if (!loading) onChange(false); };
         return box;
     }
 
-    private FrameworkElement SliderWithValue(double min, double max, double step, double value, string format, Action<double> onChange)
+    private FrameworkElement SliderWithValue(double min, double max, double step, Func<double> value, string format, Action<double> onChange)
     {
-        var slider = new Slider { Minimum = min, Maximum = max, TickFrequency = step, IsSnapToTickEnabled = true, Value = value };
-        var label = new TextBlock { Width = 48, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Text = value.ToString(format) };
+        var slider = new Slider { Minimum = min, Maximum = max, TickFrequency = step, IsSnapToTickEnabled = true };
+        var label = new TextBlock { Width = 48, TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+        refreshers.Add(() =>
+        {
+            var v = value();
+            if (Math.Abs(slider.Value - v) > 1e-6) slider.Value = v;
+            label.Text = v.ToString(format);
+        });
         slider.ValueChanged += (_, e) =>
         {
             label.Text = e.NewValue.ToString(format);
@@ -557,14 +537,54 @@ public sealed class SettingsWindow : Window
         return dock;
     }
 
-    private static Button SmallButton(string text, Action action)
+    /// <summary>减一、加一两个按钮（相当于 macOS 的 Stepper），数值显示在这一行的标签里。</summary>
+    private FrameworkElement Stepper(int min, int max, Func<int> value, Action<int> onChange)
+    {
+        var minus = SmallButton("−", () =>
+        {
+            if (value() > min) onChange(value() - 1);
+        });
+        var plus = SmallButton("+", () =>
+        {
+            if (value() < max) onChange(value() + 1);
+        });
+        minus.MinWidth = plus.MinWidth = 32;
+        plus.Margin = new Thickness(6, 0, 0, 0);
+        refreshers.Add(() =>
+        {
+            minus.IsEnabled = value() > min;
+            plus.IsEnabled = value() < max;
+        });
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
+        panel.Children.Add(minus);
+        panel.Children.Add(plus);
+        return panel;
+    }
+
+    internal static Button SmallButton(string text, Action action)
     {
         var b = new Button { Content = text, Padding = new Thickness(10, 2, 10, 2) };
         b.Click += (_, _) => action();
         return b;
     }
 
-    private static FrameworkElement WithButtons(FrameworkElement main, params Button[] buttons)
+    /// <summary>没有边框和背景的按钮（“更多”的标题）。仍然可以用键盘操作。</summary>
+    private static Button PlainButton(UIElement content)
+    {
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        var border = new FrameworkElementFactory(typeof(Border));
+        border.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        border.AppendChild(presenter);
+        return new Button
+        {
+            Content = content,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Cursor = Cursors.Hand,
+            Template = new ControlTemplate(typeof(Button)) { VisualTree = border },
+        };
+    }
+
+    internal static FrameworkElement WithButtons(FrameworkElement main, params Button[] buttons)
     {
         var dock = new DockPanel { LastChildFill = true };
         foreach (var b in buttons.Reverse())
@@ -577,38 +597,40 @@ public sealed class SettingsWindow : Window
         return dock;
     }
 
-    private static StackPanel Stack(params UIElement[] children)
+    internal static TextBlock Note() => new() { Opacity = 0.7, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
+
+    /// <summary>输入框为空时显示的灰色提示（WPF 的输入框没有自带的占位文字）。</summary>
+    internal static FrameworkElement WithPlaceholder(TextBox box, string hint)
     {
-        var panel = new StackPanel();
-        foreach (var c in children) panel.Children.Add(c);
-        return panel;
+        var text = HintText();
+        text.Text = hint;
+        void Update() => text.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        box.TextChanged += (_, _) => Update();
+        Update();
+        var grid = new Grid();
+        grid.Children.Add(box);
+        grid.Children.Add(text);
+        return grid;
     }
 
-    private static TextBlock Note() => new() { Opacity = 0.7, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
-
-    private static DispatcherTimer Debounce(Action action)
+    /// <summary>密码框为空时显示 <paramref name="hint"/>（提示文字由调用方随时修改）。</summary>
+    internal static FrameworkElement WithPlaceholder(PasswordBox box, TextBlock hint)
     {
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
-        timer.Tick += (_, _) =>
-        {
-            timer.Stop();
-            action();
-        };
-        timer.Tag = action;
-        return timer;
+        void Update() => hint.Visibility = box.Password.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        box.PasswordChanged += (_, _) => Update();
+        Update();
+        var grid = new Grid();
+        grid.Children.Add(box);
+        grid.Children.Add(hint);
+        return grid;
     }
 
-    private static void Restart(DispatcherTimer timer)
+    internal static TextBlock HintText() => new()
     {
-        timer.Stop();
-        timer.Start();
-    }
-
-    /// <summary>窗口关闭或需要立即使用时，把还没保存的改动保存掉。</summary>
-    private static void Flush(DispatcherTimer timer)
-    {
-        if (!timer.IsEnabled) return;
-        timer.Stop();
-        (timer.Tag as Action)?.Invoke();
-    }
+        Opacity = 0.45,
+        IsHitTestVisible = false,
+        VerticalAlignment = VerticalAlignment.Center,
+        Margin = new Thickness(5, 0, 5, 0),
+        TextTrimming = TextTrimming.CharacterEllipsis,
+    };
 }

@@ -85,12 +85,15 @@ public static class ClaudeLocator
 /// - 省去每句话重新启动进程的时间；
 /// - 同一会话里前面的句子自然成为上下文，术语前后一致；
 /// - 每 40 句换一个新进程，防止上下文无限变长拖慢速度，新会话第一句带上最近几句作为上下文。
+/// AI 助手和笔记也用它，轮数和超时按用途另设（AI 助手 10000 轮、180 秒；笔记 1 轮、600 秒）。
 /// </summary>
 public sealed class ClaudeCodeSession : IChatSession
 {
     private readonly ClaudeLaunch launch;
     private readonly string model;
     private readonly string systemPrompt;
+    private readonly int maxTurns;
+    private readonly TimeSpan timeout;
     private readonly object gate = new();
 
     // 以下状态只在 gate 锁内访问。
@@ -114,11 +117,16 @@ public sealed class ClaudeCodeSession : IChatSession
 
     public string Name { get; }
 
-    public ClaudeCodeSession(ClaudeLaunch launch, string model, string systemPrompt)
+    /// <param name="maxTurns">一个进程最多回答几轮，到了就换新进程（新进程第一轮发 newSessionMessage）。</param>
+    /// <param name="timeout">每轮最多等多久（默认与翻译相同）。</param>
+    public ClaudeCodeSession(ClaudeLaunch launch, string model, string systemPrompt,
+                             int maxTurns = ClaudeCli.MaxTurnsPerSession, TimeSpan? timeout = null)
     {
         this.launch = launch;
         this.model = model;
         this.systemPrompt = systemPrompt;
+        this.maxTurns = maxTurns;
+        this.timeout = timeout ?? ClaudeCli.Timeout;
         Name = "Claude " + char.ToUpperInvariant(model[0]) + model[1..];
     }
 
@@ -167,7 +175,7 @@ public sealed class ClaudeCodeSession : IChatSession
                 var bytes = Encoding.UTF8.GetBytes(ClaudeStream.UserMessageLine(message));
                 stdin!.Write(bytes);
                 stdin.Flush();
-                p.Timeout = new Timer(_ => OnTimeout(id), null, ClaudeCli.Timeout, System.Threading.Timeout.InfiniteTimeSpan);
+                p.Timeout = new Timer(_ => OnTimeout(id), null, timeout, System.Threading.Timeout.InfiniteTimeSpan);
                 p.Cancellation = cancellationToken.Register(() =>
                 {
                     lock (gate)
@@ -358,14 +366,14 @@ public sealed class ClaudeCodeSession : IChatSession
                 case ClaudeTurn.Outcome.Completed:
                     if (AppLog.DebugLatency) AppLog.Info($"[claude #{p.Id} ←] {p.Turn.FinalText}");
                     Finish(null, p.Turn.FinalText);
-                    if (turnsInSession >= ClaudeCli.MaxTurnsPerSession) TerminateProcess();
+                    if (turnsInSession >= maxTurns) TerminateProcess();
                     break;
                 case ClaudeTurn.Outcome.Failed:
                     var text = p.Turn.FinalText;
                     Finish(ClaudeCli.IsNotLoggedIn(text)
                         ? new ChatProviderException(ChatErrorKind.NotLoggedIn, text)
                         : new ChatProviderException(ChatErrorKind.Other, text));
-                    if (turnsInSession >= ClaudeCli.MaxTurnsPerSession) TerminateProcess();
+                    if (turnsInSession >= maxTurns) TerminateProcess();
                     break;
             }
         }

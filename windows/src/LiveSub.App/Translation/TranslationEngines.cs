@@ -1,106 +1,85 @@
 using LiveSub.App.Localization;
 using LiveSub.App.Services;
+using LiveSub.Core;
 using LiveSub.Core.Chat;
 
 namespace LiveSub.App.Translation;
 
-/// <summary>翻译模型菜单里的一项。</summary>
-public sealed record ModelChoice(string Title, EngineKind Engine, string Model, string? ProviderId, bool Enabled, bool Selected);
+/// <summary>模型菜单里的一项：显示名称，以及是不是当前选中的模型。</summary>
+public sealed record ModelMenuItem(ModelChoice Choice, string Title, bool Selected);
 
-/// <summary>一组模型（菜单里用分隔线和不可点的标题隔开）。</summary>
-public sealed record ModelGroup(string Title, IReadOnlyList<ModelChoice> Choices);
+/// <summary>模型菜单里的一组（“云端模型”“本地模型”，菜单里是不可点的标题）。</summary>
+public sealed record ModelMenuGroup(string Title, IReadOnlyList<ModelMenuItem> Items);
 
-/// <summary>按设置创建翻译会话；列出可选模型；把错误转成给用户看的说明。</summary>
+/// <summary>按所选模型创建会话（翻译、AI 助手、笔记）；列出可选模型；把错误转成给用户看的说明。</summary>
 public static class TranslationEngines
 {
-    /// <summary>所有 OpenAI 兼容服务共用一个 HttpClient（超时由会话自己控制）。</summary>
+    /// <summary>所有 HTTP 模型服务共用一个 HttpClient（超时由会话自己控制）。</summary>
     public static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
 
-    public static readonly IReadOnlyList<string> ClaudeCodeModels = ["haiku", "sonnet", "opus"];
-
-    public static IChatSession Create(AppSettings settings, SecretStore secrets, string systemPrompt)
+    /// <summary>
+    /// Claude Code → 长驻的 claude 进程；Anthropic 格式的服务 → 官方 SDK；OpenAI 兼容的服务 → HTTP 流式接口。
+    /// </summary>
+    /// <param name="maxTurns">一个会话最多几轮，之后换新会话（翻译 40 轮；AI 助手 10000 轮，相当于不换；笔记 1 轮）。</param>
+    /// <param name="timeout">每次请求的超时（默认是翻译用的 25 秒）。</param>
+    public static IChatSession Create(ModelChoice choice, AppSettings settings, SecretStore secrets, string systemPrompt,
+                                      int maxTurns = ClaudeCli.MaxTurnsPerSession, TimeSpan? timeout = null)
     {
-        switch (settings.Engine)
+        if (choice.Kind == ModelKind.ClaudeCode)
         {
-            case EngineKind.ClaudeCode:
-                var launch = ClaudeLocator.Locate(settings.ClaudePath)
-                    ?? throw new ChatProviderException(ChatErrorKind.ClaudeNotFound);
-                return new ClaudeCodeSession(launch, settings.ClaudeCodeModel, systemPrompt);
+            var launch = ClaudeLocator.Locate(settings.ClaudePath)
+                ?? throw new ChatProviderException(ChatErrorKind.ClaudeNotFound);
+            return new ClaudeCodeSession(launch, choice.Model, systemPrompt, maxTurns, timeout);
+        }
 
-            case EngineKind.Anthropic:
-                var key = secrets.Get(SecretStore.AnthropicKey)
-                    ?? throw new ChatProviderException(ChatErrorKind.Configuration, Strings.Format(Strings.Error_MissingKey, "Anthropic API"));
-                return new HistoryChatSession(AnthropicModelPolicy.DisplayName(settings.AnthropicModel),
-                                              new AnthropicTransport(key, settings.AnthropicModel), systemPrompt);
+        var endpoint = settings.Endpoint(choice.EndpointId)
+            ?? throw new ChatProviderException(ChatErrorKind.Configuration, Strings.Error_EndpointMissing);
+        if (!ChatEndpoints.IsValidBaseUrl(endpoint.BaseUrl))
+        {
+            throw new ChatProviderException(ChatErrorKind.Configuration, Strings.Format(Strings.Error_InvalidBaseUrl, endpoint.BaseUrl));
+        }
+        var key = secrets.Get(SecretStore.EndpointKey(endpoint.Id));
+        if (key is null && !endpoint.IsLocal)
+        {
+            throw new ChatProviderException(ChatErrorKind.Configuration, Strings.Format(Strings.Error_MissingKey, endpoint.Name));
+        }
+        IChatTransport transport = endpoint.Format == ChatApiFormat.Anthropic
+            ? new AnthropicTransport(key, choice.Model, endpoint.BaseUrl, timeout)
+            : new OpenAICompatibleTransport(Http, endpoint.BaseUrl, key, choice.Model);
+        return new HistoryChatSession(settings.DisplayName(choice), transport, systemPrompt, maxTurns, timeout);
+    }
 
-            default:
-                var provider = settings.ActiveProvider ?? settings.Providers.FirstOrDefault()
-                    ?? throw new ChatProviderException(ChatErrorKind.Configuration, Strings.Format(Strings.Error_MissingModel, Strings.Section_Providers));
-                if (provider.Model.Trim().Length == 0)
-                {
-                    throw new ChatProviderException(ChatErrorKind.Configuration, Strings.Format(Strings.Error_MissingModel, provider.Name));
-                }
-                var providerKey = secrets.Get(SecretStore.ProviderKey(provider.Id));
-                if (provider.RequiresKey && providerKey is null)
-                {
-                    throw new ChatProviderException(ChatErrorKind.Configuration, Strings.Format(Strings.Error_MissingKey, provider.Name));
-                }
-                return new HistoryChatSession($"{provider.Name} · {provider.Model}",
-                    new OpenAICompatibleTransport(Http, provider.BaseUrl, providerKey, provider.Model.Trim()), systemPrompt);
+    /// <summary>读取模型服务提供的模型列表。</summary>
+    public static async Task<List<string>> ListModelsAsync(ModelEndpoint endpoint, SecretStore secrets, CancellationToken cancellationToken)
+    {
+        if (!ChatEndpoints.IsValidBaseUrl(endpoint.BaseUrl))
+        {
+            throw new ChatProviderException(ChatErrorKind.Configuration, Strings.Format(Strings.Error_InvalidBaseUrl, endpoint.BaseUrl));
+        }
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        try
+        {
+            return await ChatEndpoints.ListModelsAsync(Http, endpoint.Format, endpoint.BaseUrl,
+                secrets.Get(SecretStore.EndpointKey(endpoint.Id)), timeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new ChatProviderException(ChatErrorKind.Timeout);
         }
     }
 
-    /// <summary>状态条上显示的当前模型名称。</summary>
-    public static string CurrentName(AppSettings settings) => settings.Engine switch
-    {
-        EngineKind.ClaudeCode => "Claude " + Capitalize(settings.ClaudeCodeModel),
-        EngineKind.Anthropic => AnthropicModelPolicy.DisplayName(settings.AnthropicModel),
-        _ => settings.ActiveProvider is { } p ? $"{p.Name} · {p.Model}" : Strings.Section_Providers,
-    };
+    /// <summary>托盘菜单、状态条菜单和设置里的翻译模型列表（分组，带当前选中的模型）。</summary>
+    public static List<ModelMenuGroup> TranslationMenu(AppSettings settings) => ModelMenu(settings, settings.TranslationModel);
 
-    /// <summary>托盘菜单和状态条菜单里的模型列表。</summary>
-    public static List<ModelGroup> Choices(AppSettings settings, SecretStore secrets)
-    {
-        var groups = new List<ModelGroup>
-        {
-            new(Strings.Group_ClaudeCode, ClaudeCodeModels.Select(m => new ModelChoice(
-                Capitalize(m), EngineKind.ClaudeCode, m, null, true,
-                settings.Engine == EngineKind.ClaudeCode && settings.ClaudeCodeModel == m)).ToList()),
-        };
+    /// <summary>AI 助手面板里的模型列表：分组与翻译模型相同，选中的是 AI 助手的模型。</summary>
+    public static List<ModelMenuGroup> AssistantMenu(AppSettings settings) => ModelMenu(settings, settings.AssistantModel);
 
-        bool hasKey = secrets.Has(SecretStore.AnthropicKey);
-        var anthropicModels = AnthropicModelPolicy.KnownModels.Concat(settings.AnthropicModels)
-            .Append(settings.AnthropicModel).Distinct().ToList();
-        groups.Add(new ModelGroup(hasKey ? Strings.Group_Anthropic : $"{Strings.Group_Anthropic} · {Strings.Model_NoKey}",
-            anthropicModels.Select(m => new ModelChoice(AnthropicModelPolicy.DisplayName(m), EngineKind.Anthropic, m, null, hasKey,
-                settings.Engine == EngineKind.Anthropic && settings.AnthropicModel == m)).ToList()));
-
-        foreach (var p in settings.Providers)
-        {
-            bool ready = p.Model.Trim().Length > 0 && (!p.RequiresKey || secrets.Has(SecretStore.ProviderKey(p.Id)));
-            var title = p.Model.Trim().Length > 0 ? p.Model : Strings.Model_NotConfigured;
-            groups.Add(new ModelGroup(p.Name, [new ModelChoice(title, EngineKind.OpenAICompatible, p.Model, p.Id, ready,
-                settings.Engine == EngineKind.OpenAICompatible && settings.ActiveProviderId == p.Id)]));
-        }
-        return groups;
-    }
-
-    public static void Select(AppSettings settings, ModelChoice choice)
-    {
-        settings.Engine = choice.Engine;
-        switch (choice.Engine)
-        {
-            case EngineKind.ClaudeCode:
-                settings.ClaudeCodeModel = choice.Model;
-                break;
-            case EngineKind.Anthropic:
-                settings.AnthropicModel = choice.Model;
-                break;
-            default:
-                settings.ActiveProviderId = choice.ProviderId;
-                break;
-        }
-    }
+    private static List<ModelMenuGroup> ModelMenu(AppSettings settings, ModelChoice selected) =>
+        settings.ModelGroups().Select(g => new ModelMenuGroup(
+            g.Kind == ModelGroupKind.Local ? Strings.Group_Local : Strings.Group_Cloud,
+            g.Choices.Select(c => new ModelMenuItem(c, settings.DisplayName(c), c == selected)).ToList()))
+        .ToList();
 
     /// <summary>给用户看的错误说明。</summary>
     public static string Describe(Exception e) => e switch
@@ -124,6 +103,4 @@ public static class TranslationEngines
         s = s.ReplaceLineEndings(" ").Trim();
         return s.Length > 200 ? s[..200] + "…" : s;
     }
-
-    private static string Capitalize(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
 }

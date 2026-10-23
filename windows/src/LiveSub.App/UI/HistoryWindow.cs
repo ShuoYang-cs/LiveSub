@@ -1,6 +1,9 @@
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
+using System.Windows.Documents;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using LiveSub.App.Localization;
 using LiveSub.App.Services;
@@ -9,112 +12,307 @@ using LiveSub.Core.Subtitles;
 
 namespace LiveSub.App.UI;
 
-/// <summary>本次记录的全部字幕（原文 + 译文），可以打开记录文件。搜索留到以后的版本。</summary>
+/// <summary>
+/// “字幕记录”窗口（与 macOS 版 HistoryView 相同）：本次记录的全部字幕，每句显示时间（和标签、附注）、原文、
+/// 纠正前的识别原文、译文，文字可以选中复制。下方是状态、“在资源管理器中显示记录”和“生成笔记”。
+/// 停在底部时跟着新字幕滚动，往上翻看时不打扰。搜索留到以后的版本。
+/// </summary>
 public sealed class HistoryWindow : Window
 {
-    private readonly SubtitleController controller;
-    private readonly ListBox list = new();
-    private readonly System.Collections.ObjectModel.ObservableCollection<string> items = [];
-    private readonly TextBlock empty = new() { Text = Strings.History_Empty, Margin = new Thickness(16), Opacity = 0.6 };
-    private readonly DispatcherTimer refreshTimer;
-    private int shownCount = -1;
-    private int shownDone = -1;
+    private static readonly SolidColorBrush NoteOrange = Freeze(new SolidColorBrush(Color.FromRgb(0xE0, 0x7A, 0x00)));
+    private static readonly SolidColorBrush Hairline = Freeze(new SolidColorBrush(Color.FromArgb(0x1F, 0, 0, 0)));
 
-    public HistoryWindow(SubtitleController controller)
+    private readonly SubtitleController controller;
+    private readonly SettingsService settingsService;
+    private readonly ListBox list = new()
+    {
+        BorderThickness = new Thickness(0),
+        HorizontalContentAlignment = HorizontalAlignment.Stretch,
+    };
+    private readonly ObservableCollection<Row> items = [];
+    private readonly TextBlock empty = new() { Text = Strings.History_Empty, Margin = new Thickness(16), Opacity = 0.6 };
+    private readonly TextBlock status = new()
+    {
+        FontSize = 11,
+        Foreground = SystemColors.GrayTextBrush,
+        TextTrimming = TextTrimming.CharacterEllipsis,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
+    private readonly Button reveal = BarButton(Strings.History_ShowInExplorer);
+    private readonly Button notes = BarButton(Strings.Menu_GenerateNotes);
+    private readonly DispatcherTimer refreshTimer = new() { Interval = TimeSpan.FromSeconds(0.5) };
+    private ScrollViewer? scroller;
+    /// <summary>停在最新一句：有新字幕时跟着滚到底；往上翻看时为 false，不打扰。</summary>
+    private bool following = true;
+
+    public HistoryWindow(SubtitleController controller, SettingsService settingsService)
     {
         this.controller = controller;
+        this.settingsService = settingsService;
         Title = $"{Strings.AppName} · {Strings.History_Title}";
         Width = 640;
         Height = 560;
+        MinWidth = 520;
+        MinHeight = 420;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
-        var text = new FrameworkElementFactory(typeof(TextBlock));
-        text.SetBinding(TextBlock.TextProperty, new Binding("."));
-        text.SetValue(TextBlock.TextWrappingProperty, TextWrapping.Wrap);
-        text.SetValue(MarginProperty, new Thickness(4, 6, 4, 6));
-        list.ItemTemplate = new DataTemplate { VisualTree = text };
-        list.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        // 行只放文字，不要列表的选中底色；列表很长时只创建看得见的行，按像素滚动。
+        var row = new FrameworkElementFactory(typeof(RowView));
+        list.ItemTemplate = new DataTemplate { VisualTree = row };
+        var container = new Style(typeof(ListBoxItem));
+        container.Setters.Add(new Setter(TemplateProperty, new ControlTemplate(typeof(ListBoxItem))
+        {
+            VisualTree = new FrameworkElementFactory(typeof(ContentPresenter)),
+        }));
+        container.Setters.Add(new Setter(FocusableProperty, false));
+        list.ItemContainerStyle = container;
         ScrollViewer.SetHorizontalScrollBarVisibility(list, ScrollBarVisibility.Disabled);
         VirtualizingPanel.SetIsVirtualizing(list, true);
+        VirtualizingPanel.SetVirtualizationMode(list, VirtualizationMode.Recycling);
+        VirtualizingPanel.SetScrollUnit(list, ScrollUnit.Pixel);
         list.ItemsSource = items;
+        // 文字是只读文本框，它们会吞掉滚轮：转交给列表自己的滚动区，滚轮总是滚动整个列表。
+        list.PreviewMouseWheel += (_, e) =>
+        {
+            if (Scroller() is not { } sv || e.Handled) return;
+            e.Handled = true;
+            sv.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta) { RoutedEvent = MouseWheelEvent, Source = sv });
+        };
+        list.Loaded += (_, _) => Scroller();
 
-        var openFile = new Button { Content = Strings.Button_OpenTranscript, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0) };
-        openFile.Click += (_, _) =>
+        reveal.Click += (_, _) =>
         {
-            if (controller.TranscriptPath is { } p) AppShell.OpenInExplorer(p);
+            if (controller.TranscriptPath is { } p) AppShell.RevealInExplorer(p);
         };
-        var openFolder = new Button { Content = Strings.Menu_OpenFolder, Padding = new Thickness(12, 4, 12, 4) };
-        openFolder.Click += (_, _) =>
+        notes.Click += (_, _) =>
         {
-            if (controller.TranscriptPath is { } p) AppShell.OpenInExplorer(Path.GetDirectoryName(p)!);
+            controller.GenerateNotes();
+            RefreshBar();
         };
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(12) };
-        buttons.Children.Add(openFile);
-        buttons.Children.Add(openFolder);
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 0, 0, 0) };
+        buttons.Children.Add(reveal);
+        buttons.Children.Add(notes);
+        var bar = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(buttons, Dock.Right);
+        bar.Children.Add(buttons);
+        bar.Children.Add(status);
+        var barBorder = new Border
+        {
+            Child = bar,
+            Padding = new Thickness(10),
+            BorderBrush = Hairline,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+        };
 
         var dock = new DockPanel();
-        DockPanel.SetDock(buttons, Dock.Bottom);
-        dock.Children.Add(buttons);
+        DockPanel.SetDock(barBorder, Dock.Bottom);
+        dock.Children.Add(barBorder);
         var body = new Grid();
         body.Children.Add(list);
         body.Children.Add(empty);
         dock.Children.Add(body);
         Content = dock;
 
-        refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         refreshTimer.Tick += (_, _) => Refresh();
         refreshTimer.Start();
         Closed += (_, _) => refreshTimer.Stop();
         Refresh();
     }
 
+    private static Button BarButton(string text) => new()
+    {
+        Content = new TextBlock { Text = text },
+        Padding = new Thickness(12, 4, 12, 4),
+        Margin = new Thickness(8, 0, 0, 0),
+    };
+
     private void Refresh()
     {
         var lines = controller.Book.Lines;
-        int done = lines.Count(l => l.State is LineState.Done or LineState.Failed);
-        if (lines.Count == shownCount && done == shownDone) return;
-        bool atEnd = items.Count == 0 || IsScrolledToEnd();
-        shownCount = lines.Count;
-        shownDone = done;
-        // 逐项更新而不是整体替换，往上翻看时滚动位置不会被重置。
-        var fresh = lines.Select(Format).ToList();
-        for (int i = 0; i < Math.Min(items.Count, fresh.Count); i++)
+        var sourceFont = TextFonts.For(settingsService.Current.Source);
+        var targetFont = TextFonts.For(settingsService.Current.Target);
+        // 逐项更新而不是整体替换（翻译完成、纠正原文时只换那一行），往上翻看时滚动位置不会被重置。
+        bool changed = false;
+        for (int i = 0; i < lines.Count; i++)
         {
-            if (items[i] != fresh[i]) items[i] = fresh[i];
+            var fresh = MakeRow(lines[i], sourceFont, targetFont);
+            if (i >= items.Count)
+            {
+                items.Add(fresh);
+                changed = true;
+            }
+            else if (items[i] != fresh)
+            {
+                items[i] = fresh;
+                changed = true;
+            }
         }
-        while (items.Count > fresh.Count) items.RemoveAt(items.Count - 1);
-        for (int i = items.Count; i < fresh.Count; i++) items.Add(fresh[i]);
+        while (items.Count > lines.Count)
+        {
+            items.RemoveAt(items.Count - 1);
+            changed = true;
+        }
         empty.Visibility = lines.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         list.Visibility = lines.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-        if (atEnd && items.Count > 0) list.ScrollIntoView(items[^1]);
+        // 每次都找一下滚动区：列表刚从收起变为显示时，要等排版后才找得到。
+        var sv = Scroller();
+        if (changed && following) sv?.ScrollToEnd();
+        RefreshBar();
     }
 
-    private bool IsScrolledToEnd()
+    private void RefreshBar()
     {
-        if (VisualTreeHelperFind<ScrollViewer>(list) is not { } sv) return true;
-        return sv.VerticalOffset >= sv.ScrollableHeight - 2;
+        status.Text = controller.Status;
+        status.ToolTip = controller.Status;
+        reveal.Visibility = controller.TranscriptPath is { } p && File.Exists(p) ? Visibility.Visible : Visibility.Collapsed;
+        bool generating = controller.IsGeneratingNotes;
+        ((TextBlock)notes.Content).Text = generating ? Strings.History_Generating : Strings.Menu_GenerateNotes;
+        notes.IsEnabled = !generating && controller.Book.Lines.Count > 0;
     }
 
-    private static T? VisualTreeHelperFind<T>(DependencyObject parent) where T : DependencyObject
+    /// <summary>
+    /// 列表自己的滚动区。列表还没显示过（没有字幕时是收起的）时模板还没生成，找不到，下次再找。
+    /// 第一次找到时滚到底，显示最新的字幕。
+    /// </summary>
+    private ScrollViewer? Scroller()
     {
-        for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        if (scroller is not null) return scroller;
+        scroller = Find<ScrollViewer>(list);
+        if (scroller is null) return null;
+        scroller.ScrollChanged += OnScrollChanged;
+        scroller.ScrollToEnd();
+        return scroller;
+    }
+
+    private void OnScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (scroller is null) return;
+        bool atEnd = scroller.VerticalOffset >= scroller.ScrollableHeight - 8;
+        // 往上滚就不再跟随，回到底部时重新跟随。只按“往上滚”判断：只创建看得见的行时，行高边滚边修正，
+        // 程序滚到底的那一下可能还差一点，不能因此停止跟随。
+        if (atEnd) following = true;
+        else if (e.VerticalChange < 0) following = false;
+        // 新字幕、行高修正、改窗口大小以后，原来停在底部的继续贴底。
+        if (following && !atEnd) scroller.ScrollToEnd();
+    }
+
+    private static T? Find<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
         {
-            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+            var child = VisualTreeHelper.GetChild(parent, i);
             if (child is T t) return t;
-            if (VisualTreeHelperFind<T>(child) is { } found) return found;
+            if (Find<T>(child) is { } found) return found;
         }
         return null;
     }
 
-    private static string Format(SubtitleLine line)
+    private static Row MakeRow(SubtitleLine line, FontFamily sourceFont, FontFamily targetFont)
     {
-        var translation = line.State switch
+        bool pending = line.State is LineState.Waiting or LineState.Translating;
+        return new Row(
+            line.Id,
+            TranscriptFormat.TimeStamp(line.Time),
+            line.SourceLabel,
+            line.Note,
+            line.Source,
+            line.OriginalSource is { } o && o != line.Source ? Strings.Format(Strings.History_Original, o) : null,
+            // 还没翻译出字时显示“…”；翻译失败的句子不加别的（与 macOS 相同）。
+            line.Translation.Length > 0 ? line.Translation : pending ? "…" : null,
+            pending && line.Translation.Length == 0,
+            sourceFont,
+            targetFont);
+    }
+
+    private static T Freeze<T>(T freezable) where T : Freezable
+    {
+        freezable.Freeze();
+        return freezable;
+    }
+
+    /// <summary>一句字幕在列表里显示的内容。内容不变时不重建这一行。</summary>
+    private sealed record Row(
+        Guid Id,
+        string Time,
+        string? Label,
+        string? Note,
+        string Source,
+        string? Original,
+        string? Translation,
+        bool Waiting,
+        FontFamily SourceFont,
+        FontFamily TargetFont);
+
+    /// <summary>列表里的一行。列表回收行时换 DataContext，这里跟着更新。</summary>
+    private sealed class RowView : Border
+    {
+        private readonly TextBlock time = Caption(SystemColors.GrayTextBrush);
+        private readonly TextBlock label = Caption(SystemColors.GrayTextBrush);
+        private readonly TextBlock note = Caption(NoteOrange);
+        private readonly TextBox source = Selectable(13);
+        private readonly TextBox original = Selectable(11);
+        private readonly TextBox translation = Selectable(14);
+
+        public RowView()
         {
-            LineState.Failed => Strings.Overlay_TranslationFailed,
-            LineState.Done => line.Translation,
-            _ => line.Translation.Length > 0 ? line.Translation : "…",
+            Padding = new Thickness(12, 6, 12, 7);
+            BorderBrush = Hairline;
+            BorderThickness = new Thickness(0, 0, 0, 1);
+            Typography.SetNumeralAlignment(time, FontNumeralAlignment.Tabular);
+            original.Foreground = SystemColors.GrayTextBrush;
+            // 文本框的文字左边有约 2 像素的内边距，标题行对齐它。
+            var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(2, 0, 0, 2) };
+            header.Children.Add(time);
+            header.Children.Add(label);
+            header.Children.Add(note);
+            var stack = new StackPanel();
+            stack.Children.Add(header);
+            stack.Children.Add(source);
+            stack.Children.Add(original);
+            stack.Children.Add(translation);
+            Child = stack;
+            DataContextChanged += (_, _) => Update(DataContext as Row);
+        }
+
+        private static TextBlock Caption(Brush brush) => new() { FontSize = 11, Foreground = brush, Margin = new Thickness(0, 0, 6, 0) };
+
+        private static TextBox Selectable(double size) => new()
+        {
+            IsReadOnly = true,
+            IsReadOnlyCaretVisible = false,
+            BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent,
+            Padding = new Thickness(0),
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = size,
         };
-        var original = line.OriginalSource is { } o && o != line.Source ? $"\n    ({o})" : "";
-        return $"[{TranscriptFormat.TimeStamp(line.Time)}] {line.Source}{original}\n    {translation}";
+
+        private void Update(Row? row)
+        {
+            if (row is null) return;
+            time.Text = row.Time;
+            Show(label, row.Label);
+            Show(note, row.Note);
+            source.Text = row.Source;
+            source.FontFamily = row.SourceFont;
+            Show(original, row.Original);
+            original.FontFamily = row.SourceFont;
+            Show(translation, row.Translation);
+            translation.FontFamily = row.TargetFont;
+            translation.FontWeight = row.Waiting ? FontWeights.Normal : FontWeights.Medium;
+            translation.Foreground = row.Waiting ? SystemColors.GrayTextBrush : SystemColors.ControlTextBrush;
+        }
+
+        private static void Show(TextBlock block, string? text)
+        {
+            block.Text = text ?? "";
+            block.Visibility = text is null ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private static void Show(TextBox box, string? text)
+        {
+            box.Text = text ?? "";
+            box.Visibility = text is null ? Visibility.Collapsed : Visibility.Visible;
+        }
     }
 }
