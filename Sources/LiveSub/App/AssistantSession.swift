@@ -192,10 +192,10 @@ final class AssistantSession {
 
     func ask(_ question: String) {
         guard !isAnswering, loadingAttachments == 0 else { return }
-        let files = attachments.map(\.content)
+        let (files, textOnly) = ChatAttachmentBudget.fit(attachments.map(\.content))
         let labels = attachments.map(\.label)
         attachments = []
-        attachmentNotice = nil
+        attachmentNotice = textOnly.isEmpty ? nil : L("附件太大，%@ 只发送了其中的文字。", textOnly.joined(separator: L("、")))
         // 只放了附件、没写问题：替用户问一句。
         let prompt = question.isEmpty ? L("请看附件。") : question
         let session: ChatSession

@@ -72,3 +72,59 @@ public enum ChatContent {
         return (parts + [text]).joined(separator: "\n\n")
     }
 }
+
+/// 附件的总大小上限：Claude（Claude Code、Anthropic 接口）一次请求最多 32 MB，图片和 PDF 按 base64 发送要大三分之一。
+/// 一个 20 MB 的 PDF 加几张图就会超过，请求直接失败（HTTP 413）；HTTP 接口每次请求还要带上整段对话，
+/// 前面问过的附件每问都重发一遍，所以：
+/// - 这一问的附件太大时，PDF 从大到小改成只发提取出的文字（`fit`）；
+/// - 整段对话超过上限时，从最早的提问开始，把附件换成文字（`compact`）。
+public enum ChatAttachmentBudget {
+    /// 原始字节数的上限：base64 后约 24 MB，给问题、字幕记录和回答留出余量。
+    public static let maxBinaryBytes = 18_000_000
+
+    public static func binaryBytes(_ attachment: ChatAttachment) -> Int {
+        switch attachment {
+        case .image(_, _, let data), .pdf(_, let data, _): data.count
+        case .text: 0
+        }
+    }
+
+    public static func binaryBytes(_ attachments: [ChatAttachment]) -> Int {
+        attachments.reduce(0) { $0 + binaryBytes($1) }
+    }
+
+    /// 只留文字：PDF 换成提取出的文字，图片换成一句说明。
+    public static func textOnly(_ attachment: ChatAttachment) -> ChatAttachment {
+        switch attachment {
+        case .image(let name, _, _): .text(name: name, content: "[An image sent earlier in this conversation; it is no longer attached.]")
+        case .pdf(let name, _, let text): .text(name: name, content: text)
+        case .text: attachment
+        }
+    }
+
+    /// 这一问的附件超过上限时，PDF 从大到小改成只发文字（图片最大 3.5 MB，不用动）。返回改过的附件和改成文字的文件名。
+    public static func fit(_ attachments: [ChatAttachment], maxBytes: Int = maxBinaryBytes) -> (attachments: [ChatAttachment], textOnly: [String]) {
+        var result = attachments
+        var changed: [String] = []
+        let pdfs = result.indices.filter { if case .pdf = result[$0] { true } else { false } }
+            .sorted { binaryBytes(result[$0]) > binaryBytes(result[$1]) }
+        for i in pdfs where binaryBytes(result) > maxBytes {
+            changed.append(result[i].name)
+            result[i] = textOnly(result[i])
+        }
+        return (result, changed)
+    }
+
+    /// 整段对话里的附件超过上限时，从最早的消息开始把附件换成文字，最新一条（这次的提问）不动。
+    public static func compact(_ messages: [ChatMessage], maxBytes: Int = maxBinaryBytes) -> [ChatMessage] {
+        var result = messages
+        var total = result.reduce(0) { $0 + binaryBytes($1.attachments) }
+        for i in result.indices.dropLast() where total > maxBytes {
+            let before = binaryBytes(result[i].attachments)
+            guard before > 0 else { continue }
+            result[i].attachments = result[i].attachments.map(textOnly)
+            total -= before
+        }
+        return result
+    }
+}

@@ -61,3 +61,38 @@ import Testing
         #expect(content.map { $0["type"] as? String } == ["image", "document", "text"])
     }
 }
+
+@Suite struct ChatAttachmentBudgetTests {
+    let big = Data(count: 12_000_000)
+    let small = Data(count: 2_000_000)
+
+    @Test func fitTurnsLargestPDFsIntoTextFirst() {
+        let attachments: [ChatAttachment] = [
+            .pdf(name: "a.pdf", data: small, text: "A"),
+            .pdf(name: "b.pdf", data: big, text: "B"),
+            .image(name: "c.png", mediaType: "image/png", data: big),
+        ]
+        let (fitted, changed) = ChatAttachmentBudget.fit(attachments, maxBytes: 18_000_000)
+        #expect(changed == ["b.pdf"])
+        #expect(fitted[1] == .text(name: "b.pdf", content: "B"))
+        #expect(fitted[0] == attachments[0])
+        #expect(fitted[2] == attachments[2])
+    }
+
+    @Test func fitLeavesSmallAttachmentsAlone() {
+        let attachments: [ChatAttachment] = [.pdf(name: "a.pdf", data: small, text: "A")]
+        #expect(ChatAttachmentBudget.fit(attachments).textOnly.isEmpty)
+    }
+
+    @Test func compactStripsOldestAttachmentsButKeepsTheNewQuestion() {
+        let messages = [
+            ChatMessage(role: .user, content: "q1", attachments: [.pdf(name: "old.pdf", data: big, text: "old")]),
+            ChatMessage(role: .assistant, content: "a1"),
+            ChatMessage(role: .user, content: "q2", attachments: [.image(name: "new.png", mediaType: "image/png", data: big)]),
+        ]
+        let compacted = ChatAttachmentBudget.compact(messages, maxBytes: 18_000_000)
+        #expect(compacted[0].attachments == [.text(name: "old.pdf", content: "old")])
+        #expect(compacted[2].attachments == messages[2].attachments)
+        #expect(ChatAttachmentBudget.compact(Array(messages.suffix(1)), maxBytes: 18_000_000) == Array(messages.suffix(1)))
+    }
+}

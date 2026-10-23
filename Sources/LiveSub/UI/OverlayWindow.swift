@@ -326,7 +326,8 @@ final class OverlayWindowController {
         if !edges.isDisjoint(with: [.top, .bottom]) { settings.overlayHeight = Double(frame.height) }
     }
 
-    /// 改了字号、句数、宽度等设置时调整窗口：底边固定，向上生长。
+    /// 改了字号、句数、宽度等设置时调整窗口：底边固定，向上生长；超出屏幕时推回屏幕内
+    /// （默认放在右上角，往上长或往右长都会出界）。
     private func fit(to size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
         var frame = panel.frame
@@ -334,6 +335,10 @@ final class OverlayWindowController {
         let centerX = frame.midX
         frame.size = size
         frame.origin.x = centerX - size.width / 2
+        if let visible = (panel.screen ?? NSScreen.main)?.visibleFrame {
+            frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
+            frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
+        }
         panel.setFrame(frame, display: true)
     }
 
@@ -346,9 +351,13 @@ final class OverlayWindowController {
             }
         }
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        // 默认放在右上角，离屏幕边缘留一点距离。
         let visible = screen.visibleFrame
         let width = settings.overlayWidth
-        panel.setFrame(NSRect(x: visible.midX - width / 2, y: visible.minY + 70, width: width, height: 120), display: true)
+        let height = settings.overlayHeight > 0 ? settings.overlayHeight : 120
+        let margin = 16.0
+        panel.setFrame(NSRect(x: visible.maxX - width - margin, y: visible.maxY - height - margin,
+                              width: width, height: height), display: true)
     }
 
     private func savePosition() {

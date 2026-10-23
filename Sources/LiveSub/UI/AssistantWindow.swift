@@ -164,7 +164,52 @@ final class HoverState {
     var isHovering = false
 }
 
+/// 鼠标停在哪个按钮上（显示它的说明）。
+@MainActor @Observable
+final class TipState {
+    var name: String?
+}
+
+/// 和字幕快捷按钮一样：鼠标停上去立刻显示说明（2026-10-22 用户要求）。系统提示要停一会儿才出现，
+/// 面板不是活动窗口时还常常不显示。说明画在按钮下方（`above` 时上方），靠面板边缘的按钮向内对齐，免得被裁掉。
+private struct InstantTip: ViewModifier {
+    let name: String
+    let state: TipState
+    let palette: OverlayPalette
+    var above = false
+    var alignment: HorizontalAlignment = .center
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                if inside {
+                    state.name = name
+                } else if state.name == name {
+                    state.name = nil
+                }
+            }
+            .overlay(alignment: Alignment(horizontal: alignment, vertical: .center)) {
+                if state.name == name {
+                    Text(name)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(palette.fg)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(palette.bg.opacity(0.92)).strokeBorder(palette.fg.opacity(0.12)))
+                        .fixedSize()
+                        // 按钮约 20–26 点高、说明约 19 点高：从按钮中心挪 26 点，正好在按钮外面留出几点空隙。
+                        .offset(y: above ? -26 : 26)
+                        .allowsHitTesting(false)
+                }
+            }
+            // 说明要画在旁边的按钮和下面的内容上面。
+            .zIndex(state.name == name ? 1 : 0)
+    }
+}
+
 struct AssistantView: View {
+    @Environment(\.colorScheme) private var scheme
+    private var palette: OverlayPalette { OverlayPalette(scheme) }
     @Bindable var assistant: AssistantSession
     @Bindable var settings: AppSettings
     let onClose: () -> Void
@@ -172,19 +217,21 @@ struct AssistantView: View {
     var modelMenuHover = HoverState()
     /// 有文件拖到面板上方。
     var dropTarget = HoverState()
+    /// 截图自检（--render-assistant --tip 新对话）时从外面传入。
+    var tip = TipState()
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().overlay(Color.white.opacity(0.12))
+            header.zIndex(1)
+            Divider().overlay(palette.fg.opacity(0.12))
             messagesView
             quickQuestions
             attachmentsBar
-            inputBar
+            inputBar.zIndex(1)
         }
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.black.opacity(max(settings.backgroundOpacity, 0.8)))
+                .fill(palette.bg.opacity(max(settings.backgroundOpacity, 0.8)))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -192,11 +239,12 @@ struct AssistantView: View {
                 .opacity(dropTarget.isHovering ? 1 : 0)
         )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // 菜单打开时收起说明（菜单期间收不到鼠标移出）。
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in tip.name = nil }
         // 文件、截图、网页上的图片拖进面板任何地方都可以。
         .onDrop(of: [.fileURL, .image], isTargeted: Binding(get: { dropTarget.isHovering }, set: { dropTarget.isHovering = $0 })) {
             assistant.drop($0)
         }
-        .environment(\.colorScheme, .dark)
     }
 
     private var header: some View {
@@ -209,8 +257,8 @@ struct AssistantView: View {
             .allowsHitTesting(false)
             Spacer()
             modelMenu
-            iconButton("square.and.pencil", "新对话") { assistant.newConversation() }
-            iconButton("xmark", "收起") { onClose() }
+            iconButton("square.and.pencil", "新对话", alignment: .trailing) { assistant.newConversation() }
+            iconButton("xmark", "收起", alignment: .trailing) { onClose() }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -223,10 +271,10 @@ struct AssistantView: View {
             // 用 Picker 让系统画对勾：自己用“按钮 + checkmark 图标”时，菜单宽度不算对勾，
             // 带对勾的那项会被截断（2026-10-22 真实窗口里“Claude Sonnet”显示成“Claud…onnet”）。
             Picker("模型", selection: $settings.assistantModel) {
-                ForEach(settings.modelGroups(includeApple: false)) { group in
+                ForEach(settings.modelGroups(for: .assistant)) { group in
                     Section(group.title) {
                         ForEach(group.choices, id: \.self) { choice in
-                            Text(settings.displayName(choice)).tag(choice)
+                            Text(settings.serviceName(choice)).tag(choice)
                         }
                     }
                 }
@@ -235,7 +283,7 @@ struct AssistantView: View {
             .labelsHidden()
         } label: {
             HStack(spacing: 3) {
-                Text(settings.displayName(settings.assistantModel))
+                Text(settings.serviceName(settings.assistantModel))
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
             }
             .font(.system(size: 12))
@@ -245,17 +293,17 @@ struct AssistantView: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .foregroundStyle(modelMenuHover.isHovering ? Color.blue : Color.white.opacity(0.85))
+        .foregroundStyle(modelMenuHover.isHovering ? Color.blue : palette.fg.opacity(0.85))
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
-        .background(Capsule().fill(Color.white.opacity(modelMenuHover.isHovering ? 0.12 : 0)))
+        .background(Capsule().fill(palette.fg.opacity(modelMenuHover.isHovering ? 0.12 : 0)))
         .contentShape(Capsule())
         .onHover { modelMenuHover.isHovering = $0 }
         // 菜单打开期间收不到鼠标移出，关掉菜单时复原，免得一直是蓝色。
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
             modelMenuHover.isHovering = false
         }
-        .help("回答使用的模型")
+        .modifier(InstantTip(name: L("回答使用的模型"), state: tip, palette: palette))
     }
 
     private var messagesView: some View {
@@ -265,7 +313,7 @@ struct AssistantView: View {
                     if assistant.messages.isEmpty {
                         Text("AI 助手可以读取本次开始以来的全部字幕，可随时就其中内容提问。")
                             .font(.system(size: 13))
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(palette.fg.opacity(0.55))
                     }
                     ForEach(assistant.messages) { message in
                         bubble(message).id(message.id)
@@ -298,7 +346,7 @@ struct AssistantView: View {
                     }
                 }
                 ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
-                    attachmentLabel(attachment).foregroundStyle(.white.opacity(0.7))
+                    attachmentLabel(attachment).foregroundStyle(palette.fg.opacity(0.7))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -310,7 +358,7 @@ struct AssistantView: View {
                     Text(Self.markdown(message.text))
                         .font(.system(size: 13.5))
                         .lineSpacing(3)
-                        .foregroundStyle(message.failed ? Color.orange : Color.white)
+                        .foregroundStyle(message.failed ? Color.orange : palette.fg)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -323,7 +371,7 @@ struct AssistantView: View {
     private func progress(_ text: String) -> some View {
         HStack(spacing: 6) {
             ProgressView().controlSize(.small)
-            Text(L(text)).font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+            Text(L(text)).font(.system(size: 13)).foregroundStyle(palette.fg.opacity(0.6))
         }
     }
 
@@ -338,7 +386,7 @@ struct AssistantView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(L("在 Finder 中显示"))
+            .modifier(InstantTip(name: L("在 Finder 中显示"), state: tip, palette: palette, alignment: .leading))
         } else {
             Label(L("保存失败：%@", file.error ?? file.name), systemImage: "exclamationmark.triangle")
                 .font(.system(size: 12.5))
@@ -353,10 +401,10 @@ struct AssistantView: View {
                     Button { assistant.ask(question) } label: {
                         Text(L(question))
                             .font(.system(size: 11.5))
-                            .foregroundStyle(.white.opacity(0.85))
+                            .foregroundStyle(palette.fg.opacity(0.85))
                             .padding(.horizontal, 9)
                             .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.white.opacity(0.1)))
+                            .background(Capsule().fill(palette.fg.opacity(0.1)))
                     }
                     .buttonStyle(.plain)
                     .disabled(assistant.isAnswering || assistant.loadingAttachments > 0)
@@ -382,12 +430,12 @@ struct AssistantView: View {
                                     Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
-                                .help("去掉")
+                                .modifier(InstantTip(name: L("去掉"), state: tip, palette: palette, above: true))
                             }
-                            .foregroundStyle(.white.opacity(0.85))
+                            .foregroundStyle(palette.fg.opacity(0.85))
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.white.opacity(0.1)))
+                            .background(Capsule().fill(palette.fg.opacity(0.1)))
                         }
                         if assistant.loadingAttachments > 0 { ProgressView().controlSize(.small) }
                     }
@@ -425,22 +473,22 @@ struct AssistantView: View {
 
     private var inputBar: some View {
         HStack(spacing: 6) {
-            iconButton("paperclip", "添加图片或文件", chooseFiles)
+            iconButton("paperclip", "添加图片或文件", above: true, alignment: .leading, chooseFiles)
             TextField("输入问题", text: $assistant.draft)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .onSubmit { assistant.send() }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.08)))
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(palette.fg.opacity(0.08)))
             Button { assistant.send() } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 22))
-                    .foregroundStyle(canSend ? Color.blue : Color.white.opacity(0.3))
+                    .foregroundStyle(canSend ? Color.blue : palette.fg.opacity(0.3))
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
-            .help("发送")
+            .modifier(InstantTip(name: L("发送"), state: tip, palette: palette, above: true, alignment: .trailing))
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 10)
@@ -448,16 +496,19 @@ struct AssistantView: View {
 
     private var canSend: Bool { assistant.canSend }
 
-    private func iconButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func iconButton(_ symbol: String, _ help: String, above: Bool = false, alignment: HorizontalAlignment = .center,
+                            _ action: @escaping () -> Void) -> some View {
+        let hovered = tip.name == L(help)
+        return Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(palette.fg.opacity(hovered ? 1 : 0.8))
                 .frame(width: 22, height: 20)
+                .background(Circle().fill(palette.fg.opacity(hovered ? 0.14 : 0)).frame(width: 24, height: 24))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(L(help))
+        .modifier(InstantTip(name: L(help), state: tip, palette: palette, above: above, alignment: alignment))
     }
 
     /// 回答里的粗体、行内代码等（保留换行，列表按原样显示）。

@@ -5,7 +5,7 @@ import SwiftUI
 
 // 命令行自检模式（不启动界面）：
 //   LiveSub --transcribe-file <音频文件> [--locale en-US] [--guard zh-CN]（过滤中文说话声）[--realtime]（按真实速度播放）
-//   LiveSub --translate "句子1" "句子2" ... [--engine claude|apple|api]
+//   LiveSub --translate "句子1" "句子2" ... [--engine claude|google|local|apple|api]（local：下载好的混元翻译）
 //     --engine api 时：--format openai|anthropic --base-url URL --model 模型名，密钥从环境变量 LIVESUB_API_KEY 读取 [--model haiku] [--target zh-Hans] [--correct]（按发音纠正识别错误）
 let arguments = CommandLine.arguments
 
@@ -31,6 +31,7 @@ func runTranscribeFile(_ path: String) async {
                 let audioEnd = result.end.map { String(format: " end %.2f", $0) } ?? ""
                 print("\(stamp()) = \(result.text)  [conf \(String(format: "%.2f", conf))\(audioEnd)]")
                 for s in await segmenter.add(result.text) { print("\(stamp()) >>> SEGMENT: \(s)") }
+                if result.endsClause { for s in await segmenter.flush() { print("\(stamp()) >>> SEGMENT (breath): \(s)") } }
             case .filtered(let text):
                 print("\(stamp()) x FILTERED: \(text)")
             }
@@ -70,7 +71,20 @@ func runTranslate(_ texts: [String]) async {
     let source = LanguageOption.source(option("--source") ?? "en-US")
     let target = LanguageOption.target(option("--target") ?? "zh-Hans")
     let translator: Translator
-    if option("--engine") == "apple" {
+    if option("--engine") == "google" {
+        translator = GoogleTranslator(source: source, target: target)
+    } else if option("--engine") == "local" {
+        let local = LocalTranslator(source: source, target: target)
+        do {
+            let t0 = Date()
+            try await local.prepare()
+            print(String(format: "[local] 模型加载 %.1fs", Date().timeIntervalSince(t0)))
+        } catch {
+            print("[error] \(error.localizedDescription)")
+            exit(1)
+        }
+        translator = local
+    } else if option("--engine") == "apple" {
         guard #available(macOS 26, *) else {
             print("[error] Apple 本地翻译需要 macOS 26")
             exit(1)
@@ -128,16 +142,20 @@ final class FirstTokenClock: @unchecked Sendable {
     func elapsed(since t0: Date) -> TimeInterval? { lock.withLock { at.map { $0.timeIntervalSince(t0) } } }
 }
 
-// 用真实的字幕窗口（含滚动区域、缩放手柄）离屏截图：--render-window out.png [--hover]（显示快捷按钮）
+// 用真实的字幕窗口（含滚动区域、缩放手柄）离屏截图：--render-window out.png [--hover]（显示快捷按钮）[--hover-tool record]（鼠标停在某个按钮上：run/record/lock/source/assistant/settings/quit）[--hover-model]（状态条的翻译模型悬停）[--idle]（未开始）[--light|--dark]（外观）
 // 固定高度模式先 `defaults write LiveSub overlayHeight -float 200` 再运行。
 if let out = option("--render-window") {
     MainActor.assumeIsolated {
         let controller = SubtitleController(settings: AppSettings.shared)
-        controller.loadPreview()
+        controller.loadPreview(running: !arguments.contains("--idle"))
         let overlay = OverlayWindowController(
             controller: controller, settings: AppSettings.shared,
-            actions: OverlayActions(toggleRunning: {}, lock: {}, showSettings: {}, minimize: {}, toggleAssistant: {}, modelChanged: {}, manageModels: {}))
-        overlay.state.isHovering = arguments.contains("--hover")
+            actions: OverlayActions(toggleRunning: {}, lock: {}, toggleRecording: {}, showSettings: {}, quit: {}, toggleAssistant: {}, settingsChanged: {}, manageModels: {}))
+        overlay.state.isHovering = arguments.contains("--hover") || option("--hover-tool") != nil
+        overlay.state.hoveredTool = option("--hover-tool").flatMap(OverlayTool.init(rawValue:))
+        overlay.state.modelMenuHovered = arguments.contains("--hover-model")
+        if arguments.contains("--light") { overlay.panel.appearance = NSAppearance(named: .aqua) }
+        if arguments.contains("--dark") { overlay.panel.appearance = NSAppearance(named: .darkAqua) }
         overlay.panel.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         overlay.show()
         RunLoop.main.run(until: Date().addingTimeInterval(1.5))
@@ -158,7 +176,7 @@ if arguments.contains("--stress-overlay") {
         let controller = SubtitleController(settings: AppSettings.shared)
         let overlay = OverlayWindowController(
             controller: controller, settings: AppSettings.shared,
-            actions: OverlayActions(toggleRunning: {}, lock: {}, showSettings: {}, minimize: {}, toggleAssistant: {}, modelChanged: {}, manageModels: {}))
+            actions: OverlayActions(toggleRunning: {}, lock: {}, toggleRecording: {}, showSettings: {}, quit: {}, toggleAssistant: {}, settingsChanged: {}, manageModels: {}))
         overlay.panel.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         overlay.show()
         var maxGap = 0.0, last = Date(), n = 0, ticks = 0
@@ -276,7 +294,7 @@ if let path = option("--assistant-test") {
     exit(0)
 }
 
-// AI 助手面板离屏截图：--render-assistant out.png [--hover]（模型菜单画成鼠标停在上面的样子）[--attachments]（放上示例附件）
+// AI 助手面板离屏截图：--render-assistant out.png [--hover]（模型菜单画成鼠标停在上面的样子）[--attachments]（放上示例附件）[--tip 新对话]（显示某个按钮的说明）
 if let out = option("--render-assistant") {
     MainActor.assumeIsolated {
         let assistant = AssistantSession(settings: AppSettings.shared)
@@ -290,8 +308,10 @@ if let out = option("--render-assistant") {
                               backing: .buffered, defer: false)
         let hover = HoverState()
         hover.isHovering = arguments.contains("--hover")
+        let tip = TipState()
+        tip.name = option("--tip").map(L)
         window.contentView = NSHostingView(rootView: AssistantView(assistant: assistant, settings: AppSettings.shared, onClose: {},
-                                                                   modelMenuHover: hover))
+                                                                   modelMenuHover: hover, tip: tip))
         window.orderFrontRegardless()
         RunLoop.main.run(until: Date().addingTimeInterval(1.5))
         guard let view = window.contentView,
@@ -327,11 +347,48 @@ if let path = option("--export-test"), let i = arguments.firstIndex(of: "--expor
     dispatchMain()
 }
 
+// 录音记录窗口离屏截图（读记录文件夹里的录音）：--render-recordings out.png
+if let out = option("--render-recordings") {
+    MainActor.assumeIsolated {
+        let window = NSWindow(contentViewController: NSHostingController(rootView: RecordingsView(model: RecordingsModel(settings: AppSettings.shared))))
+        window.setContentSize(NSSize(width: 620, height: 300))
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderFrontRegardless()
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        guard let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+        print("saved \(out) \(view.bounds.size)")
+    }
+    exit(0)
+}
+
+// “模型服务”窗口离屏截图：--render-models out.png [--height 1400] [--dark] [--focus-local]（滚到混元翻译一栏）
+if let out = option("--render-models") {
+    MainActor.assumeIsolated {
+        let state = ModelServicesState()
+        if arguments.contains("--focus-local") { state.focus = LocalModelFiles.serviceID }
+        let window = NSWindow(contentViewController: NSHostingController(rootView: ModelServicesView(
+            settings: AppSettings.shared, state: state, onChanged: {})))
+        window.appearance = NSAppearance(named: arguments.contains("--dark") ? .darkAqua : .aqua)
+        if let height = option("--height").flatMap(Double.init) { window.setContentSize(NSSize(width: 560, height: height)) }
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderFrontRegardless()
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        guard let view = window.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+        print("saved \(out) \(view.bounds.size)")
+    }
+    exit(0)
+}
+
 // 设置窗口离屏截图：--render-settings out.png [--height 1100] [--dark]（深色模式）
 if let out = option("--render-settings") {
     MainActor.assumeIsolated {
         let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(
-            settings: AppSettings.shared, onTranslationSettingsChanged: {}, onAppearanceChanged: {}, onManageModels: {}, onShowHistory: {})))
+            settings: AppSettings.shared, onTranslationSettingsChanged: {}, onAppearanceChanged: {}, onManageModels: {}, onShowHistory: {}, onShowRecordings: {}, onResetOverlay: {})))
         window.appearance = NSAppearance(named: arguments.contains("--dark") ? .darkAqua : .aqua)
         if let height = option("--height").flatMap(Double.init) { window.setContentSize(NSSize(width: 480, height: height)) }
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))

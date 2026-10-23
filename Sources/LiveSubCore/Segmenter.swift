@@ -15,7 +15,7 @@ public struct Segmenter: Sendable {
         /// 距离上一次确认结果多久后，把剩余内容送出。
         public var idleFlush: TimeInterval
 
-        public init(minUnits: Int = 4, maxUnits: Int = 32, idleFlush: TimeInterval = 1.6) {
+        public init(minUnits: Int = 4, maxUnits: Int = 24, idleFlush: TimeInterval = 1.6) {
             self.minUnits = minUnits
             self.maxUnits = maxUnits
             self.idleFlush = idleFlush
@@ -49,11 +49,20 @@ public struct Segmenter: Sendable {
         return flushAll()
     }
 
+    /// 全部送出；太长时同样在从句边界切成几条，字幕不会一条占满整个窗口。
     public mutating func flushAll() -> [String] {
-        let rest = pending.trimmingCharacters(in: .whitespacesAndNewlines)
+        var rest = pending.trimmingCharacters(in: .whitespacesAndNewlines)
         pending = ""
         lastFinalAt = nil
-        return rest.isEmpty ? [] : [rest]
+        var output: [String] = []
+        while Self.units(rest) > config.maxUnits {
+            let (head, tail) = Self.splitLong(rest, maxUnits: config.maxUnits)
+            guard !head.isEmpty, !tail.isEmpty else { break }
+            output.append(head)
+            rest = tail
+        }
+        if !rest.isEmpty { output.append(rest) }
+        return output
     }
 
     // MARK: - 内部

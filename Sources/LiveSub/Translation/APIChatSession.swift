@@ -65,7 +65,7 @@ final class APIChatSession: ChatSession, @unchecked Sendable {
                 history = []
             }
             let text = history.isEmpty ? newSessionMessage : ongoingMessage
-            return history + [ChatMessage(role: .user, content: text, attachments: attachments)]
+            return ChatAttachmentBudget.compact(history + [ChatMessage(role: .user, content: text, attachments: attachments)])
         }
         let task = Task { try await self.stream(messages, onPartial: onPartial) }
         lock.withLock { current = task }
@@ -182,12 +182,14 @@ enum ChatSessionFactory {
         case claudeNotFound
         case endpointMissing
         case notLanguageModel
+        case missingKey(String)
 
         var errorDescription: String? {
             switch self {
             case .claudeNotFound: TranslatorError.claudeNotFound.localizedDescription
             case .endpointMissing: L("找不到所选的模型服务，请在“模型服务”中重新选择。")
             case .notLanguageModel: L("这个功能需要大模型：请选择 Claude Code，或在“模型服务”中添加一个模型。")
+            case .missingKey(let name): L("还没有填写 %@ 的 API 密钥：请在“模型服务”中填写。", name)
             }
         }
     }
@@ -197,7 +199,7 @@ enum ChatSessionFactory {
     static func make(_ choice: ModelChoice, settings: AppSettings, systemPrompt: String,
                      maxTurns: Int, historyTurns: Int? = nil, timeout: TimeInterval) throws -> ChatSession {
         switch choice {
-        case .apple:
+        case .apple, .google, .localModel:
             throw Failure.notLanguageModel
         case .claudeCode(let model):
             guard let exe = ClaudeCLI.locate(customPath: settings.claudePath) else { throw Failure.claudeNotFound }
@@ -205,6 +207,7 @@ enum ChatSessionFactory {
                                                   maxTurnsPerSession: maxTurns, timeout: timeout))
         case .endpoint(let id, let model):
             guard let endpoint = settings.endpoint(id) else { throw Failure.endpointMissing }
+            if settings.endpointMissingKey(choice) != nil { throw Failure.missingKey(endpoint.name) }
             return APIChatSession(config: .init(
                 format: endpoint.format, baseURL: endpoint.baseURL, apiKey: KeychainStore.key(for: id),
                 model: model, systemPrompt: systemPrompt, displayName: settings.displayName(choice),

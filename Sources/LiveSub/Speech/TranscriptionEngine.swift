@@ -10,12 +10,23 @@ struct FinalResult: Sendable {
     var end: Double?
     /// 各个词的置信度，用来自动判断这位讲者好不好识别。
     var confidences: [Double]
+    /// 长句说到一半、在讲者换气处提前确认的（`BreathCutter`）：这里是一个从句的结尾，分句时不用再等后文。
+    var endsClause = false
 
     init(text: String, words: [TimedWord]) {
         self.text = text
         start = words.map(\.start).min()
         end = words.map(\.end).max()
         confidences = words.map(\.confidence)
+    }
+
+    /// 换气时从临时文字提前确认的部分：没有逐词时间，用这段话的起点和换气的时刻。
+    init(clause text: String, start: Double?, end: Double) {
+        self.text = text
+        self.start = start
+        self.end = end
+        confidences = []
+        endsClause = true
     }
 }
 
@@ -116,6 +127,22 @@ final class AnalyzerEngine: SpeechEngine, @unchecked Sendable {
     /// 最近一块音频的音量（RMS，0…1）和收到的时间；只在 lock 内访问。给状态条用。
     private var level: Float = 0
     private var lastBufferAt = Date.distantPast
+    /// 长句在换气处提前确认（不能让识别器 finalize 到中途：2026-10-22 实测之后的识别会变成一串句点、丢词，
+    /// 只能从临时文字里取）；已送入的音频秒数；当前这段的临时文字和起点。只在 lock 内访问。
+    private var cutter = BreathCutter()
+    private var committer = PartialCommitter()
+    private var audioTime: Double = 0
+    private var volatileText = ""
+    private var volatileStart: Double?
+    /// 换气的时刻。识别器约每 0.9 秒处理一块音频，这块里的词再一个个陆续给出（2026-10-22 实测），
+    /// 所以要等下一块的临时文字出现，再用覆盖换气时刻那块的最后一次临时文字确认，免得切掉最后一个词。
+    private var pendingCut: Double?
+    /// 覆盖换气时刻的那块音频的终点，以及这块的最新临时文字。
+    private var cutChunkEnd: Double?
+    private var cutChunkText = ""
+    /// 识别结果和提前确认的部分都从这里按顺序送出。
+    private var events: AsyncStream<TranscriptEvent>.Continuation?
+    private var consumer: Task<Void, Never>?
     private let lock = NSLock()
     /// 只在 lock 内访问。
     private var detector = ForeignSpeechDetector()
@@ -139,17 +166,36 @@ final class AnalyzerEngine: SpeechEngine, @unchecked Sendable {
                 onStatus(L("中文过滤不可用：%@", error.localizedDescription), true)
             }
         }
-        lock.withLock { detector = ForeignSpeechDetector() }
+        let (stream, continuation) = AsyncStream<TranscriptEvent>.makeStream()
+        lock.withLock {
+            detector = ForeignSpeechDetector()
+            cutter = BreathCutter()
+            committer = PartialCommitter()
+            audioTime = 0
+            volatileText = ""
+            volatileStart = nil
+            pendingCut = nil
+            cutChunkEnd = nil
+            events = continuation
+        }
+        consumer = Task { @MainActor in
+            for await event in stream { await onEvent(event) }
+        }
+        let emit: @Sendable (TranscriptEvent) -> Void = { continuation.yield($0) }
 
         let primary = try await Self.makeLane(transcriber)
         primary.resultsTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 for try await result in transcriber.results {
                     guard let self else { return }
-                    let text = String(result.text.characters)
-                    let words = Self.timedWords(result.text)
+                    // 换气时已经提前确认过的部分不再送出。
+                    let (text, words) = self.uncommitted(result)
                     guard sentinel != nil else {
-                        await onEvent(result.isFinal ? .final(FinalResult(text: text, words: words)) : .volatile(text))
+                        if result.isFinal {
+                            if !text.isEmpty { emit(.final(FinalResult(text: text, words: words))) }
+                        } else {
+                            emit(.volatile(text))
+                        }
                         continue
                     }
                     if result.isFinal {
@@ -162,21 +208,23 @@ final class AnalyzerEngine: SpeechEngine, @unchecked Sendable {
                             print(String(format: "   [waited %.2fs for guard, audio %.1fs]", Date().timeIntervalSince(waitStart), spokenUntil))
                         }
                         let mask = self.lock.withLock { self.detector.foreignMask(words) }
-                        if !mask.contains(true) {
-                            await onEvent(.final(FinalResult(text: text, words: words)))
+                        if text.isEmpty {
+                            continue
+                        } else if !mask.contains(true) {
+                            emit(.final(FinalResult(text: text, words: words)))
                         } else {
                             let kept = zip(words, mask).filter { !$0.1 }.map(\.0)
                             let dropped = zip(words, mask).filter { $0.1 }.map(\.0.text)
-                            await onEvent(.filtered(dropped.joined(separator: " ")))
+                            emit(.filtered(dropped.joined(separator: " ")))
                             if !kept.isEmpty {
-                                await onEvent(.final(FinalResult(text: kept.map(\.text).joined(separator: " "), words: kept)))
+                                emit(.final(FinalResult(text: kept.map(\.text).joined(separator: " "), words: kept)))
                             }
                         }
                     } else {
                         // 临时结果可能不带置信度；没有时只看哨兵。
                         let confidence = Self.meanConfidence(result.text) ?? 0
                         let foreign = self.lock.withLock { self.detector.volatileLooksForeign(confidence: confidence) }
-                        await onEvent(.volatile(foreign ? "" : text))
+                        emit(.volatile(foreign ? "" : text))
                     }
                 }
             } catch {
@@ -264,9 +312,17 @@ final class AnalyzerEngine: SpeechEngine, @unchecked Sendable {
     /// 由采集线程同步调用：立即把音频转换成识别器需要的格式（同时完成拷贝）。
     func append(_ buffer: AVAudioPCMBuffer) {
         let rms = audioLevel(buffer)
+        let duration = Double(buffer.frameLength) / buffer.format.sampleRate
         let lanes = lock.withLock {
             level = rms
             lastBufferAt = Date()
+            audioTime += duration
+            if let cut = cutter.addAudio(level: rms, duration: duration, end: audioTime) { pendingCut = cut }
+            // 一直没等到覆盖换气时刻的临时文字（例如讲者停下了，识别器会自己确认）：放弃这次切分。
+            if let cut = pendingCut, audioTime - cut > 3 {
+                pendingCut = nil
+                cutChunkEnd = nil
+            }
             return self.lanes
         }
         var shared: (AVAudioFormat, AVAudioPCMBuffer)?
@@ -279,6 +335,63 @@ final class AnalyzerEngine: SpeechEngine, @unchecked Sendable {
             guard let converted = try? lane.converter.convert(buffer, to: lane.format) else { continue }
             shared = (lane.format, converted)
             lane.continuation.yield(AnalyzerInput(buffer: converted))
+        }
+    }
+
+    /// 主识别器的结果里还没在换气处提前确认的部分（临时文字也告诉切分器）。
+    /// 确认结果的逐词时间只保留剩下的这几个词。
+    private func uncommitted(_ result: SpeechTranscriber.Result) -> (String, [TimedWord]) {
+        let full = String(result.text.characters)
+        let words = Self.timedWords(result.text)
+        return lock.withLock {
+            let rest = committer.remainder(of: full)
+            guard result.isFinal else {
+                if ProcessInfo.processInfo.environment["LIVESUB_DEBUG_VOLATILE"] != nil {
+                    print(String(format: "      ~ [%.2f-%.2f | fin %.2f | audio %.2f] …%@", result.range.start.seconds, result.range.end.seconds,
+                                 result.resultsFinalizationTime.seconds, audioTime, String(full.suffix(40))))
+                }
+                volatileText = full
+                if committer.committedWords == 0 { volatileStart = result.range.start.seconds }
+                let end = result.range.end.seconds
+                if let cut = pendingCut, end >= cut {
+                    if let chunkEnd = cutChunkEnd, end > chunkEnd {
+                        // 下一块开始了：覆盖换气时刻那块的文字已经给全。
+                        pendingCut = nil
+                        cutChunkEnd = nil
+                        // 确认到最后一个从句标点为止（换气后已经说出的一两个词留给下一段，见 `BreathCutter.clause`）。
+                        if let found = BreathCutter.clause(in: cutChunkText), let clause = committer.commitAll(found.text) {
+                            if ProcessInfo.processInfo.environment["LIVESUB_DEBUG_CUT"] != nil {
+                                print(String(format: "   [breath at %.2fs] %@", cut, clause))
+                            }
+                            // 标点后面还有词时，这一段在换气处结束；否则在这块音频的终点。已确认部分的终点就是下一部分的起点。
+                            let end = found.hasTrailing ? cut : chunkEnd
+                            events?.yield(.final(FinalResult(clause: clause, start: volatileStart, end: end)))
+                            volatileStart = end
+                        }
+                    } else {
+                        cutChunkEnd = end
+                        cutChunkText = full
+                    }
+                }
+                let rest = committer.remainder(of: full)
+                cutter.updateVolatile(words: rest.split(whereSeparator: \.isWhitespace).count,
+                                      start: volatileStart ?? result.range.start.seconds)
+                return (rest, words)
+            }
+            if ProcessInfo.processInfo.environment["LIVESUB_DEBUG_VOLATILE"] != nil {
+                print(String(format: "      = [%.2f-%.2f | fin %.2f | audio %.2f] %@", result.range.start.seconds, result.range.end.seconds,
+                             result.resultsFinalizationTime.seconds, audioTime, String(full.prefix(50))))
+            }
+            let committedEarly = committer.committedWords > 0
+            cutter.finalReceived()
+            committer = PartialCommitter()
+            volatileText = ""
+            volatileStart = nil
+            pendingCut = nil
+            cutChunkEnd = nil
+            guard committedEarly else { return (full, words) }
+            let count = rest.split(whereSeparator: \.isWhitespace).count
+            return (rest, Array(words.suffix(count)))
         }
     }
 
@@ -304,6 +417,8 @@ final class AnalyzerEngine: SpeechEngine, @unchecked Sendable {
         for lane in lanes { try? await lane.analyzer.finalizeAndFinishThroughEndOfInput() }
         // 让最后的确认结果送达后再结束结果流。
         for lane in lanes { _ = await lane.resultsTask?.value }
+        lock.withLock { events?.finish(); events = nil }
+        await consumer?.value
     }
 }
 

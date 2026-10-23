@@ -7,7 +7,8 @@ import AppKit
 enum FilePanel {
     @MainActor
     static func present(_ panel: NSSavePanel, completion: @escaping @MainActor (URL?) -> Void) {
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        // 设置窗口用 LiveSub 时在字幕上面一层（statusBar + 1），对话框再高一层。
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 2)
         NSApp.activate()
         panel.begin { response in
             MainActor.assumeIsolated { completion(response == .OK ? panel.url : nil) }

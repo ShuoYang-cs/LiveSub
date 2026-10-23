@@ -79,4 +79,27 @@ import Testing
         #expect(ChatEndpointPreset.isLocal(baseURL: "http://127.0.0.1:1234/v1"))
         #expect(!ChatEndpointPreset.isLocal(baseURL: "https://api.deepseek.com/v1"))
     }
+
+    @Test func thinkingIsTurnedOffOnlyWhereSupported() {
+        func body(_ model: String) -> [String: Any] {
+            json(ChatAPI.requestBody(format: .openAI, model: model, system: "S", messages: [.init(role: .user, content: "hi")]))
+        }
+        #expect((body("deepseek-flash")["thinking"] as? [String: String])?["type"] == "disabled")
+        #expect((body("kimi-k2.6")["thinking"] as? [String: String])?["type"] == "disabled")
+        #expect(body("qwen-flash")["enable_thinking"] as? Bool == false)
+        // OpenAI、Grok 收到不认识的参数会报错，不能带。
+        for model in ["gpt-5.4-mini", "grok-4.20-0309-non-reasoning", "kimi-k3"] {
+            #expect(body(model)["thinking"] == nil && body(model)["enable_thinking"] == nil)
+        }
+    }
+
+    @Test func builtInServicesHaveStableIDsAndModels() {
+        let presets = ChatEndpointPreset.builtIn
+        #expect(presets.map(\.name) == ["OpenAI", "通义千问", "DeepSeek", "Kimi", "Grok"])
+        let ids = presets.compactMap { $0.builtInID.flatMap(UUID.init(uuidString:)) }
+        #expect(Set(ids).count == presets.count)
+        #expect(presets.allSatisfy { $0.needsKey && !$0.exampleModels.isEmpty && $0.format == .openAI })
+        // 添加菜单里也有它们，而且不重复。
+        #expect(Set(ChatEndpointPreset.all.map(\.name)).count == ChatEndpointPreset.all.count)
+    }
 }

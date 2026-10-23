@@ -23,11 +23,15 @@ enum TranslatorError: LocalizedError {
     case appleUnavailable(String, String)
     /// 通过 API 调用模型出错。`persistent`：密钥错误、模型不存在等，重试没有意义。
     case apiFailed(String, persistent: Bool)
+    case googleFailed(String)
+    case localModelFailed(String)
+    /// 混元翻译的服务启动不了（没下载、文件不全、启动失败、超时）。
+    case localModelUnavailable(String)
 
     var errorDescription: String? {
         switch self {
         case .claudeNotFound:
-            L("找不到 claude 命令。请先安装 Claude Code，或在设置中填写 Claude 路径。")
+            L("找不到 claude 命令。请先安装 Claude Code，或在“模型服务”中填写 Claude 路径。")
         case .claudeFailed(let message):
             message.localizedCaseInsensitiveContains("not logged in")
                 ? L("Claude Code 未登录：请在终端运行 claude，输入 /login 登录一次。")
@@ -38,6 +42,12 @@ enum TranslatorError: LocalizedError {
             L("Claude 进程退出：%@", stderr.isEmpty ? L("无输出") : stderr)
         case .apiFailed(let message, _):
             L("模型服务出错：%@", message)
+        case .googleFailed(let message):
+            L("Google 翻译出错：%@", message)
+        case .localModelFailed(let message):
+            L("混元翻译出错：%@", message)
+        case .localModelUnavailable(let message):
+            L("混元翻译启动失败：%@", message)
         case .appleUnavailable(let pair, _):
             L("Apple 本地翻译不可用：%@。请在“系统设置 › 通用 › 语言与地区 › 翻译语言”中下载对应语言。", pair)
         }

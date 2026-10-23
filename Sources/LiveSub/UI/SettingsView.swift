@@ -65,6 +65,9 @@ struct SettingsView: View {
     let onAppearanceChanged: () -> Void
     let onManageModels: () -> Void
     let onShowHistory: () -> Void
+    let onShowRecordings: () -> Void
+    /// 字幕大小、位置和 AI 助手位置恢复默认。
+    let onResetOverlay: () -> Void
 
     var body: some View {
         Form {
@@ -91,35 +94,30 @@ struct SettingsView: View {
                         .help("使用系统语音处理降低环境噪音并消除回声。讲者距离较远时可能降低识别效果。")
                 }
                 Picker("翻译模型", selection: $settings.translationModel) {
-                    ForEach(settings.modelGroups(includeApple: true)) { group in
+                    ForEach(settings.modelGroups(for: .translation)) { group in
                         Section(group.title) {
                             ForEach(group.choices, id: \.self) { choice in
-                                Text(settings.displayName(choice)).tag(choice)
+                                Text(settings.serviceName(choice)).tag(choice)
                             }
                         }
                     }
                 }
-                .help("实时字幕建议选择速度快的模型，例如 Claude Haiku；Opus 最准确但最慢。Apple 本地翻译可离线使用。")
+                .help("实时字幕建议选择速度快的模型。每家服务用哪个具体模型，在“模型服务”里调整。Apple 本地翻译可离线使用。")
                 if settings.translationModel == .apple { appleNote }
                 LabeledContent("模型服务") {
                     HStack {
-                        Text(settings.endpoints.isEmpty ? L("可添加自己的 API 或本地模型") : L("已添加 %d 个", settings.endpoints.count))
+                        Text(configuredServices == 0 ? L("填上 API 密钥即可使用 GPT、千问等") : L("已设置 %d 个", configuredServices))
                             .foregroundStyle(.secondary)
                         Button("管理…", action: onManageModels)
                     }
                 }
-                // 只有用到 Claude Code 时才需要；一般能自动找到。
-                if usesClaudeCode {
-                    TextField("Claude 路径", text: $settings.claudePath, prompt: Text("自动查找"))
-                }
                 if !settings.sourceLanguage.hasPrefix("zh") {
-                    Toggle("过滤中文说话声", isOn: $settings.filterChinese)
-                        .help("识别并忽略中文说话声，例如周围的交谈。")
+                    Toggle("过滤周围的中文交谈", isOn: $settings.filterChinese)
+                        .help("周围有人用中文聊天时，这些话不会出现在字幕里，只保留讲话语言的内容。")
                 }
                 Toggle("自动纠正口音", isOn: $settings.autoCorrect)
-                    .help("讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Apple 本地翻译时不可用。")
-                    .disabled(settings.translationModel == .apple)
-                if settings.autoCorrect && settings.translationModel != .apple {
+                    .help("讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Google 翻译或 Apple 本地翻译时，纠正期间临时改用 Claude Sonnet，需要本机已登录 Claude Code。")
+                if settings.autoCorrect {
                     Toggle("纠正时保留识别原文", isOn: $settings.keepOriginalText)
                         .help("纠正修改了原文时，在字幕记录中同时保留识别器原来的文字。")
                         .padding(.leading, 14)
@@ -131,6 +129,11 @@ struct SettingsView: View {
                     ForEach(DisplayMode.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                Picker("外观", selection: $settings.appearance) {
+                    ForEach(AppearanceMode.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: settings.appearance) { onAppearanceChanged() }
                 slider("字号", value: fontSize, range: 14...56, text: "\(Int(settings.translationFontSize)) pt")
                 slider("背景", value: $settings.backgroundOpacity, range: 0...1,
                        text: "\(Int((settings.backgroundOpacity * 100).rounded()))%")
@@ -138,26 +141,22 @@ struct SettingsView: View {
                     Stepper(L("显示最近 %d 句", settings.visibleLines), value: $settings.visibleLines, in: 1...6)
                 }
                 LabeledContent("大小") {
-                    HStack {
-                        Text("拖动字幕边框调整").foregroundStyle(.secondary)
-                        Button("恢复默认") {
-                            settings.overlayWidth = 900
-                            settings.overlayHeight = 0
-                        }
-                    }
+                    Button("恢复默认", action: onResetOverlay)
+                        .help("拖动字幕边框可以调整大小。点这里让字幕恢复默认大小，移回屏幕右上角；AI 助手回到字幕旁边。")
                 }
                 Toggle("显示状态条", isOn: $settings.showStatusBar)
                     .help("在字幕底部显示音频输入、识别与翻译状态。")
                 Toggle("锁定字幕", isOn: $settings.clickThrough)
+                    .help("字幕点不到、不挡操作。鼠标移到字幕上时右上角出现锁，点它解锁。")
                     .onChange(of: settings.clickThrough) { onAppearanceChanged() }
             }
 
             Section("记录") {
                 LabeledContent("字幕记录") {
-                    HStack {
-                        Text("本次的原文和译文").foregroundStyle(.secondary)
-                        Button("查看…", action: onShowHistory)
-                    }
+                    Button("查看…", action: onShowHistory)
+                }
+                LabeledContent("录音记录") {
+                    Button("查看…", action: onShowRecordings)
                 }
                 LabeledContent("记录文件夹") {
                     HStack {
@@ -185,7 +184,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var appleNote: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("离线翻译，速度快，不需要账号；不支持自动纠正口音。")
+            Text("离线翻译，速度快，不需要账号。")
                 .foregroundStyle(.secondary)
             if state.appleLanguagesInstalled == false {
                 HStack {
@@ -209,11 +208,11 @@ struct SettingsView: View {
             ? true : await AppleTranslator.isInstalled(source: source, target: target)
     }
 
-    private var usesClaudeCode: Bool {
-        [settings.translationModel, settings.assistantModel].contains {
-            if case .claudeCode = $0 { true } else { false }
-        }
+    /// 能用的模型服务：本地的，或者已经填了 API 密钥的（默认列出的那几个没填密钥不算）。
+    private var configuredServices: Int {
+        settings.endpoints.filter { $0.isLocal || !(KeychainStore.key(for: $0.id) ?? "").isEmpty }.count
     }
+
 
     /// 一个滑块同时调译文和原文字号（原文约为译文的 0.62 倍）。
     private var fontSize: Binding<Double> {
@@ -307,14 +306,33 @@ struct HistoryView: View {
             HStack {
                 Text(controller.status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                if let url = controller.transcriptURL {
-                    Button("在 Finder 中显示记录") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                // 菜单栏图标去掉后（2026-10-22），记录相关的操作都在这里。
+                Button("在 Finder 中显示") { openTranscriptFolder() }
+                Menu("导出字幕") {
+                    ForEach(SubtitleFileFormat.allCases, id: \.self) { format in
+                        Button(format.menuTitle) { controller.exportSubtitles(format: format) }
+                    }
                 }
+                .fixedSize()
+                .disabled(controller.lines.isEmpty)
+                Button("开始新的记录") { controller.newSession() }
+                    .disabled(controller.lines.isEmpty)
                 Button(controller.notesInProgress ? L("正在生成…") : L("生成笔记")) { controller.generateNotes() }
                     .disabled(controller.notesInProgress || controller.lines.isEmpty)
             }
             .padding(10)
         }
         .frame(minWidth: 520, minHeight: 420)
+    }
+
+    /// 有本次的记录文件就在 Finder 里选中它，否则打开记录文件夹。
+    private func openTranscriptFolder() {
+        if let url = controller.transcriptURL {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            let folder = URL(fileURLWithPath: (controller.settings.transcriptFolder as NSString).expandingTildeInPath)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(folder)
+        }
     }
 }

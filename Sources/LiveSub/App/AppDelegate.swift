@@ -3,48 +3,54 @@ import Carbon.HIToolbox
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings.shared
     private lazy var controller = SubtitleController(settings: settings)
     private var overlay: OverlayWindowController!
     private var assistantWindow: AssistantWindowController!
-    private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
     private var historyWindow: NSWindow?
+    private var recordingsWindow: NSWindow?
     private var modelServicesWindow: NSWindow?
     private let modelServicesState = ModelServicesState()
-    private var iconObserver: Task<Void, Never>?
-    private var statusMenu: NSMenu!
     private var showHotKey: GlobalHotKey?
-    /// 菜单栏图标的名字：系统按它记住图标位置（⌘-拖动后的位置也会记住）。
-    private static let statusItemName = "LiveSub"
 
+    /// 没有菜单栏图标（2026-10-22 用户决定和 ICT 一样去掉）：所有操作都在字幕的快捷按钮和各个窗口里，
+    /// 收起的字幕用 ⌃⌥L 或再打开一次 App 叫回来。
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = settings.appearance.nsAppearance
         BackgroundCursor.enable()
         // 提前读好终端里的登录环境变量，第一次翻译时不用等。
         DispatchQueue.global(qos: .utility).async { _ = ClaudeCLI.shellEnvironment() }
         overlay = OverlayWindowController(controller: controller, settings: settings, actions: OverlayActions(
             toggleRunning: { [weak self] in self?.controller.toggle() },
-            lock: { [weak self] in self?.setClickThrough(true) },
+            lock: { [weak self] in self?.lockSubtitles() },
+            toggleRecording: { [weak self] in self?.controller.toggleRecording() },
             showSettings: { [weak self] in self?.showSettings() },
-            minimize: { [weak self] in self?.hideSubtitles() },
+            quit: { NSApp.terminate(nil) },
             toggleAssistant: { [weak self] in self?.toggleAssistant() },
-            modelChanged: { [weak self] in self?.controller.settingsChanged() },
+            settingsChanged: { [weak self] in self?.controller.settingsChanged() },
             manageModels: { [weak self] in self?.showModelServices() }
         ))
         assistantWindow = AssistantWindowController(
             assistant: controller.assistant, settings: settings, overlay: overlay.panel,
             onClose: { [weak self] in self?.toggleAssistant() })
+        // 选了 Apple 本地翻译、语言包还没下载：打开设置，那里有“下载…”按钮。
+        controller.onAppleLanguagesMissing = { [weak self] in self?.showSettings() }
+        // 选了还没填 API 密钥的服务、还没下载的混元翻译：打开“模型服务”，滚到这一栏。
+        settings.onModelNeedsSetup = { [weak self] id in
+            self?.modelServicesState.focus = id
+            self?.showModelServices()
+        }
         showSubtitles()
         MainThreadWatchdog.shared.start()
 
         setUpEditMenu()
-        setUpStatusItem()
+        observeActivation()
         // ⌃⌥L：显示/收起字幕。
         showHotKey = GlobalHotKey(keyCode: kVK_ANSI_L, modifiers: controlKey | optionKey) { [weak self] in
             self?.toggleOverlay()
         }
-        observeRunningState()
         if ProcessInfo.processInfo.environment["LIVESUB_AUTOSTART"] == "1" {
             controller.toggle()
         }
@@ -79,188 +85,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         appLog.notice("terminate")
         controller.shutdown()
-    }
-
-    // MARK: - 菜单栏
-
-    // MARK: - 菜单栏图标
-
-    private func setUpStatusItem() {
-        // 第一次运行时把图标放在 Wi-Fi 旁边（离屏幕右边约 300 点）：新加的图标默认排在最左边，
-        // 菜单栏图标多的时候会被刘海挡住。之后用户 ⌘-拖动的位置系统会自己记住。
-        let positionKey = "NSStatusItem Preferred Position \(Self.statusItemName)"
-        if UserDefaults.standard.object(forKey: positionKey) == nil {
-            UserDefaults.standard.set(300, forKey: positionKey)
-        }
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.autosaveName = Self.statusItemName
-        statusMenu = NSMenu()
-        statusMenu.delegate = self
-        statusItem.button?.target = self
-        statusItem.button?.action = #selector(statusItemClicked)
-        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        updateIcon()
-        if ProcessInfo.processInfo.environment["LIVESUB_DEBUG_STATUS"] != nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                let frame = self?.statusItem.button?.window?.frame ?? .zero
-                FileHandle.standardError.write(Data("status item frame \(frame)\n".utf8))
-            }
-        }
-    }
-
-    /// 左键：字幕收起时打开字幕，否则弹出菜单；右键（或按住 ⌃）：总是弹出菜单。
-    @objc private func statusItemClicked() {
-        let event = NSApp.currentEvent
-        let wantsMenu = event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true
-        if !wantsMenu, !overlay.isVisible {
-            showSubtitles()
-            return
-        }
-        statusItem.menu = statusMenu
-        statusItem.button?.performClick(nil)
-    }
-
-    func menuDidClose(_ menu: NSMenu) {
-        // 菜单只在需要时挂上，平时让左键点击走 statusItemClicked。
-        statusItem.menu = nil
-    }
-
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        let status = NSMenuItem(title: controller.status, action: nil, keyEquivalent: "")
-        status.isEnabled = false
-        menu.addItem(status)
-        // 字幕锁定时点不到字幕下方提示里的按钮，菜单里也放一个。
-        if controller.systemAudioBlocked {
-            menu.addItem(item("打开系统录音设置", #selector(openSystemAudioSettings)))
-        }
-        menu.addItem(.separator())
-
-        menu.addItem(item(controller.isRunning ? "停止字幕" : "开始字幕", #selector(toggleRunning), key: "s"))
-
-        let sourceMenu = NSMenu()
-        for mode in AudioSourceMode.allCases {
-            let i = item(mode.title, #selector(selectSource(_:)))
-            i.representedObject = mode.rawValue
-            i.state = settings.audioSource == mode ? .on : .off
-            sourceMenu.addItem(i)
-        }
-        menu.addItem(submenu("音源", sourceMenu))
-
-        let displayMenu = NSMenu()
-        for mode in DisplayMode.allCases {
-            let i = item(mode.title, #selector(selectDisplay(_:)))
-            i.representedObject = mode.rawValue
-            i.state = settings.displayMode == mode ? .on : .off
-            displayMenu.addItem(i)
-        }
-        menu.addItem(submenu("显示", displayMenu))
-
-        let modelMenu = NSMenu()
-        for group in settings.modelGroups(includeApple: true) {
-            modelMenu.addItem(.sectionHeader(title: group.title))
-            for choice in group.choices {
-                let i = item(settings.displayName(choice), #selector(selectModel(_:)))
-                i.representedObject = choice
-                i.state = settings.translationModel == choice ? .on : .off
-                modelMenu.addItem(i)
-            }
-        }
-        modelMenu.addItem(.separator())
-        modelMenu.addItem(item("管理模型服务…", #selector(showModelServices)))
-        menu.addItem(submenu("翻译模型", modelMenu))
-        menu.addItem(.separator())
-
-        let show = item(overlay.isVisible ? "收起字幕到菜单栏" : "显示字幕", #selector(toggleOverlay))
-        show.keyEquivalentModifierMask = [.control, .option]
-        show.keyEquivalent = "l"
-        menu.addItem(show)
-        let assistantItem = item("AI 助手", #selector(toggleAssistantFromMenu))
-        assistantItem.state = settings.assistantVisible ? .on : .off
-        menu.addItem(assistantItem)
-        let lock = item("锁定字幕", #selector(toggleClickThrough), key: "l")
-        lock.state = settings.clickThrough ? .on : .off
-        menu.addItem(lock)
-        menu.addItem(item("字幕移回屏幕底部", #selector(resetOverlayPosition)))
-        menu.addItem(.separator())
-
-        menu.addItem(item("字幕记录…", #selector(showHistory), key: "h"))
-        let notes = item(controller.notesInProgress ? "正在生成笔记…" : "生成笔记", #selector(generateNotes))
-        notes.isEnabled = !controller.notesInProgress && !controller.lines.isEmpty
-        menu.addItem(notes)
-        let exportMenu = NSMenu()
-        for format in SubtitleFileFormat.allCases {
-            let i = item(format.menuTitle, #selector(exportSubtitles(_:)))
-            i.representedObject = format.rawValue
-            exportMenu.addItem(i)
-        }
-        let export = submenu("导出字幕", exportMenu)
-        export.isEnabled = !controller.lines.isEmpty
-        menu.addItem(export)
-        menu.addItem(item("开始新的记录", #selector(newSession)))
-        menu.addItem(item("打开记录文件夹", #selector(openTranscriptFolder)))
-        menu.addItem(.separator())
-        menu.addItem(item("设置…", #selector(showSettings), key: ","))
-        menu.addItem(item("退出 LiveSub", #selector(quit), key: "q"))
-    }
-
-    private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
-        let i = NSMenuItem(title: L(title), action: action, keyEquivalent: key)
-        i.target = self
-        return i
-    }
-
-    private func submenu(_ title: String, _ menu: NSMenu) -> NSMenuItem {
-        let i = NSMenuItem(title: L(title), action: nil, keyEquivalent: "")
-        i.submenu = menu
-        return i
-    }
-
-    private func updateIcon() {
-        let symbol = controller.isRunning ? "captions.bubble.fill" : "captions.bubble"
-        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "LiveSub")
-    }
-
-    private func observeRunningState() {
-        withObservationTracking {
-            _ = controller.isRunning
-        } onChange: { [weak self] in
-            Task { @MainActor in
-                self?.updateIcon()
-                self?.observeRunningState()
-            }
-        }
+        LocalModelServer.shared.stop()
     }
 
     // MARK: - 动作
 
-    @objc private func toggleRunning() {
-        if !controller.isRunning { showSubtitles() }
-        controller.toggle()
-    }
-
-    @objc private func selectSource(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let mode = AudioSourceMode(rawValue: raw) else { return }
-        settings.audioSource = mode
-        controller.settingsChanged()
-    }
-
-    @objc private func selectDisplay(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let mode = DisplayMode(rawValue: raw) else { return }
-        settings.displayMode = mode
-    }
-
-    @objc private func selectModel(_ sender: NSMenuItem) {
-        guard let choice = sender.representedObject as? ModelChoice else { return }
-        settings.translationModel = choice
-        controller.settingsChanged()
-    }
-
-    @objc private func toggleOverlay() {
+    private func toggleOverlay() {
         overlay.isVisible ? hideSubtitles() : showSubtitles()
     }
 
-    /// 字幕和（打开着的）AI 助手一起显示 / 收起到菜单栏。
+    /// 字幕和（打开着的）AI 助手一起显示 / 收起。
     private func showSubtitles() {
         overlay.show()
         if settings.assistantVisible { showAssistant() }
@@ -286,66 +120,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func toggleAssistantFromMenu() {
-        if !overlay.isVisible { overlay.show() }
-        toggleAssistant()
-    }
-
-    @objc private func exportSubtitles(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let format = SubtitleFileFormat(rawValue: raw) else { return }
-        controller.exportSubtitles(format: format)
-    }
-
-    @objc private func toggleClickThrough() { setClickThrough(!settings.clickThrough) }
-
-    private func setClickThrough(_ on: Bool) {
-        settings.clickThrough = on
+    private func lockSubtitles() {
+        settings.clickThrough = true
         overlay.applyClickThrough()
     }
 
-    @objc private func resetOverlayPosition() {
+    /// 设置里的“恢复默认”：字幕大小和位置、AI 助手位置都回到默认。
+    private func resetOverlay() {
+        settings.resetOverlaySize()
         overlay.resetPosition()
         assistantWindow.resetPosition()
         showSubtitles()
     }
 
-    @objc private func generateNotes() { controller.generateNotes() }
-    @objc private func newSession() { controller.newSession() }
-
-    @objc private func openSystemAudioSettings() { SystemAudioCapture.openPrivacySettings() }
-
-    @objc private func openTranscriptFolder() {
-        if let url = controller.transcriptURL {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } else {
-            let folder = URL(fileURLWithPath: (settings.transcriptFolder as NSString).expandingTildeInPath)
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            NSWorkspace.shared.open(folder)
-        }
-    }
-
-    @objc private func showSettings() {
+    private func showSettings() {
         if settingsWindow == nil {
             let view = SettingsView(settings: settings,
                                     onTranslationSettingsChanged: { [weak self] in self?.controller.settingsChanged() },
-                                    onAppearanceChanged: { [weak self] in self?.overlay.applyClickThrough() },
+                                    onAppearanceChanged: { [weak self] in self?.applyAppearance() },
                                     onManageModels: { [weak self] in self?.showModelServices() },
-                                    onShowHistory: { [weak self] in self?.showHistory() })
-            settingsWindow = makeWindow(title: L("LiveSub 设置"), view: view)
+                                    onShowHistory: { [weak self] in self?.showHistory() },
+                                    onShowRecordings: { [weak self] in self?.showRecordings() },
+                                    onResetOverlay: { [weak self] in self?.resetOverlay() })
+            settingsWindow = makeWindow(title: L("LiveSub 设置"), view: view, settingsLike: true)
         }
         present(settingsWindow!)
     }
 
-    @objc private func showModelServices() {
+    private func showModelServices() {
         if modelServicesWindow == nil {
             let view = ModelServicesView(settings: settings, state: modelServicesState,
                                          onChanged: { [weak self] in self?.controller.settingsChanged() })
-            modelServicesWindow = makeWindow(title: L("模型服务"), view: view)
+            modelServicesWindow = makeWindow(title: L("模型服务"), view: view, settingsLike: true)
         }
         present(modelServicesWindow!)
     }
 
-    @objc private func showHistory() {
+    private func showHistory() {
         if historyWindow == nil {
             historyWindow = makeWindow(title: L("LiveSub 字幕记录"), view: HistoryView(controller: controller))
             historyWindow?.setContentSize(NSSize(width: 640, height: 560))
@@ -353,10 +164,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         present(historyWindow!)
     }
 
-    private func makeWindow(title: String, view: some View) -> NSWindow {
+    /// 设置、模型服务、字幕记录窗口：用 LiveSub 时放在字幕和 AI 助手（.statusBar 层）上面，打开设置不用再把它拖开
+    /// （2026-10-22 用户提出）；切到别的程序时回到普通层，不挡别的程序的窗口。
+    private static let raisedLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+
+    private func observeActivation() {
+        let center = NotificationCenter.default
+        center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setWindowLevels(raised: true) }
+        }
+        center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setWindowLevels(raised: false) }
+        }
+    }
+
+    private func setWindowLevels(raised: Bool) {
+        for window in [settingsWindow, modelServicesWindow, historyWindow, recordingsWindow].compactMap({ $0 }) {
+            window.level = raised ? Self.raisedLevel : .normal
+        }
+    }
+
+    private func showRecordings() {
+        if recordingsWindow == nil {
+            recordingsWindow = makeWindow(title: L("LiveSub 录音记录"), view: RecordingsView(model: RecordingsModel(settings: settings)))
+            recordingsWindow?.setContentSize(NSSize(width: 620, height: 420))
+        }
+        present(recordingsWindow!)
+    }
+
+    /// `settingsLike`：设置类窗口（设置、模型服务）只留关闭按钮，和一般应用的设置窗口一样（2026-10-22 用户要求）；
+    /// 仍然可以拖边缘调高度（设置页比窗口长）。字幕记录、录音记录是内容窗口，保留最小化和缩放。
+    private func makeWindow(title: String, view: some View, settingsLike: Bool = false) -> NSWindow {
         let window = NSWindow(contentViewController: NSHostingController(rootView: view))
         window.title = title
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.styleMask = settingsLike ? [.titled, .closable, .resizable] : [.titled, .closable, .miniaturizable, .resizable]
+        if settingsLike {
+            window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+            window.standardWindowButton(.zoomButton)?.isHidden = true
+        }
         window.isReleasedWhenClosed = false
         window.center()
         return window
@@ -364,11 +209,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func present(_ window: NSWindow) {
         NSApp.activate()
+        window.level = Self.raisedLevel
         window.makeKeyAndOrderFront(nil)
     }
 
-    @objc private func quit() {
-        controller.shutdown()
-        NSApp.terminate(nil)
+    /// 锁定、外观在设置里改了：字幕窗口和各个窗口跟着变。
+    private func applyAppearance() {
+        NSApp.appearance = settings.appearance.nsAppearance
+        overlay.applyClickThrough()
     }
 }

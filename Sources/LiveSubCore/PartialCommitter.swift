@@ -72,6 +72,19 @@ public struct PartialCommitter: Sendable {
         return (c.text, c.sinceAudio)
     }
 
+    /// 讲者换气时，把这段临时文字里还没确认的词全部确认，返回这些词；没有新词时为 nil。
+    /// macOS 26 的识别器临时文字没有标点，等不到句末标点，长句只能在换气处这样提前确认（`BreathCutter`）。
+    public mutating func commitAll(_ text: String) -> String? {
+        let words = Self.words(text)
+        let start = alignedStart(words)
+        guard start < words.count else { return nil }
+        let rest = Array(words[start...])
+        candidate = nil
+        committedWords = words.count
+        committedTail = Array((committedTail + rest.map(Self.normalize)).suffix(3))
+        return rest.joined(separator: " ")
+    }
+
     /// 一段结束时，确认结果（或最后的临时文字）里还没确认的部分。
     public func remainder(of text: String) -> String {
         let words = Self.words(text)

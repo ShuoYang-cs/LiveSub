@@ -55,7 +55,7 @@ final class LegacySpeechEngine: SpeechEngine, @unchecked Sendable {
         }
         appLog.notice("legacy speech: locale=\(localeID, privacy: .public) onDevice=\(recognizer.supportsOnDeviceRecognition)")
         if guardLocaleID != nil {
-            onStatus(L("中文说话声过滤需要 macOS 26 或更新版本。"), false)
+            onStatus(L("过滤中文交谈需要 macOS 26 或更新版本。"), false)
         }
         // 识别回调在系统线程上，按顺序交给主线程处理。
         let (stream, continuation) = AsyncStream<TranscriptEvent>.makeStream()

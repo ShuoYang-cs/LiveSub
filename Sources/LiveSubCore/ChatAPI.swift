@@ -74,6 +74,7 @@ public enum ChatAPI {
                 "messages": [["role": "system", "content": system]] + turns,
                 "stream": true,
             ]
+            body.merge(openAILatencySettings(model: model)) { _, new in new }
         case .anthropic:
             let turns = messages.map { message -> [String: Any] in
                 let content: Any = message.attachments.isEmpty
@@ -108,6 +109,17 @@ public enum ChatAPI {
         if model.hasPrefix("claude-opus-5") || model.hasPrefix("claude-fable") {
             return ["output_config": ["effort": "low"]]
         }
+        return [:]
+    }
+
+    /// OpenAI 兼容服务里默认“思考”的模型：关掉，否则每句字幕要多等好几秒。参数不是 OpenAI 标准的，
+    /// 只给认得它的服务发（OpenAI 收到不认识的参数会返回 400）。2026-10-22 查的各家文档。
+    static func openAILatencySettings(model: String) -> [String: Any] {
+        let m = model.lowercased()
+        // DeepSeek：deepseek-flash 默认开着思考；Kimi：只有 kimi-k2.6 能关（kimi-k3 不能关，kimi-k2.7-code 会拒绝）。
+        if m.hasPrefix("deepseek") || m.hasPrefix("kimi-k2.6") { return ["thinking": ["type": "disabled"]] }
+        // 通义千问（百炼兼容模式）。
+        if m.hasPrefix("qwen") { return ["enable_thinking": false] }
         return [:]
     }
 
@@ -180,16 +192,27 @@ public struct ChatEndpointPreset: Sendable, Identifiable {
     public let baseURL: String
     public let exampleModels: [String]
     public let needsKey: Bool
+    /// 内置服务的固定标识（存密钥、判断用户删没删过用）；用户从菜单添加的服务没有。
+    public var builtInID: String? = nil
 
-    public static let all: [ChatEndpointPreset] = [
+    /// 默认就列在“云端模型”里的服务（2026-10-22 用户要求）：用户只需要填自己的 API 密钥。
+    /// 模型选的是各家快、不思考的那个（实时字幕要快），2026-10-22 按各家官方文档核对；以后可以在“模型服务”里点“获取列表”换。
+    public static let builtIn: [ChatEndpointPreset] = [
+        .init(name: "OpenAI", format: .openAI, baseURL: "https://api.openai.com/v1",
+              exampleModels: ["gpt-5.4-mini"], needsKey: true, builtInID: "B0000001-0000-4000-8000-000000000001"),
+        .init(name: "通义千问", format: .openAI, baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+              exampleModels: ["qwen-flash"], needsKey: true, builtInID: "B0000001-0000-4000-8000-000000000002"),
+        .init(name: "DeepSeek", format: .openAI, baseURL: "https://api.deepseek.com",
+              exampleModels: ["deepseek-flash"], needsKey: true, builtInID: "B0000001-0000-4000-8000-000000000003"),
+        .init(name: "Kimi", format: .openAI, baseURL: "https://api.moonshot.cn/v1",
+              exampleModels: ["kimi-k2.6"], needsKey: true, builtInID: "B0000001-0000-4000-8000-000000000004"),
+        .init(name: "Grok", format: .openAI, baseURL: "https://api.x.ai/v1",
+              exampleModels: ["grok-4.20-0309-non-reasoning"], needsKey: true, builtInID: "B0000001-0000-4000-8000-000000000005"),
+    ]
+
+    public static let all: [ChatEndpointPreset] = builtIn + [
         .init(name: "Anthropic", format: .anthropic, baseURL: "https://api.anthropic.com",
               exampleModels: ["claude-haiku-5-5", "claude-sonnet-5-5"], needsKey: true),
-        .init(name: "OpenAI", format: .openAI, baseURL: "https://api.openai.com/v1",
-              exampleModels: [], needsKey: true),
-        .init(name: "DeepSeek", format: .openAI, baseURL: "https://api.deepseek.com/v1",
-              exampleModels: ["deepseek-chat"], needsKey: true),
-        .init(name: "通义千问", format: .openAI, baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-              exampleModels: [], needsKey: true),
         .init(name: "Gemini", format: .openAI, baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
               exampleModels: [], needsKey: true),
         .init(name: "OpenRouter", format: .openAI, baseURL: "https://openrouter.ai/api/v1",

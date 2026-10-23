@@ -15,6 +15,21 @@ import Testing
         #expect(c.remainder(of: "Good morning, everyone. Today we will talk about speech.") == "Today we will talk about speech.")
     }
 
+    /// 新识别器的临时文字没有标点：换气时把已有的词全部确认，确认结果只取后面的部分。
+    @Test func commitAllAtBreathThenTakeRemainderOfFinal() {
+        var c = PartialCommitter()
+        #expect(c.commitAll("so today we are going to talk about how the sensor network collects data") ==
+                "so today we are going to talk about how the sensor network collects data")
+        #expect(c.remainder(of: "so today we are going to talk about how the sensor network collects data from many")
+                == "from many")
+        #expect(c.commitAll("so today we are going to talk about how the sensor network collects data") == nil)
+        #expect(c.commitAll("so today we are going to talk about how the sensor network collects data from many devices")
+                == "from many devices")
+        // 确认结果加了标点、改了大小写，前面还多识别出一个词：按最后几个词对齐。
+        #expect(c.remainder(of: "Okay, so today we are going to talk about how the sensor network collects data from many devices at the same time.")
+                == "at the same time.")
+    }
+
     @Test func sentenceAtTheVeryEndIsLeftToPauseDetection() {
         var c = PartialCommitter()
         _ = c.update("Does that make sense?", now: 0, audioTime: 0)

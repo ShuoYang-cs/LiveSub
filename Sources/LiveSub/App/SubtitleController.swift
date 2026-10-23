@@ -48,6 +48,8 @@ final class SourcePipeline {
     var captureStart = Date()
     /// 已经因为“没有新音频”请求过确认当前这段临时文本了（新结果到来时清掉）。
     var finalizeRequested = false
+    /// 录音：打开时把这一路的声音存进文件。
+    let recording = RecorderSlot()
 
     init(capture: AudioCapture, label: String?) {
         self.capture = capture
@@ -71,6 +73,8 @@ final class SubtitleController {
     private(set) var silentFor: TimeInterval = 0
     /// 系统录音权限被拒绝了：收到的只有静音（字幕下方提示去系统设置里打开）。
     private(set) var systemAudioBlocked = false
+    /// 正在把听到的声音存成文件（录音按钮打开、字幕在运行）。
+    private(set) var isRecording = false
     private(set) var backlog = 0
     private(set) var recognitionDifficult = false
     private(set) var alert: String?
@@ -84,8 +88,18 @@ final class SubtitleController {
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var translator: Translator?
     @ObservationIgnored private var fallback: Translator?
+    /// 选了 Google 或 Apple 这类只能翻译的模型时，它们的翻译器。识别困难时 `translator` 临时换成
+    /// 带纠正的 Claude 会话，清楚了再换回它；Claude 出错时也用它顶上。
+    @ObservationIgnored private var basicTranslator: Translator?
+    /// 记录文件已经写到第几句。两句同时翻译时后一句常常先翻完，按字幕顺序写：前面的都翻完（或失败）了才写。
+    @ObservationIgnored private var persistedCount = 0
+    /// 本机有没有 Claude Code（准备翻译器时查一次；判断能不能纠正要用，不能每次重绘都去找）。
+    @ObservationIgnored private(set) var claudeAvailable = false
+    /// 选了 Apple 本地翻译、但语言包还没下载：由 AppDelegate 打开设置，那里有下载按钮。
+    @ObservationIgnored var onAppleLanguagesMissing: (() -> Void)?
     @ObservationIgnored private var queue: [UUID] = []
-    @ObservationIgnored private var workerRunning = false
+    /// 正在翻译的句数。
+    @ObservationIgnored private var activeTranslations = 0
     @ObservationIgnored private var store: TranscriptStore?
     @ObservationIgnored private var listeningStatus = ""
     /// 当前识别链路是按哪些设置启动的；这些设置变了才需要重启识别。
@@ -183,13 +197,18 @@ final class SubtitleController {
                         self.handle(event, from: pipeline)
                     })
                 let engine = pipeline.engine
+                let recording = pipeline.recording
+                if settings.recordAudio { startRecording(pipeline) }
                 appLog.notice("start: recognizer ready, starting audio capture")
                 // 在后台线程启动采集：第一次录系统声音时，Core Audio 会一直等到用户回答权限弹窗才返回，
                 // 放在主线程上整个界面（字幕、菜单）都会冻住。
                 let box = UncheckedSendable(capture)
                 pipeline.captureStart = Date()
                 try await Task.detached(priority: .userInitiated) {
-                    try box.value.start { buffer in engine.append(buffer) }
+                    try box.value.start { buffer in
+                        engine.append(buffer)
+                        recording.append(buffer)
+                    }
                 }.value
                 if sessionStart == nil { sessionStart = pipeline.captureStart }
                 appLog.notice("start: audio capture running")
@@ -197,6 +216,7 @@ final class SubtitleController {
             }
         } catch {
             for p in started { p.capture.stop(); await p.engine.stop() }
+            finishRecording(started)
             status = L("启动失败：%@", error.localizedDescription)
             appLog.error("start failed: \(error.localizedDescription, privacy: .public)")
             return
@@ -204,6 +224,7 @@ final class SubtitleController {
 
         pipelines = started
         isRunning = true
+        isRecording = settings.recordAudio
         activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical], reason: "LiveSub 实时字幕")
         startedRecognitionKey = recognitionKey
         filteredCount = 0
@@ -225,6 +246,7 @@ final class SubtitleController {
         let current = pipelines
         pipelines = []
         for p in current { p.capture.stop() }
+        finishRecording(current)
         for p in current {
             await p.engine.stop()
             p.volatileText = ""
@@ -234,11 +256,53 @@ final class SubtitleController {
         status = L("已停止")
     }
 
+    // MARK: - 录音
+
+    /// 录音按钮：字幕运行中也可以随时打开或关掉。
+    func toggleRecording() {
+        settings.recordAudio.toggle()
+        guard isRunning else { return }
+        if settings.recordAudio {
+            pipelines.forEach(startRecording)
+            isRecording = true
+        } else {
+            finishRecording(pipelines)
+        }
+    }
+
+    /// 录音文件和字幕记录放在一起、名字对应：“2026-10-22 13.35 录音.m4a”；“两者”时每路一个文件。
+    private func startRecording(_ pipeline: SourcePipeline) {
+        guard let transcript = store?.fileURL else { return }
+        let folder = transcript.deletingLastPathComponent()
+        var base = transcript.deletingPathExtension().lastPathComponent.replacingOccurrences(of: L("字幕记录"), with: L("录音"))
+        if let label = pipeline.label { base += "（\(label)）" }
+        var url = folder.appendingPathComponent(base + ".m4a")
+        var n = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(base) \(n).m4a")
+            n += 1
+        }
+        _ = pipeline.recording.set(AudioRecorder(url: url))
+    }
+
+    /// 关闭录音文件（在后台等它写完，不卡界面）。
+    private func finishRecording(_ pipelines: [SourcePipeline]) {
+        isRecording = false
+        for p in pipelines {
+            guard let recorder = p.recording.set(nil) else { continue }
+            Task.detached(priority: .utility) {
+                recorder.finish()
+                appLog.notice("recording saved: \(recorder.url.lastPathComponent, privacy: .public)")
+            }
+        }
+    }
+
     /// 结束当前记录文件，下次开始时新建一个。
     func newSession() {
         Task {
             await stop()
             lines = []
+            persistedCount = 0
             queue = []
             backlog = 0
             store = nil
@@ -282,7 +346,9 @@ final class SubtitleController {
 
     private func resetTranslators() {
         retire(translator)
+        if basicTranslator !== translator { retire(basicTranslator) }
         translator = nil
+        basicTranslator = nil
         fallback = nil
         usingFallback = false
         translatorPending = true
@@ -300,7 +366,7 @@ final class SubtitleController {
     private func updateListeningStatus() {
         listeningStatus = L("正在听：%@ · %@ → %@ · %@", settings.audioSource.title, L(settings.source.displayName),
                             L(settings.target.displayName), translator?.name ?? "")
-        status = filteredCount > 0 ? L("%@ · 已过滤中文说话 %d 段", listeningStatus, filteredCount) : listeningStatus
+        status = filteredCount > 0 ? L("%@ · 已过滤中文交谈 %d 段", listeningStatus, filteredCount) : listeningStatus
     }
 
     func shutdown() {
@@ -328,17 +394,17 @@ final class SubtitleController {
         }
 
         guard translator == nil else { return }
-        guard settings.translationModel != .apple else {
-            if #available(macOS 26, *) {
-                translator = fallback ?? AppleTranslator(source: source, target: target)
-            } else {
-                status = L("Apple 本地翻译需要 macOS 26 或更新版本，请选择其他翻译模型。")
-                showAlert(status)
+        claudeAvailable = ClaudeCLI.locate(customPath: settings.claudePath) != nil
+        if !settings.translationModel.isLanguageModel {
+            prepareBasicTranslator(source: source, target: target)
+            // 改设置时正处在识别困难中：直接用带纠正的会话。
+            if correcting, let model = correctionModel, let session = try? makeModelSession(model) {
+                translator = session
             }
             return
         }
         do {
-            translator = try makeModelSession()
+            translator = try makeModelSession(settings.translationModel)
         } catch {
             // 所选模型用不了（没装 Claude Code、服务被删除）：先用 Apple 本地翻译顶上。
             translator = fallback
@@ -348,10 +414,59 @@ final class SubtitleController {
         }
     }
 
-    /// 所选大模型的翻译会话；提示词里带不带“按发音纠正”看当前是否识别困难。
-    private func makeModelSession() throws -> ChatSession {
+    /// Google 翻译、混元翻译（本机）或 Apple 本地翻译。
+    private func prepareBasicTranslator(source: LanguageOption, target: LanguageOption) {
+        if settings.translationModel == .localModel, LocalModelFiles.isInstalled {
+            let local = LocalTranslator(source: source, target: target)
+            local.warmUp()
+            basicTranslator = local
+        } else if settings.translationModel == .google || settings.translationModel == .localModel {
+            // 混元翻译还没下载：这次先用 Google 翻译，并打开“模型服务”里的下载按钮。
+            if settings.translationModel == .localModel {
+                showAlert(L("混元翻译还没有下载，先用 Google 翻译。请在“模型服务”里下载。"))
+                settings.onModelNeedsSetup?(LocalModelFiles.serviceID)
+            }
+            let google = GoogleTranslator(source: source, target: target)
+            google.warmUp()
+            basicTranslator = google
+        } else if #available(macOS 26, *) {
+            basicTranslator = fallback ?? AppleTranslator(source: source, target: target)
+            // 语言包没下载时每句都会翻译失败：提示，并打开设置（那里有下载按钮）。
+            if fallback == nil, source.translationCode != target.translationCode {
+                showAlert(L("尚未下载“%@ → %@”语言包", L(source.displayName), L(target.displayName)))
+                onAppleLanguagesMissing?()
+            }
+        } else {
+            status = L("Apple 本地翻译需要 macOS 26 或更新版本，请选择其他翻译模型。")
+            showAlert(status)
+        }
+        translator = basicTranslator
+        translatorBuiltDifficult = false
+    }
+
+    /// 混元翻译启动不了（文件被删、被拦截、加载超时）：这次改用 Google 翻译，免得每句都重新启动它、每句都失败。
+    /// 改设置或重新开始时再试混元翻译。
+    private func fallBackFromLocalModel() -> Bool {
+        guard basicTranslator is LocalTranslator else { return false }
+        let google = GoogleTranslator(source: settings.source, target: settings.target)
+        google.warmUp()
+        if translator === basicTranslator { translator = google }
+        retire(basicTranslator)
+        basicTranslator = google
+        return true
+    }
+
+    /// 按发音纠正用的大模型：所选翻译模型是大模型就用它；Google、Apple 不能纠正，本机有 Claude Code 时
+    /// 临时换成 Claude Sonnet（ICT 2026-10-22 实测：带上下文时 Sonnet 和 Haiku 一样快，但 Haiku 会编造原文没有的词）。
+    var correctionModel: ModelChoice? {
+        if settings.translationModel.isLanguageModel { return settings.translationModel }
+        return claudeAvailable ? .claudeCode("sonnet") : nil
+    }
+
+    /// 大模型翻译会话；提示词里带不带“按发音纠正”看当前是否识别困难。
+    private func makeModelSession(_ model: ModelChoice) throws -> ChatSession {
         let session = try ChatSessionFactory.make(
-            settings.translationModel, settings: settings,
+            model, settings: settings,
             systemPrompt: Prompts.translatorSystemPrompt(source: settings.source, target: settings.target,
                                                          correctMishearings: correcting),
             maxTurns: 40, historyTurns: 12, timeout: 25)
@@ -376,10 +491,12 @@ final class SubtitleController {
             }
             updateQuality(result.confidences)
             enqueue(pipeline.segmenter.addFinal(result.text), from: pipeline)
+            // 长句在换气处切出来的前半句：不等后文，直接送去翻译。
+            if result.endsClause { enqueue(pipeline.segmenter.flushAll(), from: pipeline) }
         case .filtered:
             pipeline.volatileText = ""
             filteredCount += 1
-            status = L("%@ · 已过滤中文说话 %d 段", listeningStatus, filteredCount)
+            status = L("%@ · 已过滤中文交谈 %d 段", listeningStatus, filteredCount)
         }
         updateLive(for: pipeline)
     }
@@ -415,8 +532,8 @@ final class SubtitleController {
 
     // MARK: - 识别质量（自动判断是否需要按发音纠正）
 
-    /// 翻译时是否按发音纠正识别错误：打开了“自动纠正口音”，并且最近识别困难。
-    var correcting: Bool { settings.autoCorrect && recognitionDifficult }
+    /// 翻译时是否按发音纠正识别错误：打开了“自动纠正口音”、最近识别困难，并且有能纠正的大模型。
+    var correcting: Bool { settings.autoCorrect && recognitionDifficult && correctionModel != nil }
 
     private func updateQuality(_ confidences: [Double]) {
         guard quality.add(confidences) else { return }
@@ -424,13 +541,20 @@ final class SubtitleController {
         let average = quality.averageConfidence.map { String(format: "%.2f", $0) } ?? "-"
         appLog.notice("recognition \(self.recognitionDifficult ? "difficult" : "clear", privacy: .public) (avg confidence \(average, privacy: .public))")
         // 没打开自动纠正时只在状态条上提示，不换翻译进程。
-        guard settings.autoCorrect, settings.translationModel.isLanguageModel, !usingFallback, translator != nil else { return }
+        guard settings.autoCorrect, let model = correctionModel, !usingFallback, translator != nil else { return }
+        // Google、Apple：识别清楚了换回原来的翻译器（它一直留着，不关）。
+        if let basic = basicTranslator, !correcting {
+            if translator !== basic { retire(translator) }
+            translator = basic
+            translatorBuiltDifficult = false
+            return
+        }
         // 换一个带/不带“按发音纠正”的翻译进程：新的建好后立刻替换，中间不留空档。
         // 以前先置空再异步准备，触发切换的这句（马上就要翻译）正好碰上没有翻译器，每次切换都有一句“翻译失败”。
         // 新进程冷启动只比热进程慢不到 1 秒，所以不等它准备好。旧进程等正在翻译的句子完成后再关。
         do {
-            let fresh = try makeModelSession()
-            retire(translator)
+            let fresh = try makeModelSession(model)
+            if translator !== basicTranslator { retire(translator) }
             translator = fresh
         } catch {
             appLog.error("rebuild translator failed: \(error.localizedDescription, privacy: .public)")
@@ -512,14 +636,18 @@ final class SubtitleController {
         if !segments.isEmpty { runWorker() }
     }
 
+    /// Google、Apple、混元翻译每句独立翻译，同时翻两句，后一句不用等前一句（ICT 2026-10-22 实测排队要多等 1 秒多）；
+    /// 不多于两句，免得一下子发太多请求被 Google 限流（混元的 llama-server 也只开了两个槽位）。
+    /// 大模型会话带着上下文，要按顺序一句一句来。
     private func runWorker() {
-        guard !workerRunning else { return }
-        workerRunning = true
-        Task {
-            while let id = dequeueMerged() {
+        let limit = basicTranslator != nil && translator === basicTranslator ? 2 : 1
+        while activeTranslations < limit, let id = dequeueMerged() {
+            activeTranslations += 1
+            Task {
                 await translateLine(id)
+                activeTranslations -= 1
+                runWorker()
             }
-            workerRunning = false
         }
     }
 
@@ -577,12 +705,26 @@ final class SubtitleController {
             } catch {
                 let err = error as? TranslatorError
                 if err?.isPersistent == true { usingFallback = true }
-                status = error.localizedDescription
-                showAlert(error.localizedDescription)
+                var message = error.localizedDescription
+                if case .localModelUnavailable = err, fallBackFromLocalModel() {
+                    message = L("%@ 这次先用 Google 翻译。", message)
+                }
+                status = message
+                showAlert(message)
                 appLog.error("translate failed: \(error.localizedDescription, privacy: .public)")
             }
         }
-        if let fallback, fallback !== primary {
+        // 纠正用的 Claude 出错时先用原来的 Google / Apple 翻译这一句。
+        if let basic = basicTranslator, basic !== primary {
+            do {
+                let result = try await basic.translate(source, context: context, onPartial: { _ in })
+                finishLine(id, translation: result, note: nil)
+                return
+            } catch {
+                appLog.error("basic translate failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if let fallback, fallback !== primary, fallback !== basicTranslator {
             do {
                 let result = try await fallback.translate(source, context: context, onPartial: { _ in })
                 finishLine(id, translation: result, note: L("Apple 备用"))
@@ -590,11 +732,11 @@ final class SubtitleController {
             } catch {
                 appLog.error("fallback translate failed: \(error.localizedDescription, privacy: .public)")
             }
-        } else if primary == nil {
+        } else if primary == nil, basicTranslator == nil {
             appLog.error("translate failed: no translator available")
         }
         if let j = index(of: id) { lines[j].state = .failed }
-        persist(id)
+        persist()
     }
 
     private func updatePartial(_ id: UUID, _ partial: String) {
@@ -624,14 +766,18 @@ final class SubtitleController {
         lines[i].translation = translation
         lines[i].state = .done
         lines[i].note = note
-        persist(id)
+        persist()
     }
 
-    private func persist(_ id: UUID) {
-        guard let line = lines.first(where: { $0.id == id }) else { return }
-        store?.append(TranscriptFormat.entry(time: line.time, sourceLabel: line.sourceLabel,
-                                             source: line.source, translation: line.translation,
-                                             original: line.originalSource))
+    /// 积压合并只会去掉还在排队的句子（都在 `persistedCount` 后面），所以已经写过的句子位置不变。
+    private func persist() {
+        while persistedCount < lines.count, [.done, .failed].contains(lines[persistedCount].state) {
+            let line = lines[persistedCount]
+            store?.append(TranscriptFormat.entry(time: line.time, sourceLabel: line.sourceLabel,
+                                                 source: line.source, translation: line.translation,
+                                                 original: line.originalSource))
+            persistedCount += 1
+        }
     }
 
     private func recentContext(before id: UUID) -> ContextPairs {
@@ -679,7 +825,7 @@ final class SubtitleController {
     }
 
     /// 仅用于 `--render-window` 自检：填入示例字幕。
-    func loadPreview() {
+    func loadPreview(running: Bool = true) {
         var a = SubtitleLine(time: Date(), sourceLabel: nil, source: "Today we're going to look at eigenvalues and eigenvectors, which are probably the most important idea in this course.")
         a.translation = "今天我们来看特征值 (eigenvalue) 和特征向量 (eigenvector)，这可能是本课程最重要的概念。"
         a.state = .done
@@ -687,8 +833,8 @@ final class SubtitleController {
         b.translation = "矩阵 A 的特征向量是一个非零向量 v，使得 A 乘以 v 等于 λ 乘以 v。"
         b.state = .translating
         lines = [a, b]
-        live = ["": "In other words, the matrix only stretches"]
-        isRunning = true
+        live = running ? ["": "In other words, the matrix only stretches"] : [:]
+        isRunning = running
     }
 
     // MARK: - 笔记
