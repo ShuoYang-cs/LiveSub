@@ -7,6 +7,7 @@ using LiveSub.Core;
 using LiveSub.Core.Chat;
 using LiveSub.Core.Speech;
 using LiveSub.Core.Subtitles;
+using LiveSub.App.Translation;
 
 namespace LiveSub.App.Services;
 
@@ -29,6 +30,9 @@ public static class AudioSourceModes
     public static string ShortTitle(this AudioSourceMode mode) =>
         mode == AudioSourceMode.Both ? Strings.Source_BothShort : mode.Title();
 }
+
+/// <summary>外观：跟随系统（默认）、浅色、深色。字幕、AI 助手和各个窗口一起变（与 macOS 的 AppearanceMode 相同）。</summary>
+public enum AppearanceMode { System, Light, Dark }
 
 /// <summary>显示/隐藏字幕的全局快捷键。默认 Win+Alt+L：部分键盘布局（例如波兰语）里 Ctrl+Alt 等同于 AltGr，会占用输入字符。</summary>
 public enum HotKeyChoice { WinAlt, CtrlAlt, None }
@@ -61,16 +65,28 @@ public sealed class AppSettings
 {
     public string SourceLanguage { get; set; } = "en-US";
     public string TargetLanguage { get; set; } = "zh-Hans";
-    public AudioSourceMode AudioSource { get; set; } = AudioSourceMode.System;
+    /// <summary>新用户默认“两者”（2026-10-22 用户决定，与 macOS 相同）；用过的用户的设置文件里有这一项，保留自己的选择。</summary>
+    public AudioSourceMode AudioSource { get; set; } = AudioSourceMode.Both;
     /// <summary>麦克风降噪：用 Windows 的通话语音处理（降噪、回声消除）打开麦克风。默认关闭。</summary>
     public bool MicNoiseReduction { get; set; }
 
-    /// <summary>字幕翻译使用的模型。</summary>
+    /// <summary>
+    /// 字幕翻译使用的模型。新用户默认 Google 翻译（不需要配置，与 macOS 相同）；用过的用户保留自己的选择：
+    /// 之后版本的设置文件里都有这一项，Windows 0.1 的设置由 <see cref="ModelMigration"/> 迁移过来。
+    /// </summary>
     public ModelChoice TranslationModel { get; set; } = ModelCatalog.DefaultTranslation;
-    /// <summary>AI 助手和笔记使用的模型（在 AI 助手面板的标题栏里选）。</summary>
+    /// <summary>AI 助手和笔记使用的模型（必须是大模型，在 AI 助手面板的标题栏里选）。</summary>
     public ModelChoice AssistantModel { get; set; } = ModelCatalog.DefaultAssistant;
-    /// <summary>用户添加的模型服务。密钥在 <see cref="SecretStore"/> 里。</summary>
+    /// <summary>模型服务：默认列出的云端服务和用户添加的服务。密钥在 <see cref="SecretStore"/> 里。</summary>
     public List<ModelEndpoint> Endpoints { get; set; } = [];
+    /// <summary>
+    /// 选 Claude 时翻译、AI 助手各用哪个型号（在“模型服务”里改；模型列表里 Claude 只有一项，与 macOS 相同）。
+    /// 旧的设置文件里没有这两项（读进来是空的）：以前直接选过某个 Claude 型号的接着用它，否则翻译用 Haiku、AI 助手用 Sonnet。
+    /// </summary>
+    public string ClaudeTranslationModel { get; set; } = "";
+    public string ClaudeAssistantModel { get; set; } = "";
+    /// <summary>用户删掉过的默认服务（不再自动补上）。</summary>
+    public List<string> DismissedBuiltIns { get; set; } = [];
     public string ClaudePath { get; set; } = "";
 
     public string WhisperModel { get; set; } = Core.Speech.WhisperModel.Default.Id;
@@ -98,47 +114,103 @@ public sealed class AppSettings
     [JsonIgnore] public bool AssistantVisible { get; set; }
 
     public DisplayMode DisplayMode { get; set; } = DisplayMode.Bilingual;
-    public double TranslationFontSize { get; set; } = 26;
-    public double SourceFontSize { get; set; } = 16;
+    /// <summary>外观：字幕、AI 助手和设置等窗口一起变。旧的设置文件里没有这一项，读进来是“跟随系统”。</summary>
+    public AppearanceMode Appearance { get; set; } = AppearanceMode.System;
+    /// <summary>新用户的字号：译文 18、原文 11（与 macOS 相同）；用过的用户保留自己的字号。</summary>
+    public double TranslationFontSize { get; set; } = 18;
+    public double SourceFontSize { get; set; } = 11;
     public double BackgroundOpacity { get; set; } = 0.62;
     public int VisibleLines { get; set; } = 2;
-    public double OverlayWidth { get; set; } = 900;
-    /// <summary>0 = 高度按“显示句数”算；大于 0 = 用户拖上下边框定的高度。两种情况字幕都在框里滚动，窗口不随内容变。</summary>
-    public double OverlayHeight { get; set; }
-    /// <summary>字幕左边与底边的位置（与设备无关的像素）；null 表示放在屏幕底部居中。</summary>
+    /// <summary>新用户的字幕大小：面积是屏幕的 1/16，宽高比 3:1（<see cref="OverlayLayout.DefaultSize"/>）。</summary>
+    public double OverlayWidth { get; set; } = DefaultOverlaySize.Width;
+    /// <summary>0 = 高度按“显示句数”算；大于 0 = 用户拖上下边框定的高度（新用户是默认大小的高度）。两种情况字幕都在框里滚动，窗口不随内容变。</summary>
+    public double OverlayHeight { get; set; } = DefaultOverlaySize.Height;
+    /// <summary>字幕左边与底边的位置（与设备无关的像素）；null 表示放在屏幕右上角。</summary>
     public double? OverlayLeft { get; set; }
     public double? OverlayBottom { get; set; }
     public bool ClickThrough { get; set; }
+    /// <summary>录音：字幕运行期间把听到的声音存进记录文件夹（快捷按钮里的录音按钮）。默认关闭。</summary>
+    public bool RecordAudio { get; set; }
     public HotKeyChoice HotKey { get; set; } = HotKeyChoice.WinAlt;
 
     public string TranscriptFolder { get; set; } = DefaultTranscriptFolder;
 
     private static string DefaultTranscriptFolder => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "LiveSub");
 
+    /// <summary>字幕窗口的默认大小：按主屏幕（与设备无关的像素）算，面积是屏幕的 1/16、宽高比 3:1。</summary>
+    public static (double Width, double Height) DefaultOverlaySize =>
+        OverlayLayout.DefaultSize(System.Windows.SystemParameters.PrimaryScreenWidth, System.Windows.SystemParameters.PrimaryScreenHeight);
+
+    /// <summary>“恢复默认”：字幕回到默认大小、移回右上角，AI 助手回到字幕旁边（与 macOS 的 resetOverlaySize 相同）。</summary>
+    public void ResetOverlay()
+    {
+        (OverlayWidth, OverlayHeight) = DefaultOverlaySize;
+        OverlayLeft = null;
+        OverlayBottom = null;
+        AssistantLeft = null;
+        AssistantTop = null;
+    }
+
     [JsonIgnore] public LanguageOption Source => LanguageOption.Source(SourceLanguage);
     [JsonIgnore] public LanguageOption Target => LanguageOption.Target(TargetLanguage);
 
     public ModelEndpoint? Endpoint(string? id) => id is null ? null : Endpoints.FirstOrDefault(e => e.Id == id);
 
-    /// <summary>“Claude Haiku”，或“服务名 · 模型名”。</summary>
-    public string DisplayName(ModelChoice choice) => ModelCatalog.DisplayName(choice, Endpoints);
+    /// <summary>Google 翻译、混元翻译在界面上的名字。</summary>
+    private static BasicEngineNames EngineNames => new(Strings.Engine_Google, Strings.Engine_LocalModel);
 
-    /// <summary>可选的模型：云端模型、本地模型两组。</summary>
-    public List<ModelGroup> ModelGroups() => ModelCatalog.Groups(Endpoints);
+    /// <summary>完整名称“服务 · 模型”（“Claude · Haiku”“通义千问 · qwen-flash”）：日志、笔记进度、状态里用。</summary>
+    public string DisplayName(ModelChoice choice) => ModelCatalog.DisplayName(choice, Endpoints, EngineNames);
 
-    /// <summary>删除一个模型服务：正在用它的地方换回默认模型。密钥由调用方删除。</summary>
+    /// <summary>模型列表和菜单上显示的名字：只写服务名（“Claude”“通义千问”），具体模型在“模型服务”里看和改。</summary>
+    public string ServiceName(ModelChoice choice) => ModelCatalog.ServiceName(choice, Endpoints, EngineNames);
+
+    /// <summary>这个用途选的 Claude 型号。</summary>
+    public string ClaudeModel(ModelPurpose purpose) => purpose == ModelPurpose.Translation ? ClaudeTranslationModel : ClaudeAssistantModel;
+
+    /// <summary>可选的模型：翻译有基础、云端模型、本地模型三组，AI 助手只有后两组；每家服务只列一项。</summary>
+    public List<ModelGroup> ModelGroups(ModelPurpose purpose) => ModelCatalog.Groups(purpose, Endpoints, ClaudeModel(purpose));
+
+    /// <summary>删除一个模型服务：正在用它的翻译换回 Google 翻译，AI 助手换回 Claude。密钥由调用方删除。</summary>
     public void RemoveEndpoint(ModelEndpoint endpoint)
     {
         Endpoints.Remove(endpoint);
+        // 删掉的默认服务不再自动加回来（想用时可以从“添加模型服务”里再加）。
+        if (ModelCatalog.IsBuiltIn(endpoint.Id) && !DismissedBuiltIns.Contains(endpoint.Id)) DismissedBuiltIns.Add(endpoint.Id);
         TranslationModel = ModelCatalog.WithoutEndpoint(TranslationModel, endpoint.Id, ModelCatalog.DefaultTranslation);
-        AssistantModel = ModelCatalog.WithoutEndpoint(AssistantModel, endpoint.Id, ModelCatalog.DefaultAssistant);
+        AssistantModel = ModelCatalog.WithoutEndpoint(AssistantModel, endpoint.Id, ModelChoice.ClaudeCode(ClaudeAssistantModel));
     }
 
-    /// <summary>读进来的设置可能缺字段或被手改坏：补上默认值。</summary>
+    /// <summary>
+    /// 正在用的模型跟着“模型服务”里的选择走：Claude 换了型号、某家换了“翻译用”“AI 助手用”、或删掉了正在用的模型时，
+    /// 翻译和 AI 助手跟着换。macOS 在设置的 didSet 里做，这里在每次保存前做（<see cref="SettingsService.Commit"/>）。
+    /// </summary>
+    internal void SyncModels()
+    {
+        TranslationModel = Synced(TranslationModel, ModelPurpose.Translation);
+        AssistantModel = Synced(AssistantModel, ModelPurpose.Assistant);
+    }
+
+    private ModelChoice Synced(ModelChoice choice, ModelPurpose purpose)
+    {
+        if (choice.Kind == ModelKind.ClaudeCode)
+        {
+            var model = ClaudeModel(purpose);
+            return choice.Model == model ? choice : ModelChoice.ClaudeCode(model);
+        }
+        return ModelCatalog.Synced(choice, purpose, Endpoints) is { } synced && synced != choice ? synced : choice;
+    }
+
+    /// <summary>
+    /// 读进来的设置可能缺字段或被手改坏：补上默认值；补上默认列出的云端服务；
+    /// 旧设置里直接选过的具体模型（Claude 的型号、某家服务的某个模型）记成 Claude 的型号、这家的“翻译用”“AI 助手用”，接着用原来的模型。
+    /// 可以重复调用。
+    /// </summary>
     internal void Normalize()
     {
-        TranslationModel = Valid(TranslationModel) ? TranslationModel : ModelCatalog.DefaultTranslation;
-        AssistantModel = Valid(AssistantModel) ? AssistantModel : ModelCatalog.DefaultAssistant;
+        TranslationModel = Canonical(TranslationModel) ?? ModelCatalog.DefaultTranslation;
+        // AI 助手、笔记只能用大模型。
+        AssistantModel = Canonical(AssistantModel) is { IsLanguageModel: true } assistant ? assistant : ModelCatalog.DefaultAssistant;
         Endpoints = (Endpoints ?? []).Where(e => e is not null).ToList();
         foreach (var e in Endpoints)
         {
@@ -146,14 +218,32 @@ public sealed class AppSettings
             e.Name ??= "";
             e.BaseUrl ??= "";
             e.Models = (e.Models ?? []).Where(m => !string.IsNullOrWhiteSpace(m)).ToList();
+            if (string.IsNullOrWhiteSpace(e.TranslationModel)) e.TranslationModel = null;
+            if (string.IsNullOrWhiteSpace(e.AssistantModel)) e.AssistantModel = null;
         }
+        DismissedBuiltIns = (DismissedBuiltIns ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        Endpoints = ModelCatalog.WithBuiltInServices(Endpoints, DismissedBuiltIns, p => Strings.IsChinese ? p.ChineseName : p.Name);
+        ClaudeTranslationModel = ModelCatalog.AdoptClaudeModel(ClaudeTranslationModel, TranslationModel, ModelPurpose.Translation);
+        ClaudeAssistantModel = ModelCatalog.AdoptClaudeModel(ClaudeAssistantModel, AssistantModel, ModelPurpose.Assistant);
+        ModelCatalog.Adopt(TranslationModel, ModelPurpose.Translation, Endpoints);
+        ModelCatalog.Adopt(AssistantModel, ModelPurpose.Assistant, Endpoints);
+        SyncModels();
         ClaudePath ??= "";
         ModelMirror ??= "";
+        if (!Enum.IsDefined(Appearance)) Appearance = AppearanceMode.System;
+        if (OverlayWidth <= 0 || double.IsNaN(OverlayWidth)) OverlayWidth = DefaultOverlaySize.Width;
         if (string.IsNullOrWhiteSpace(TranscriptFolder)) TranscriptFolder = DefaultTranscriptFolder;
     }
 
-    private static bool Valid(ModelChoice? choice) => choice is not null && !string.IsNullOrWhiteSpace(choice.Model)
-        && (choice.Kind == ModelKind.Endpoint ? !string.IsNullOrEmpty(choice.EndpointId) : ModelCatalog.ClaudeCodeModels.Contains(choice.Model));
+    /// <summary>有效的选择（Google 翻译、混元翻译换成共用的实例）；缺字段或被手改坏时为 null。</summary>
+    private static ModelChoice? Canonical(ModelChoice? choice) => choice is null ? null : choice.Kind switch
+    {
+        ModelKind.Google => ModelChoice.Google,
+        ModelKind.LocalModel => ModelChoice.LocalModel,
+        ModelKind.ClaudeCode when ModelCatalog.ClaudeCodeModels.Contains(choice.Model ?? "") => choice,
+        ModelKind.Endpoint when !string.IsNullOrWhiteSpace(choice.Model) && !string.IsNullOrEmpty(choice.EndpointId) => choice,
+        _ => null,
+    };
 }
 
 /// <summary>读写设置文件；改动后调用 <see cref="Commit"/> 保存并通知。</summary>
@@ -176,6 +266,17 @@ public sealed class SettingsService
     public event Action<SettingsChange>? Changed;
 
     /// <summary>
+    /// 选了还没填 API 密钥的服务（比如默认列出的 OpenAI）、或还没下载的混元翻译：由 AppShell 打开“模型服务”，定位到这家
+    /// （参数是服务的 Id，混元翻译是 <see cref="LocalModelFiles.ServiceId"/>；与 macOS 的 onModelNeedsSetup 相同）。
+    /// </summary>
+    public event Action<string>? ModelNeedsSetup;
+
+    private readonly SecretStore secrets;
+    /// <summary>上次保存时的翻译、AI 助手模型：换了服务才检查要不要先去“模型服务”里设置。</summary>
+    private ModelChoice lastTranslation;
+    private ModelChoice lastAssistant;
+
+    /// <summary>
     /// 旧版设置还没迁移成（密钥文件读不出来，或者搬密钥、保存失败）时，启动时读到的设置文件：之后保存设置时不写新的模型字段，
     /// 换回其中的旧字段，文件仍是旧格式，下次启动再迁移（<see cref="LegacyModelSettings.KeepUnmigrated"/>）。迁移成了或不用迁移时为 null。
     /// </summary>
@@ -184,29 +285,39 @@ public sealed class SettingsService
     /// <param name="secrets">迁移旧版设置时，旧的 Anthropic API 密钥要搬到新的“Anthropic”服务名下。</param>
     public SettingsService(SecretStore secrets)
     {
+        this.secrets = secrets;
         Current = Load(secrets, out unmigratedJson);
+        lastTranslation = Current.TranslationModel;
+        lastAssistant = Current.AssistantModel;
     }
 
     private static AppSettings Load(SecretStore secrets, out string? unmigrated)
     {
         unmigrated = null;
-        string json;
+        string? json = null;
         AppSettings settings;
         try
         {
-            if (!File.Exists(FilePath)) return new AppSettings();
-            json = File.ReadAllText(FilePath, Encoding.UTF8);
-            settings = JsonSerializer.Deserialize<AppSettings>(json, Json) ?? new AppSettings();
+            if (File.Exists(FilePath)) json = File.ReadAllText(FilePath, Encoding.UTF8);
+            settings = json is null ? new AppSettings() : JsonSerializer.Deserialize<AppSettings>(json, Json) ?? new AppSettings();
         }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException)
         {
             AppLog.Error("settings: load failed, using defaults", e);
-            return new AppSettings();
+            json = null;
+            settings = new AppSettings();
         }
-        settings.Normalize();
-        if (LegacyModelSettings.TryRead(json) is { } legacy)
+        if (json is not null && LegacyModelSettings.TryRead(json) is { } legacy)
         {
             if (!Migrate(settings, legacy, secrets)) unmigrated = json;
+            return settings;
+        }
+        var before = json is null ? null : JsonSerializer.Serialize(settings, Json);
+        settings.Normalize();
+        // 补上了默认列出的服务、记下了从旧设置迁移来的具体模型：马上存起来（之后换到别家服务，回来时还是这个模型）。
+        if (before is not null && JsonSerializer.Serialize(settings, Json) != before && Save(settings, null))
+        {
+            AppLog.Info("settings: updated model services");
         }
         return settings;
     }
@@ -215,7 +326,8 @@ public sealed class SettingsService
     /// Windows 0.1 的“翻译服务 + 模型”迁移到“翻译模型 + 模型服务”，迁移后马上保存。
     /// 密钥先复制（确实写进文件）、设置保存之后再删旧的（<see cref="ModelMigration.Commit"/>）：
     /// 中途失败时下次启动会再迁移一遍（结果相同），密钥不会丢。
-    /// 密钥文件读不出来时不迁移：不知道有没有旧的 Anthropic 密钥，也写不了密钥。
+    /// 密钥文件读不出来时不迁移：不知道有没有旧的 Anthropic 密钥，也写不了密钥。这次运行仍在内存里套用迁移结果
+    /// （当作没有旧的 Anthropic 密钥），否则旧设置里没有的字段（例如 Claude 型号）是空的，翻译用不了。
     /// </summary>
     /// <returns>迁移完成（新格式的设置已经保存）。</returns>
     private static bool Migrate(AppSettings settings, LegacyModelSettings legacy, SecretStore secrets)
@@ -223,11 +335,17 @@ public sealed class SettingsService
         if (secrets.Unreadable)
         {
             AppLog.Error("settings: migration postponed, secrets.bin could not be read");
+            var interim = ModelMigration.Migrate(legacy, hasAnthropicKey: false);
+            settings.TranslationModel = interim.Translation;
+            settings.Endpoints = interim.Endpoints;
+            settings.Normalize();
             return false;
         }
         var result = ModelMigration.Migrate(legacy, secrets.Has(SecretStore.LegacyAnthropicKey));
         settings.TranslationModel = result.Translation;
         settings.Endpoints = result.Endpoints;
+        // 补上默认列出的服务，原来选的 Claude 型号、服务里的模型记成“翻译用”。
+        settings.Normalize();
         string? anthropicKey = result.AnthropicEndpointId is { } id ? SecretStore.EndpointKey(id) : null;
         if (!ModelMigration.Commit(anthropicKey, SecretStore.LegacyAnthropicKey, secrets, () => Save(settings, null)))
         {
@@ -239,12 +357,48 @@ public sealed class SettingsService
         return true;
     }
 
-    /// <summary>保存并通知。</summary>
+    /// <summary>保存并通知。保存前让正在用的模型跟着“模型服务”里的选择走（<see cref="AppSettings.SyncModels"/>）。</summary>
     public void Commit(SettingsChange change)
     {
+        Current.SyncModels();
         Save(Current, unmigratedJson);
+        var setup = ServiceNeedingSetup();
         Changed?.Invoke(change);
+        if (setup is not null) ModelNeedsSetup?.Invoke(setup);
     }
+
+    /// <summary>请求打开“模型服务”并定位到这家（例如选了混元翻译、开始字幕时发现还没下载）。</summary>
+    public void RequestSetup(string serviceId) => ModelNeedsSetup?.Invoke(serviceId);
+
+    /// <summary>
+    /// 这个模型所在的服务需要 API 密钥但还没填：返回服务的 Id。
+    /// </summary>
+    public string? EndpointMissingKey(ModelChoice choice) =>
+        choice.Kind == ModelKind.Endpoint && Current.Endpoint(choice.EndpointId) is { IsLocal: false } endpoint
+        && !secrets.Has(SecretStore.EndpointKey(endpoint.Id))
+            ? endpoint.Id
+            : null;
+
+    /// <summary>
+    /// 刚换到的翻译或 AI 助手模型还不能用：所在服务没填密钥，或者混元翻译还没下载。同一家服务只是换了模型时不提示。
+    /// </summary>
+    private string? ServiceNeedingSetup()
+    {
+        var s = Current;
+        string? id = null;
+        if (Switched(lastTranslation, s.TranslationModel))
+        {
+            id = s.TranslationModel.Kind == ModelKind.LocalModel && !LocalModelFiles.IsInstalled
+                ? LocalModelFiles.ServiceId
+                : EndpointMissingKey(s.TranslationModel);
+        }
+        if (id is null && Switched(lastAssistant, s.AssistantModel)) id = EndpointMissingKey(s.AssistantModel);
+        lastTranslation = s.TranslationModel;
+        lastAssistant = s.AssistantModel;
+        return id;
+    }
+
+    private static bool Switched(ModelChoice old, ModelChoice now) => old != now && !ModelCatalog.OnlyModelChanged(old, now);
 
     /// <param name="unmigrated">旧版设置还没迁移成时启动时读到的设置文件：保存后仍是旧格式（见 <see cref="unmigratedJson"/>）。</param>
     private static bool Save(AppSettings settings, string? unmigrated)
@@ -274,7 +428,7 @@ public enum SettingsChange
     None = 0,
     /// <summary>字幕外观（字号、显示内容、位置等），只需重画。</summary>
     Appearance = 1,
-    /// <summary>翻译模型、模型服务、语言、自动纠正：需要换翻译会话。</summary>
+    /// <summary>翻译模型、模型服务、语言、自动纠正、混元翻译下载好了：需要换翻译会话。</summary>
     Translation = 2,
     /// <summary>音源、麦克风降噪、讲话语言、识别模型：需要重启识别。</summary>
     Recognition = 4,

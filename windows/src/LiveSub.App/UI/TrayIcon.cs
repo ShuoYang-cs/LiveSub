@@ -7,7 +7,6 @@ using LiveSub.App.Localization;
 using LiveSub.App.Services;
 using LiveSub.App.Translation;
 using LiveSub.Core.Audio;
-using LiveSub.Core.Subtitles;
 using Microsoft.Win32;
 
 namespace LiveSub.App.UI;
@@ -68,6 +67,11 @@ public sealed class TrayIcon : IDisposable
         icon.Text = tip.Length > 127 ? tip[..126] + "…" : tip;
     }
 
+    /// <summary>
+    /// 菜单和字幕上的快捷按钮对齐（macOS 去掉了菜单栏图标，Windows 上托盘图标是常规做法，保留）：
+    /// 状态；开始/停止、录音、音源、翻译模型；显示/收起字幕、锁定、AI 助手；字幕记录、录音记录；设置、退出。
+    /// 导出字幕、开始新的记录、生成笔记、打开记录文件夹在“字幕记录”窗口里，“字幕移回原位”并进了设置里的“恢复默认”（与 macOS 相同）。
+    /// </summary>
     private void BuildMenu()
     {
         var c = shell.Controller;
@@ -78,9 +82,9 @@ public sealed class TrayIcon : IDisposable
         if (c.MicrophoneBlock != MicrophoneBlock.None) menu.Items.Add(Item(Strings.Overlay_OpenMicrophoneSettings, MicrophonePrivacy.OpenSettings));
         menu.Items.Add(new ToolStripSeparator());
 
-        // 顺序与 macOS 的菜单相同。
         bool active = c.IsRunning || c.IsStarting;
         menu.Items.Add(Item(active ? Strings.Menu_Stop : Strings.Menu_Start, shell.ToggleRunning, enabled: !c.IsBusy || c.IsStarting));
+        menu.Items.Add(Item(Strings.Menu_Record, shell.ToggleRecording, c.RecordButtonOn));
 
         var sourceMenu = new ToolStripMenuItem(Strings.Menu_AudioSource);
         foreach (var (mode, title, _) in AppShell.AudioSources)
@@ -89,14 +93,7 @@ public sealed class TrayIcon : IDisposable
         }
         menu.Items.Add(sourceMenu);
 
-        var displayMenu = new ToolStripMenuItem(Strings.Menu_Display);
-        foreach (var (mode, title) in AppShell.DisplayModes)
-        {
-            displayMenu.DropDownItems.Add(Item(title, () => shell.SelectDisplayMode(mode), s.DisplayMode == mode));
-        }
-        menu.Items.Add(displayMenu);
-
-        // 翻译模型：“云端模型”“本地模型”两组（组名不可点），最后是“管理模型服务…”。
+        // 翻译模型：“基础”“云端模型”“本地模型”三组（组名不可点），最后是“管理模型服务…”。
         var modelMenu = new ToolStripMenuItem(Strings.Menu_Model);
         bool first = true;
         foreach (var group in TranslationEngines.TranslationMenu(s))
@@ -117,20 +114,12 @@ public sealed class TrayIcon : IDisposable
         var show = Item(shell.OverlayVisible ? Strings.Menu_HideOverlay : Strings.Menu_ShowOverlay, shell.ToggleOverlay);
         show.ShortcutKeyDisplayString = HotKeys.Text(s.HotKey) ?? "";
         menu.Items.Add(show);
-        menu.Items.Add(Item(Strings.Assistant_Title, shell.ToggleAssistantFromMenu, shell.AssistantVisible));
         menu.Items.Add(Item(Strings.Menu_Lock, shell.ToggleLock, s.ClickThrough));
-        menu.Items.Add(Item(Strings.Menu_ResetPosition, shell.ResetOverlayPosition));
+        menu.Items.Add(Item(Strings.Assistant_Title, shell.ToggleAssistantFromMenu, shell.AssistantVisible));
         menu.Items.Add(new ToolStripSeparator());
 
         menu.Items.Add(Item(Strings.Menu_History, shell.ShowHistory));
-        menu.Items.Add(Item(c.IsGeneratingNotes ? Strings.Menu_GeneratingNotes : Strings.Menu_GenerateNotes, shell.GenerateNotes,
-            enabled: !c.IsGeneratingNotes && c.Book.Lines.Count > 0));
-        var export = new ToolStripMenuItem(Strings.Menu_Export) { Enabled = c.Book.Lines.Count > 0 };
-        export.DropDownItems.Add(Item("SRT…", () => shell.Export(SubtitleFileFormat.Srt)));
-        export.DropDownItems.Add(Item("WebVTT…", () => shell.Export(SubtitleFileFormat.Vtt)));
-        menu.Items.Add(export);
-        menu.Items.Add(Item(Strings.Menu_NewSession, shell.NewSession));
-        menu.Items.Add(Item(Strings.Menu_OpenFolder, shell.OpenTranscriptFolder));
+        menu.Items.Add(Item(Strings.Menu_Recordings, shell.ShowRecordings));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item(Strings.Menu_Settings, shell.ShowSettings));
         menu.Items.Add(Item(Strings.Menu_Quit, shell.Quit));

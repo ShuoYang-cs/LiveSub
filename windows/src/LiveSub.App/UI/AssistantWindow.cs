@@ -12,16 +12,20 @@ using LiveSub.App.Services;
 using LiveSub.App.Translation;
 using LiveSub.Core;
 using LiveSub.Core.Chat;
+using System.Windows.Media.Imaging;
 using Ellipse = System.Windows.Shapes.Ellipse;
 using Rectangle = System.Windows.Shapes.Rectangle;
+using Shape = System.Windows.Shapes.Shape;
 
 namespace LiveSub.App.UI;
 
 /// <summary>
-/// AI 助手面板（与 macOS 版 AssistantPanel 相同）：无边框、置顶、不进任务栏的圆角深色面板，可以打字提问。
+/// AI 助手面板（与 macOS 版 AssistantPanel 相同）：无边框、置顶、不进任务栏的圆角面板（颜色跟着外观，见 <see cref="OverlayPalette"/>），
+/// 可以打字提问，也可以带图片和文件：粘贴图片、粘贴资源管理器里复制的文件、拖进面板、点回形针选择，附件显示在输入框上方，点 × 去掉。
 /// 第一次打开时放在字幕旁边；按住标题栏可以单独拖到别处，拖边框和四角调整大小，位置和大小都会记住。
-/// 字幕窗口移动、改大小时不跟着走。
+/// 字幕窗口移动、改大小时不跟着走。按钮的说明在鼠标停上去时立刻显示（与 macOS 相同）。
 /// 显示时不抢焦点；只有点输入框或对话内容（要打字、选中复制）时才激活窗口，点标题栏、按钮和拖边框时不激活。
+/// 激活时 Windows 把键盘从原来的程序交给面板（同一时间只有一个前台窗口），不会像 macOS 那样两处光标同时闪。
 /// </summary>
 public sealed class AssistantWindow : Window
 {
@@ -29,16 +33,10 @@ public sealed class AssistantWindow : Window
     /// <summary>标题栏的 ✨。WPF 不画彩色表情，单色字形染成黄色，与 macOS 的 sparkles 图标相近。</summary>
     private static readonly FontFamily SymbolFont = new("Segoe UI Emoji, Segoe UI Symbol");
     private static readonly FontFamily CodeFont = new("Cascadia Mono, Consolas");
-    private static readonly SolidColorBrush Orange = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0xA5, 0x3D)));
+    private static readonly SolidColorBrush Orange = OverlayPalette.Orange;
     private static readonly SolidColorBrush Yellow = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0xD6, 0x0A)));
     private static readonly SolidColorBrush Bubble = Freeze(new SolidColorBrush(Color.FromArgb(0xBF, 0x0A, 0x84, 0xFF)));
-    private static readonly SolidColorBrush SendBlue = Freeze(new SolidColorBrush(Color.FromRgb(0x0A, 0x84, 0xFF)));
-    private static readonly SolidColorBrush Hairline = Freeze(new SolidColorBrush(Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)));
-    private static readonly SolidColorBrush Faint = Freeze(new SolidColorBrush(Color.FromArgb(0x4D, 0xFF, 0xFF, 0xFF)));
-    private static readonly SolidColorBrush Dim = Freeze(new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)));
-    private static readonly SolidColorBrush Capsule = Freeze(new SolidColorBrush(Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)));
-    private static readonly SolidColorBrush InputBackground = Freeze(new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)));
-    private static readonly SolidColorBrush CodeBackground = Freeze(new SolidColorBrush(Color.FromArgb(0x26, 0xFF, 0xFF, 0xFF)));
+    private static readonly SolidColorBrush SendBlue = OverlayPalette.Blue;
 
     public static readonly Size MinSize = new(280, 220);
     /// <summary>调整大小的边框宽度（四角是它的两倍）。</summary>
@@ -55,8 +53,18 @@ public sealed class AssistantWindow : Window
     {
         CornerRadius = new CornerRadius(14),
         BorderThickness = new Thickness(1),
-        BorderBrush = Hairline,
     };
+    /// <summary>有文件拖到面板上方时的蓝色描边（与 macOS 相同）。</summary>
+    private readonly Border dropHighlight = new()
+    {
+        CornerRadius = new CornerRadius(14),
+        BorderThickness = new Thickness(2),
+        BorderBrush = OverlayPalette.Blue,
+        IsHitTestVisible = false,
+        Visibility = Visibility.Collapsed,
+    };
+    /// <summary>鼠标停在按钮上时立刻显示的说明。</summary>
+    private readonly InstantTip tips;
     private readonly TextBlock modelName = new()
     {
         FontSize = 12,
@@ -84,7 +92,6 @@ public sealed class AssistantWindow : Window
     {
         Text = Strings.Assistant_Empty,
         FontSize = 13,
-        Foreground = Dim,
         TextWrapping = TextWrapping.Wrap,
     };
     private readonly Dictionary<Guid, MessageView> views = [];
@@ -93,8 +100,6 @@ public sealed class AssistantWindow : Window
     {
         Background = Brushes.Transparent,
         BorderThickness = new Thickness(0),
-        Foreground = Brushes.White,
-        CaretBrush = Brushes.White,
         FontSize = 13,
         Padding = new Thickness(0),
         VerticalContentAlignment = VerticalAlignment.Center,
@@ -104,13 +109,18 @@ public sealed class AssistantWindow : Window
     {
         Text = Strings.Assistant_Placeholder,
         FontSize = 13,
-        Foreground = Faint,
         IsHitTestVisible = false,
         VerticalAlignment = VerticalAlignment.Center,
         Margin = new Thickness(2, 0, 0, 0),
     };
     private readonly Border inputBox;
     private readonly Button sendButton;
+    /// <summary>输入框上方：等着随下一个问题发送的附件（可以点 × 去掉）、正在读取的转圈、读不了的提示。</summary>
+    private readonly StackPanel attachmentsBar = new() { Margin = new Thickness(10, 0, 10, 6) };
+    private readonly WrapPanel attachmentChips = new();
+    private readonly TextBlock attachmentNotice = new() { FontSize = 11.5, Foreground = OverlayPalette.Orange, TextWrapping = TextWrapping.Wrap };
+    private string attachmentsSignature = "";
+    private bool modelMenuOpen;
     /// <summary>正在显示的模型菜单：面板隐藏时一起关掉。</summary>
     private ContextMenu? openMenu;
 
@@ -140,18 +150,28 @@ public sealed class AssistantWindow : Window
         Width = Math.Max(MinSize.Width, S.AssistantWidth);
         Height = Math.Max(MinSize.Height, S.AssistantHeight);
 
+        tips = new InstantTip(root);
+        panel.SetResourceReference(Border.BorderBrushProperty, OverlayPalette.Fg12);
+        emptyText.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg60);
+        input.SetResourceReference(ForegroundProperty, OverlayPalette.Fg);
+        input.SetResourceReference(TextBoxBase.CaretBrushProperty, OverlayPalette.Fg);
+        placeholder.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg30);
         modelButton = BuildModelButton();
         var header = BuildHeader();
-        var divider = new Border { Height = 1, Background = Hairline };
+        var divider = new Border { Height = 1 };
+        divider.SetResourceReference(Border.BackgroundProperty, OverlayPalette.Fg12);
         inputBox = new Border
         {
-            Background = InputBackground,
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(10, 7, 10, 7),
         };
-        sendButton = IconButton("\uE724", Strings.Assistant_Send, Send); // Send
+        inputBox.SetResourceReference(Border.BackgroundProperty, OverlayPalette.Fg08);
+        sendButton = IconButton("\uE724", Send); // Send
+        tips.Attach(sendButton, Strings.Assistant_Send, above: true);
         var inputBar = BuildInputBar();
         var quickBar = BuildQuickQuestions();
+        attachmentsBar.Children.Add(attachmentChips);
+        attachmentsBar.Children.Add(attachmentNotice);
 
         messagesPanel.Children.Add(emptyText);
         scroller.Content = messagesPanel;
@@ -166,16 +186,20 @@ public sealed class AssistantWindow : Window
         DockPanel.SetDock(header, Dock.Top);
         DockPanel.SetDock(divider, Dock.Top);
         DockPanel.SetDock(inputBar, Dock.Bottom);
+        DockPanel.SetDock(attachmentsBar, Dock.Bottom);
         DockPanel.SetDock(quickBar, Dock.Bottom);
         layout.Children.Add(header);
         layout.Children.Add(divider);
         layout.Children.Add(inputBar);
+        layout.Children.Add(attachmentsBar);
         layout.Children.Add(quickBar);
         layout.Children.Add(scroller);
         panel.Child = layout;
         root.Children.Add(panel);
+        root.Children.Add(dropHighlight);
         AddResizeHandles();
         Content = root;
+        SetUpDropAndPaste();
 
         input.TextChanged += (_, _) =>
         {
@@ -199,6 +223,7 @@ public sealed class AssistantWindow : Window
         };
         assistant.Changed += RequestRender;
         settingsService.Changed += OnSettingsChanged;
+        OverlayPalette.Changed += RequestRender;
     }
 
     /// <summary>显示但不激活：放到记住的位置，没拖过（或那里已不在任何屏幕上）就放在字幕旁边。</summary>
@@ -209,7 +234,7 @@ public sealed class AssistantWindow : Window
         RequestRender();
     }
 
-    /// <summary>“字幕移回屏幕底部”：调用方已清掉记住的位置；等字幕移好之后再放回它旁边。</summary>
+    /// <summary>设置里的“恢复默认”：调用方已清掉记住的位置；等字幕移好之后再放回它旁边。</summary>
     public void ResetPosition()
     {
         Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, () =>
@@ -273,24 +298,29 @@ public sealed class AssistantWindow : Window
             Foreground = Yellow,
             VerticalAlignment = VerticalAlignment.Center,
         });
-        title.Children.Add(new TextBlock
+        var name = new TextBlock
         {
             Text = Strings.Assistant_Title,
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
-            Foreground = Brushes.White,
             Margin = new Thickness(7, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
-        });
+        };
+        name.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg);
+        title.Children.Add(name);
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         buttons.Children.Add(modelButton);
-        buttons.Children.Add(IconButton("\uE70F", Strings.Assistant_NewConversation, () => // Edit
+        var newConversation = IconButton("\uE70F", () => // Edit
         {
             assistant.NewConversation();
             assistant.WarmUp();
-        }));
-        buttons.Children.Add(IconButton("\uE711", Strings.Assistant_Close, onClose)); // Cancel
+        });
+        tips.Attach(newConversation, Strings.Assistant_NewConversation);
+        buttons.Children.Add(newConversation);
+        var close = IconButton("\uE711", onClose); // Cancel
+        tips.Attach(close, Strings.Assistant_Close);
+        buttons.Children.Add(close);
 
         var row = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(buttons, Dock.Right);
@@ -302,30 +332,57 @@ public sealed class AssistantWindow : Window
         return header;
     }
 
-    /// <summary>回答使用的模型：分组与翻译模型相同。</summary>
+    /// <summary>
+    /// 回答使用的模型：分组与翻译模型相同（没有只能翻译的 Google 翻译、混元翻译），只写服务名。
+    /// 鼠标移上去文字变蓝、底下出现淡淡的胶囊，关掉菜单时复原（与 macOS 相同，2026-10-22 用户提出）。
+    /// </summary>
     private Button BuildModelButton()
     {
-        var content = new StackPanel { Orientation = Orientation.Horizontal };
-        content.Children.Add(modelName);
-        content.Children.Add(new TextBlock
+        var chevron = new TextBlock
         {
             Text = "\uE70D", // ChevronDown
             FontFamily = IconFont,
             FontSize = 8,
             Margin = new Thickness(5, 1, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
-        });
+        };
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(modelName);
+        content.Children.Add(chevron);
         var button = OverlayWindow.FlatButton("", null);
         button.Content = content;
         button.Padding = new Thickness(8, 3, 7, 3);
         button.Margin = new Thickness(0, 0, 4, 0);
-        button.Foreground = new SolidColorBrush(Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF));
-        button.ToolTip = Strings.Assistant_ModelTip;
-        button.Click += (_, _) => ShowModelMenu(button);
+        button.SetResourceReference(ForegroundProperty, OverlayPalette.Fg85);
+        // 悬停时的淡色胶囊由 FlatButton 画；这里只把文字变蓝。
+        void Hover(bool hovered)
+        {
+            if (hovered) button.Foreground = OverlayPalette.Blue;
+            else button.SetResourceReference(ForegroundProperty, OverlayPalette.Fg85);
+        }
+        button.MouseEnter += (_, _) => Hover(true);
+        button.MouseLeave += (_, _) =>
+        {
+            // 菜单打开期间鼠标在菜单上：保持蓝色和胶囊，关掉菜单时复原。
+            if (!modelMenuOpen) Hover(false);
+        };
+        button.Click += (_, _) =>
+        {
+            modelMenuOpen = true;
+            button.Background = OverlayPalette.FgBrush(0.12);
+            tips.Hide();
+            ShowModelMenu(button, () =>
+            {
+                modelMenuOpen = false;
+                button.Background = Brushes.Transparent;
+                Hover(button.IsMouseOver);
+            });
+        };
+        tips.Attach(button, Strings.Assistant_ModelTip);
         return button;
     }
 
-    private void ShowModelMenu(FrameworkElement anchor)
+    private void ShowModelMenu(FrameworkElement anchor, Action onClosed)
     {
         var menu = new ContextMenu();
         bool first = true;
@@ -343,6 +400,7 @@ public sealed class AssistantWindow : Window
         openMenu = menu;
         menu.Closed += (_, _) =>
         {
+            onClosed();
             if (ReferenceEquals(openMenu, menu)) openMenu = null;
         };
         // 点标题栏不激活面板，菜单要靠 PopupMenus 才能在点到别的程序时关上。
@@ -369,8 +427,8 @@ public sealed class AssistantWindow : Window
             button.FontSize = 11.5;
             button.Padding = new Thickness(9, 4, 9, 4);
             button.Margin = new Thickness(0, 0, 6, 6);
-            button.Background = Capsule;
-            button.Foreground = new SolidColorBrush(Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF));
+            button.SetResourceReference(BackgroundProperty, OverlayPalette.Fg10);
+            button.SetResourceReference(ForegroundProperty, OverlayPalette.Fg85);
             quickButtons.Add(button);
             bar.Children.Add(button);
         }
@@ -385,26 +443,30 @@ public sealed class AssistantWindow : Window
         inputBox.Child = field;
         // 点在输入框的内边距上也开始输入。
         inputBox.MouseLeftButtonDown += (_, _) => input.Focus();
+        var attach = IconButton("\uE723", ChooseFiles); // Attach（回形针）
+        attach.Margin = new Thickness(0, 0, 6, 0);
+        tips.Attach(attach, Strings.Assistant_AddFiles, above: true);
         sendButton.FontSize = 16;
         sendButton.Width = 32;
         sendButton.Height = 32;
         sendButton.Margin = new Thickness(6, 0, 0, 0);
         var bar = new DockPanel { LastChildFill = true, Margin = new Thickness(10, 0, 10, 10) };
+        DockPanel.SetDock(attach, Dock.Left);
         DockPanel.SetDock(sendButton, Dock.Right);
+        bar.Children.Add(attach);
         bar.Children.Add(sendButton);
         bar.Children.Add(inputBox);
         return bar;
     }
 
-    private static Button IconButton(string glyph, string tip, Action action)
+    private static Button IconButton(string glyph, Action action)
     {
         var b = OverlayWindow.FlatButton(glyph, action);
         b.FontFamily = IconFont;
         b.FontSize = 12;
         b.Width = 26;
         b.Height = 22;
-        b.ToolTip = tip;
-        b.Foreground = new SolidColorBrush(Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF));
+        b.SetResourceReference(ForegroundProperty, OverlayPalette.Fg80);
         return b;
     }
 
@@ -419,7 +481,222 @@ public sealed class AssistantWindow : Window
         placeholder.Visibility = input.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         bool canSend = assistant.CanSend;
         sendButton.IsEnabled = canSend;
-        sendButton.Foreground = canSend ? SendBlue : Faint;
+        if (canSend) sendButton.Foreground = SendBlue;
+        else sendButton.SetResourceReference(ForegroundProperty, OverlayPalette.Fg30);
+    }
+
+    // MARK: - 附件
+
+    /// <summary>回形针：选择图片或文件（可以多选）。对话框在面板上面（见 SystemDialogs）。</summary>
+    private void ChooseFiles()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Multiselect = true,
+            Title = Strings.Assistant_ChooseFiles,
+            Filter = $"{Strings.Assistant_AllFiles}|*.*",
+        };
+        if (SystemDialogs.Show(dialog, this) == true) assistant.AddFiles(dialog.FileNames);
+    }
+
+    /// <summary>
+    /// 拖进面板（资源管理器里的文件、网页上的图片）和粘贴（截图、资源管理器里复制的文件）都当附件；
+    /// 剪贴板里有文字时照常粘贴文字（从网页、文档里复制的文字有时也附带一张图片）。
+    /// </summary>
+    private void SetUpDropAndPaste()
+    {
+        AllowDrop = true;
+        DragEnter += OnDragOver;
+        DragOver += OnDragOver;
+        DragLeave += (_, _) => dropHighlight.Visibility = Visibility.Collapsed;
+        Drop += (_, e) =>
+        {
+            dropHighlight.Visibility = Visibility.Collapsed;
+            e.Handled = AddFrom(e.Data);
+        };
+        // Ctrl+V、Shift+Insert：先于输入框处理（剪贴板里只有图片时输入框的“粘贴”不可用，按键根本到不了它）。
+        // 焦点在对话内容上时也一样。
+        PreviewKeyDown += (_, e) =>
+        {
+            bool paste = (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control)
+                || (e.Key == Key.Insert && Keyboard.Modifiers == ModifierKeys.Shift);
+            if (paste && PasteAttachments()) e.Handled = true;
+        };
+        // 输入框右键菜单的“粘贴”：剪贴板里是图片或文件时也让它可用，点了当附件。
+        CommandManager.AddPreviewCanExecuteHandler(input, (_, e) =>
+        {
+            if (e.Command != ApplicationCommands.Paste || !ClipboardHasAttachment()) return;
+            e.CanExecute = true;
+            e.Handled = true;
+        });
+        CommandManager.AddPreviewExecutedHandler(input, (_, e) =>
+        {
+            if (e.Command == ApplicationCommands.Paste && PasteAttachments()) e.Handled = true;
+        });
+    }
+
+    private static bool ClipboardHasAttachment()
+    {
+        try
+        {
+            return Clipboard.ContainsFileDropList() || (!Clipboard.ContainsText() && (Clipboard.ContainsImage() || Clipboard.ContainsData("PNG")));
+        }
+        catch (Exception e) when (e is System.Runtime.InteropServices.COMException or System.Runtime.InteropServices.ExternalException)
+        {
+            return false;
+        }
+    }
+
+    private void OnDragOver(object sender, DragEventArgs e)
+    {
+        // 拖动时鼠标每动一下都会来一次：只看有没有这种格式，不取数据（取位图、编码 PNG 会让拖动卡顿）。
+        bool accepted = HasAttachmentFormat(e.Data);
+        e.Effects = accepted ? DragDropEffects.Copy : DragDropEffects.None;
+        dropHighlight.Visibility = accepted ? Visibility.Visible : Visibility.Collapsed;
+        e.Handled = true;
+    }
+
+    private bool PasteAttachments()
+    {
+        try
+        {
+            if (Clipboard.ContainsFileDropList())
+            {
+                var files = Clipboard.GetFileDropList().Cast<string>().ToList();
+                if (files.Count > 0)
+                {
+                    assistant.AddFiles(files);
+                    return true;
+                }
+            }
+            if (Clipboard.ContainsText()) return false;
+            if (AddImage(Clipboard.GetDataObject(), Strings.Assistant_PastedImage)) return true;
+        }
+        catch (Exception e) when (e is System.Runtime.InteropServices.COMException or System.Runtime.InteropServices.ExternalException)
+        {
+            // 剪贴板正被别的程序占着。
+            AppLog.Error("assistant: clipboard unavailable", e);
+        }
+        return false;
+    }
+
+    private bool AddFrom(IDataObject data)
+    {
+        if (data.GetData(DataFormats.FileDrop) is string[] { Length: > 0 } files)
+        {
+            assistant.AddFiles(files);
+            return true;
+        }
+        return AddImage(data, Strings.Assistant_Image);
+    }
+
+    private static bool HasAttachmentFormat(IDataObject data)
+    {
+        try
+        {
+            return data.GetDataPresent(DataFormats.FileDrop) || data.GetDataPresent("PNG") || data.GetDataPresent(DataFormats.Bitmap);
+        }
+        catch (Exception e) when (e is System.Runtime.InteropServices.COMException or System.Runtime.InteropServices.ExternalException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 图片：截图工具、浏览器放的 PNG 带透明度，优先用；否则取系统的位图，冻结后交给后台编码（在界面线程上编码大截图会卡住）。
+    /// 浏览器里拖出来的图片常常只是虚拟文件（FileGroupDescriptorW），不处理：先保存或复制图片再粘贴（见 README）。
+    /// </summary>
+    private bool AddImage(IDataObject? data, string name)
+    {
+        if (data is null) return false;
+        try
+        {
+            if (data.GetDataPresent("PNG") && data.GetData("PNG") is MemoryStream png)
+            {
+                assistant.AddImage(png.ToArray(), name);
+                return true;
+            }
+            if (data.GetDataPresent(DataFormats.Bitmap) && data.GetData(DataFormats.Bitmap) is BitmapSource bitmap)
+            {
+                if (!bitmap.IsFrozen)
+                {
+                    // 冻结了才能交给别的线程；不能冻结的先复制一份（只是拷贝像素，很快）。
+                    if (!bitmap.CanFreeze) bitmap = new WriteableBitmap(bitmap);
+                    bitmap.Freeze();
+                }
+                assistant.AddImage(bitmap, name);
+                return true;
+            }
+        }
+        catch (Exception e) when (e is System.Runtime.InteropServices.COMException or InvalidOperationException or NotSupportedException
+                                     or System.Runtime.InteropServices.ExternalException)
+        {
+            AppLog.Error("assistant: image data unavailable", e);
+        }
+        return false;
+    }
+
+    /// <summary>输入框上方的附件：名字（图片或文档图标）和 ×；正在读取时转圈；读不了的文件在下面提示。</summary>
+    private void UpdateAttachments()
+    {
+        var pending = assistant.Attachments;
+        var signature = string.Join('\u0001', pending.Select(a => a.Id)) + $"\u0002{assistant.LoadingAttachments}\u0002{assistant.AttachmentNotice}";
+        if (signature == attachmentsSignature) return;
+        attachmentsSignature = signature;
+        tips.Hide();
+        attachmentChips.Children.Clear();
+        foreach (var attachment in pending)
+        {
+            var chip = new StackPanel { Orientation = Orientation.Horizontal };
+            chip.Children.Add(AttachmentLabel(attachment.Content.Label));
+            var remove = OverlayWindow.FlatButton("\uE711", () => assistant.RemoveAttachment(attachment.Id)); // Cancel
+            remove.FontFamily = IconFont;
+            remove.FontSize = 8;
+            remove.Width = 16;
+            remove.Height = 16;
+            remove.Margin = new Thickness(4, 0, 0, 0);
+            tips.Attach(remove, Strings.Assistant_Remove, above: true);
+            chip.Children.Add(remove);
+            var capsule = new Border
+            {
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(8, 3, 4, 3),
+                Margin = new Thickness(0, 0, 6, 4),
+                Child = chip,
+            };
+            capsule.SetResourceReference(Border.BackgroundProperty, OverlayPalette.Fg10);
+            TextElement.SetFontSize(capsule, 11.5);
+            capsule.SetResourceReference(TextElement.ForegroundProperty, OverlayPalette.Fg85);
+            attachmentChips.Children.Add(capsule);
+        }
+        if (assistant.LoadingAttachments > 0) attachmentChips.Children.Add(MessageView.Spinner(new Thickness(2, 3, 0, 4)));
+        attachmentNotice.Text = assistant.AttachmentNotice ?? "";
+        attachmentNotice.Visibility = assistant.AttachmentNotice is null ? Visibility.Collapsed : Visibility.Visible;
+        attachmentsBar.Visibility = pending.Count > 0 || assistant.LoadingAttachments > 0 || assistant.AttachmentNotice is not null
+            ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>附件的名字：图片或文档图标，名字太长时截断（最宽 180）。</summary>
+    internal static FrameworkElement AttachmentLabel(AttachmentLabel label)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        row.Children.Add(new TextBlock
+        {
+            Text = label.IsImage ? "\uEB9F" : "\uE8A5", // Photo / Document
+            FontFamily = IconFont,
+            FontSize = 11,
+            Margin = new Thickness(0, 1, 5, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        row.Children.Add(new TextBlock
+        {
+            Text = label.Name,
+            MaxWidth = 180,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+            ToolTip = label.Name,
+        });
+        return row;
     }
 
     // MARK: - 渲染
@@ -438,9 +715,8 @@ public sealed class AssistantWindow : Window
         renderQueued = false;
         if (!IsVisible) return;
         // 背景比字幕深一些，长段文字也看得清。
-        double opacity = Math.Clamp(Math.Max(S.BackgroundOpacity, 0.8), 0, 1);
-        panel.Background = new SolidColorBrush(Color.FromArgb((byte)Math.Round(opacity * 255), 0, 0, 0));
-        modelName.Text = S.DisplayName(S.AssistantModel);
+        panel.Background = OverlayPalette.BgBrush(Math.Max(S.BackgroundOpacity, 0.8));
+        modelName.Text = S.ServiceName(S.AssistantModel);
 
         var messages = assistant.Messages;
         var ids = messages.Select(m => m.Id).ToHashSet();
@@ -455,7 +731,7 @@ public sealed class AssistantWindow : Window
             var message = messages[i];
             if (!views.TryGetValue(message.Id, out var view))
             {
-                view = new MessageView(message.Role);
+                view = new MessageView(message.Role, tips);
                 views[message.Id] = view;
                 messagesPanel.Children.Add(view);
             }
@@ -463,13 +739,14 @@ public sealed class AssistantWindow : Window
         }
         emptyText.Visibility = messages.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        bool answering = assistant.IsAnswering;
+        bool canAsk = assistant.CanAsk;
         foreach (var button in quickButtons)
         {
-            button.IsEnabled = !answering;
-            button.Opacity = answering ? 0.45 : 1;
+            button.IsEnabled = canAsk;
+            button.Opacity = canAsk ? 1 : 0.45;
         }
         if (input.Text != assistant.Draft) input.Text = assistant.Draft;
+        UpdateAttachments();
         UpdateInputState();
 
         // 有新消息、回答变长、出现保存的文件时滚到底部（与 macOS 相同）。
@@ -644,6 +921,7 @@ public sealed class AssistantWindow : Window
         if (openMenu is not null) openMenu.IsOpen = false;
         assistant.Changed -= RequestRender;
         settingsService.Changed -= OnSettingsChanged;
+        OverlayPalette.Changed -= RequestRender;
         base.OnClosed(e);
     }
 
@@ -656,13 +934,17 @@ public sealed class AssistantWindow : Window
     // MARK: - 一条消息
 
     /// <summary>
-    /// 提问：右侧的蓝色气泡。回答：左侧的文字，显示粗体、斜体、行内代码，失败时为橙色；还没有文字时显示“正在回答…”。
+    /// 提问：右侧的蓝色气泡，下面是带的附件（只显示名字）；只带了附件、没写问题时没有气泡。
+    /// 回答：左侧的文字，显示粗体、斜体、行内代码，失败时为橙色；还没有文字时显示“正在回答…”。
     /// 文字可以选中复制（只读文本框）。回答里有要保存的文件时，写文件期间显示“正在保存文件…”，
     /// 之后每个文件一行“已保存：文件名”（点一下在资源管理器中选中它）或橙色的“保存失败：原因”。
     /// </summary>
     private sealed class MessageView : Border
     {
+        private readonly InstantTip tips;
         private readonly TextBox? question;
+        private readonly Border? bubble;
+        private readonly StackPanel? questionAttachments;
         /// <summary>回答的各部分：文字（或“正在回答…”）、“正在保存文件…”、保存的文件。</summary>
         private readonly StackPanel? body;
         private RichTextBox? reply;
@@ -673,8 +955,9 @@ public sealed class AssistantWindow : Window
         private List<FrameworkElement> fileRows = [];
         private string signature = "";
 
-        public MessageView(AssistantRole role)
+        public MessageView(AssistantRole role, InstantTip tips)
         {
+            this.tips = tips;
             Margin = new Thickness(0, 0, 0, 12);
             if (role != AssistantRole.User)
             {
@@ -692,12 +975,23 @@ public sealed class AssistantWindow : Window
                 Padding = new Thickness(0),
                 FontSize = 13,
             };
+            bubble = new Border
+            {
+                Background = Bubble,
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(10, 7, 10, 7),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Child = question,
+            };
+            questionAttachments = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
+            TextElement.SetFontSize(questionAttachments, 11.5);
+            questionAttachments.SetResourceReference(TextElement.ForegroundProperty, OverlayPalette.Fg60);
+            var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Right };
+            stack.Children.Add(bubble);
+            stack.Children.Add(questionAttachments);
             HorizontalAlignment = HorizontalAlignment.Right;
             Margin = new Thickness(40, 0, 0, 12);
-            Background = Bubble;
-            CornerRadius = new CornerRadius(10);
-            Padding = new Thickness(10, 7, 10, 7);
-            Child = question;
+            Child = stack;
         }
 
         /// <param name="answering">这是正在回答的一条（还没有文字、也没有文件时显示“正在回答…”）。</param>
@@ -709,6 +1003,15 @@ public sealed class AssistantWindow : Window
             if (question is not null)
             {
                 question.Text = message.Text;
+                bubble!.Visibility = message.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+                questionAttachments!.Children.Clear();
+                foreach (var label in message.Attachments)
+                {
+                    var row = AttachmentLabel(label);
+                    row.HorizontalAlignment = HorizontalAlignment.Right;
+                    row.Margin = new Thickness(0, 4, 0, 0);
+                    questionAttachments.Children.Add(row);
+                }
                 return;
             }
             var parts = new List<FrameworkElement>();
@@ -724,7 +1027,7 @@ public sealed class AssistantWindow : Window
             if (!ReferenceEquals(shownFiles, message.Files))
             {
                 shownFiles = message.Files;
-                fileRows = message.Files.Select(SavedFile).ToList();
+                fileRows = message.Files.Select(f => SavedFile(f, tips)).ToList();
             }
             parts.AddRange(fileRows);
             SetParts(parts);
@@ -761,19 +1064,20 @@ public sealed class AssistantWindow : Window
                     IsReadOnlyCaretVisible = false,
                     BorderThickness = new Thickness(0),
                     Background = Brushes.Transparent,
-                    Foreground = Brushes.White,
                     Padding = new Thickness(0),
                 };
+                reply.SetResourceReference(ForegroundProperty, OverlayPalette.Fg);
             }
             reply.Document.FontFamily = font;
-            paragraph.Foreground = message.Failed ? Orange : Brushes.White;
+            if (message.Failed) paragraph.Foreground = Orange;
+            else paragraph.SetResourceReference(TextElement.ForegroundProperty, OverlayPalette.Fg);
             paragraph.Inlines.Clear();
             paragraph.Inlines.AddRange(Inlines(message.Text));
             return reply;
         }
 
         /// <summary>替用户保存的文件：点一下在资源管理器中选中它（文件已被删掉时打开所在的文件夹）。保存失败时是橙色的原因。</summary>
-        private static FrameworkElement SavedFile(AssistantSavedFile file)
+        private static FrameworkElement SavedFile(AssistantSavedFile file, InstantTip tips)
         {
             bool saved = file.Path is not null;
             var brush = saved ? SendBlue : Orange;
@@ -810,9 +1114,9 @@ public sealed class AssistantWindow : Window
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Focusable = false,
                 Cursor = Cursors.Hand,
-                ToolTip = Strings.Assistant_ShowInExplorer,
                 Template = new ControlTemplate(typeof(Button)) { VisualTree = border },
             };
+            tips.Attach(link, Strings.Assistant_ShowInExplorer);
             link.Click += (_, _) =>
             {
                 if (File.Exists(path)) AppShell.RevealInExplorer(path);
@@ -839,7 +1143,7 @@ public sealed class AssistantWindow : Window
                     {
                         run.FontFamily = CodeFont;
                         run.FontSize = 12.5;
-                        run.Background = CodeBackground;
+                        run.SetResourceReference(TextElement.BackgroundProperty, OverlayPalette.Fg15);
                     }
                     inlines.Add(run);
                 }
@@ -850,33 +1154,41 @@ public sealed class AssistantWindow : Window
         /// <summary>转圈的小圆弧 + 文字（“正在回答…”“正在保存文件…”）。</summary>
         private static FrameworkElement Progress(string text)
         {
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(Spinner(new Thickness(0)));
+            var label = new TextBlock
+            {
+                Text = text,
+                FontSize = 13,
+                Margin = new Thickness(6, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            label.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg60);
+            row.Children.Add(label);
+            return row;
+        }
+
+        /// <summary>转圈的小圆弧（也用在正在读取的附件旁边）。</summary>
+        internal static FrameworkElement Spinner(Thickness margin)
+        {
             var spinner = new Ellipse
             {
                 Width = 12,
                 Height = 12,
-                Stroke = Dim,
                 StrokeThickness = 2,
                 StrokeDashArray = new DoubleCollection { 9, 7 },
                 RenderTransformOrigin = new Point(0.5, 0.5),
                 VerticalAlignment = VerticalAlignment.Center,
+                Margin = margin,
             };
+            spinner.SetResourceReference(Shape.StrokeProperty, OverlayPalette.Fg60);
             var rotate = new RotateTransform();
             spinner.RenderTransform = rotate;
             // 只在显示着的时候转：一直运行的动画即使不在界面上，也会让 WPF 不停地重绘。
             spinner.Loaded += (_, _) => rotate.BeginAnimation(RotateTransform.AngleProperty,
                 new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1)) { RepeatBehavior = RepeatBehavior.Forever });
             spinner.Unloaded += (_, _) => rotate.BeginAnimation(RotateTransform.AngleProperty, null);
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(spinner);
-            row.Children.Add(new TextBlock
-            {
-                Text = text,
-                FontSize = 13,
-                Foreground = Dim,
-                Margin = new Thickness(6, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-            return row;
+            return spinner;
         }
     }
 }

@@ -40,6 +40,12 @@ public sealed class SubtitleBook
 
     private readonly List<SubtitleLine> lines = [];
     private readonly List<Guid> queue = [];
+    /// <summary>
+    /// 记录文件已经写到第几句（与 macOS 的 persistedCount 相同）。两句同时翻译时后一句常常先翻完，
+    /// 按字幕顺序写：前面的都翻完（或失败）了才写后面的。积压合并只去掉还在排队的句子（都在游标后面），
+    /// 所以已经写过的句子位置不变。
+    /// </summary>
+    private int persistedCount;
 
     public IReadOnlyList<SubtitleLine> Lines => lines;
 
@@ -157,10 +163,34 @@ public sealed class SubtitleBook
         return line;
     }
 
+    /// <summary>按字幕顺序取出可以写进记录的句子：从游标开始，遇到还没翻完的就停。</summary>
+    public List<SubtitleLine> TakePersistable()
+    {
+        var ready = new List<SubtitleLine>();
+        while (persistedCount < lines.Count && lines[persistedCount].State is LineState.Done or LineState.Failed)
+        {
+            ready.Add(lines[persistedCount]);
+            persistedCount += 1;
+        }
+        return ready;
+    }
+
+    /// <summary>
+    /// 退出、开始新的记录前：剩下的句子不管翻完没有都按顺序取出（没翻完的由调用方只写原文），
+    /// 之后再翻完的不会重复写。
+    /// </summary>
+    public List<SubtitleLine> TakeRemaining()
+    {
+        var rest = lines.Skip(persistedCount).ToList();
+        persistedCount = lines.Count;
+        return rest;
+    }
+
     public void Clear()
     {
         lines.Clear();
         queue.Clear();
+        persistedCount = 0;
     }
 
     /// <summary>字幕文件内容：时间相对这份记录开始录音的时刻；文字按“显示内容”（双语/仅译文/仅原文）。</summary>

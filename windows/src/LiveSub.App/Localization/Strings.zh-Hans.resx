@@ -13,14 +13,12 @@
   <data name="Source_Both" xml:space="preserve"><value>麦克风和系统音频</value></data>
   <data name="Source_BothShort" xml:space="preserve"><value>两者</value></data>
   <data name="Menu_Model" xml:space="preserve"><value>翻译模型</value></data>
-  <data name="Menu_Display" xml:space="preserve"><value>显示</value></data>
   <data name="Display_Bilingual" xml:space="preserve"><value>双语</value></data>
   <data name="Display_TranslationOnly" xml:space="preserve"><value>仅译文</value></data>
   <data name="Display_SourceOnly" xml:space="preserve"><value>仅原文</value></data>
   <data name="Menu_ShowOverlay" xml:space="preserve"><value>显示字幕</value></data>
   <data name="Menu_HideOverlay" xml:space="preserve"><value>收起字幕</value></data>
   <data name="Menu_Lock" xml:space="preserve"><value>锁定字幕</value></data>
-  <data name="Menu_ResetPosition" xml:space="preserve"><value>字幕移回屏幕底部</value></data>
   <data name="Menu_Export" xml:space="preserve"><value>导出字幕</value></data>
   <data name="Menu_History" xml:space="preserve"><value>字幕记录…</value></data>
   <data name="Menu_NewSession" xml:space="preserve"><value>开始新的记录</value></data>
@@ -39,13 +37,12 @@
   <data name="Status_Listening" xml:space="preserve"><value>正在听：{0} · {1} → {2} · {3}</value></data>
   <data name="Status_Stopped" xml:space="preserve"><value>已停止</value></data>
   <data name="Status_NewSession" xml:space="preserve"><value>已开始新的记录</value></data>
-  <data name="Status_Filtered" xml:space="preserve"><value>已过滤中文说话 {0} 段</value></data>
+  <data name="Status_Filtered" xml:space="preserve"><value>已过滤中文交谈 {0} 段</value></data>
   <data name="Status_Exported" xml:space="preserve"><value>字幕已导出：{0}</value></data>
   <data name="Status_StartFailed" xml:space="preserve"><value>启动失败：{0}</value></data>
   <data name="Overlay_ListeningSystem" xml:space="preserve"><value>正在听系统声音…</value></data>
   <data name="Overlay_ListeningMicrophone" xml:space="preserve"><value>正在听麦克风…</value></data>
   <data name="Overlay_ListeningBoth" xml:space="preserve"><value>正在听麦克风和系统声音…</value></data>
-  <data name="Overlay_Ready" xml:space="preserve"><value>{0} 已就绪 · {1}</value></data>
   <data name="Overlay_TranslationFailed" xml:space="preserve"><value>翻译失败</value></data>
   <data name="Overlay_NoInput" xml:space="preserve"><value>无音频输入</value></data>
   <data name="Overlay_Receiving" xml:space="preserve"><value>收音中</value></data>
@@ -54,23 +51,20 @@
   <data name="Overlay_RecognitionClear" xml:space="preserve"><value>识别清晰</value></data>
   <data name="Overlay_RecognitionCorrecting" xml:space="preserve"><value>识别较难 · 已自动纠正</value></data>
   <data name="Tip_RecognitionCorrecting" xml:space="preserve"><value>识别置信度较低，已自动按发音纠正识别错误。</value></data>
-  <data name="Tip_RecognitionHard" xml:space="preserve"><value>识别置信度较低。可以在设置 › 更多中打开“自动纠正口音”。</value></data>
+  <data name="Tip_RecognitionHard" xml:space="preserve"><value>识别置信度较低。可以在设置中打开“自动纠正口音”。</value></data>
   <data name="Tip_RecognitionClear" xml:space="preserve"><value>识别置信度正常。</value></data>
   <data name="Overlay_Backlog" xml:space="preserve"><value>待翻译 {0} 句</value></data>
   <data name="Overlay_BackToLive" xml:space="preserve"><value>返回实时</value></data>
-  <data name="Tip_ModelMenu" xml:space="preserve"><value>点击切换翻译模型。</value></data>
+  <data name="Tip_ModelMenu" xml:space="preserve"><value>切换翻译模型</value></data>
   <data name="Tool_Start" xml:space="preserve"><value>开始</value></data>
   <data name="Tool_Stop" xml:space="preserve"><value>停止</value></data>
   <data name="Tool_Lock" xml:space="preserve"><value>锁定字幕</value></data>
   <data name="Tool_Unlock" xml:space="preserve"><value>解锁字幕</value></data>
-  <data name="Tool_More" xml:space="preserve"><value>更多操作</value></data>
-  <data name="Tool_Hide" xml:space="preserve"><value>收起字幕。按 {0} 重新显示。</value></data>
-  <data name="Tool_HideNoKey" xml:space="preserve"><value>收起字幕。在托盘菜单中重新显示。</value></data>
   <data name="Tip_Tray" xml:space="preserve"><value>{0} · {1}</value></data>
-  <data name="Error_ClaudeNotFound" xml:space="preserve"><value>找不到 claude 命令。请先安装 Claude Code，或在设置中填写 Claude 路径。</value></data>
+  <data name="Error_ClaudeNotFound" xml:space="preserve"><value>找不到 claude 命令。请先安装 Claude Code，或在“模型服务”中填写 Claude 路径。</value></data>
   <data name="Error_NotLoggedIn" xml:space="preserve"><value>Claude Code 未登录：请在终端运行 claude，输入 /login 登录一次。</value></data>
   <data name="Error_Unauthorized" xml:space="preserve"><value>API 密钥无效：{0}</value></data>
-  <data name="Error_MissingKey" xml:space="preserve"><value>请先在“模型服务”中填写 {0} 的 API 密钥。</value></data>
+  <data name="Error_MissingKey" xml:space="preserve"><value>还没有填写 {0} 的 API 密钥：请在“模型服务”中填写。</value></data>
   <data name="Error_EndpointMissing" xml:space="preserve"><value>找不到所选的模型服务，请在“模型服务”中重新选择。</value></data>
   <data name="Error_InvalidBaseUrl" xml:space="preserve"><value>接口地址无效：{0}</value></data>
   <data name="Error_Timeout" xml:space="preserve"><value>翻译超时。</value></data>
@@ -104,11 +98,10 @@
   <data name="Label_TargetLanguage" xml:space="preserve"><value>字幕语言</value></data>
   <data name="Label_AudioSource" xml:space="preserve"><value>音源</value></data>
   <data name="Label_TranslationModel" xml:space="preserve"><value>翻译模型</value></data>
-  <data name="Tip_TranslationModel" xml:space="preserve"><value>实时字幕建议选择速度快的模型，例如 Claude Haiku；Opus 最准确但最慢。</value></data>
-  <data name="ModelServices_None" xml:space="preserve"><value>可添加自己的 API 或本地模型</value></data>
-  <data name="ModelServices_Count" xml:space="preserve"><value>已添加 {0} 个</value></data>
+  <data name="Tip_TranslationModel" xml:space="preserve"><value>实时字幕建议选择速度快的模型。每家服务用哪个具体模型，在“模型服务”里调整。</value></data>
+  <data name="ModelServices_None" xml:space="preserve"><value>填上 API 密钥即可使用 GPT、千问等</value></data>
+  <data name="ModelServices_Count" xml:space="preserve"><value>已设置 {0} 个</value></data>
   <data name="Button_Manage" xml:space="preserve"><value>管理…</value></data>
-  <data name="Label_Model" xml:space="preserve"><value>模型</value></data>
   <data name="Label_ClaudePath" xml:space="preserve"><value>Claude 路径</value></data>
   <data name="Hint_ClaudePath" xml:space="preserve"><value>自动查找</value></data>
   <data name="Tip_ClaudePath" xml:space="preserve"><value>留空时自动查找。</value></data>
@@ -117,7 +110,7 @@
   <data name="Button_Browse" xml:space="preserve"><value>浏览…</value></data>
   <data name="Button_Change" xml:space="preserve"><value>更改…</value></data>
   <data name="ModelServices_Title" xml:space="preserve"><value>模型服务</value></data>
-  <data name="ModelServices_Intro" xml:space="preserve"><value>添加自己的 API 或本机运行的模型后，可以在翻译模型和 AI 助手中选择。API 密钥用 Windows 数据保护加密后保存在本机。</value></data>
+  <data name="ModelServices_Intro" xml:space="preserve"><value>OpenAI、通义千问、DeepSeek、Kimi、Grok 已经列在翻译模型和 AI 助手里，填上自己的 API 密钥就能用；翻译和 AI 助手各用这家的哪个模型，在下面分别选。也可以添加别的 API 或本机运行的模型。API 密钥用 Windows 数据保护加密后保存在本机。</value></data>
   <data name="Button_AddService" xml:space="preserve"><value>添加模型服务</value></data>
   <data name="Service_CustomName" xml:space="preserve"><value>自定义服务</value></data>
   <data name="Service_Local" xml:space="preserve"><value>{0} · 本地</value></data>
@@ -146,8 +139,8 @@
   <data name="Tip_UseGpu" xml:space="preserve"><value>安装了显卡运行库时用显卡识别。重新启动后生效。</value></data>
   <data name="Label_LivePreview" xml:space="preserve"><value>实时预览</value></data>
   <data name="Tip_LivePreview" xml:space="preserve"><value>说话过程中先显示识别草稿，会多用一些处理器。</value></data>
-  <data name="Label_FilterChinese" xml:space="preserve"><value>过滤中文说话声</value></data>
-  <data name="Tip_FilterChinese" xml:space="preserve"><value>讲话语言不是中文时，丢掉被判断为中文的片段。每段多做一次语言判断。</value></data>
+  <data name="Label_FilterChinese" xml:space="preserve"><value>过滤周围的中文交谈</value></data>
+  <data name="Tip_FilterChinese" xml:space="preserve"><value>周围有人用中文聊天时，这些话不会出现在字幕里，只保留讲话语言的内容。</value></data>
   <data name="Label_MicNoiseReduction" xml:space="preserve"><value>麦克风降噪</value></data>
   <data name="Tip_MicNoiseReduction" xml:space="preserve"><value>使用 Windows 通话语音处理降低环境噪音并消除回声，效果取决于声卡驱动。讲者距离较远时可能降低识别效果。</value></data>
   <data name="Label_ModelMirror" xml:space="preserve"><value>模型下载地址</value></data>
@@ -158,13 +151,11 @@
   <data name="Label_Opacity" xml:space="preserve"><value>背景</value></data>
   <data name="Label_VisibleLines" xml:space="preserve"><value>显示最近 {0} 句</value></data>
   <data name="Label_Size" xml:space="preserve"><value>大小</value></data>
-  <data name="Note_Resize" xml:space="preserve"><value>拖动字幕边框调整</value></data>
   <data name="Button_ResetSize" xml:space="preserve"><value>恢复默认</value></data>
-  <data name="Section_More" xml:space="preserve"><value>更多</value></data>
   <data name="Label_ShowStatusBar" xml:space="preserve"><value>显示状态条</value></data>
   <data name="Tip_ShowStatusBar" xml:space="preserve"><value>在字幕底部显示音量、识别状态、模型和待翻译句数。</value></data>
   <data name="Label_AutoCorrect" xml:space="preserve"><value>自动纠正口音</value></data>
-  <data name="Tip_AutoCorrect" xml:space="preserve"><value>讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。</value></data>
+  <data name="Tip_AutoCorrect" xml:space="preserve"><value>讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Google 翻译或混元翻译时，纠正期间临时改用 Claude Sonnet，需要本机已登录 Claude Code。</value></data>
   <data name="Label_Lock" xml:space="preserve"><value>锁定字幕</value></data>
   <data name="Label_HotKey" xml:space="preserve"><value>快捷键</value></data>
   <data name="Tip_HotKey" xml:space="preserve"><value>显示或隐藏字幕。部分键盘布局（例如波兰语）中 Ctrl+Alt 等同于 AltGr，选它会占用用 AltGr 输入的字符。</value></data>
@@ -199,11 +190,101 @@
   <data name="Quick_Concepts" xml:space="preserve"><value>解释相关概念</value></data>
   <data name="Quick_LastSentence" xml:space="preserve"><value>解释上一句</value></data>
   <data name="Menu_GenerateNotes" xml:space="preserve"><value>生成笔记</value></data>
-  <data name="Menu_GeneratingNotes" xml:space="preserve"><value>正在生成笔记…</value></data>
   <data name="Status_GeneratingNotes" xml:space="preserve"><value>正在用 {0} 生成笔记…</value></data>
   <data name="Status_NotesSaved" xml:space="preserve"><value>笔记已保存：{0}</value></data>
   <data name="Status_NotesFailed" xml:space="preserve"><value>生成笔记失败：{0}</value></data>
   <data name="Status_NoNotes" xml:space="preserve"><value>还没有字幕记录，无法生成笔记。</value></data>
   <data name="Notes_Name" xml:space="preserve"><value>笔记</value></data>
   <data name="Notes_TempName" xml:space="preserve"><value>LiveSub 笔记</value></data>
+  <data name="Engine_Google" xml:space="preserve"><value>Google 翻译</value></data>
+  <data name="Engine_LocalModel" xml:space="preserve"><value>混元翻译</value></data>
+  <data name="Group_Basic" xml:space="preserve"><value>基础</value></data>
+  <data name="Overlay_Correcting" xml:space="preserve"><value>{0} · 纠正中</value></data>
+  <data name="Tip_RecognitionNeedsClaude" xml:space="preserve"><value>识别置信度较低。自动纠正需要本机已登录 Claude Code。</value></data>
+  <data name="Error_NotLanguageModel" xml:space="preserve"><value>这个功能需要大模型：请选择 Claude Code，或在“模型服务”中添加一个模型。</value></data>
+  <data name="Error_Google" xml:space="preserve"><value>Google 翻译出错：{0}</value></data>
+  <data name="Error_LocalModel" xml:space="preserve"><value>混元翻译出错：{0}</value></data>
+  <data name="Error_UnrecognizedReply" xml:space="preserve"><value>无法识别的回复</value></data>
+  <data name="Local_NotDownloaded" xml:space="preserve"><value>还没有下载混元翻译模型。</value></data>
+  <data name="Local_StartTimeout" xml:space="preserve"><value>启动超时。</value></data>
+  <data name="Local_NoPort" xml:space="preserve"><value>没有可用的端口。</value></data>
+  <data name="Local_MissingRuntimeLibrary" xml:space="preserve"><value>缺少 Microsoft Visual C++ 运行库。请从微软网站安装最新的 Visual C++ Redistributable 后再试。</value></data>
+  <data name="Local_ServerMissing" xml:space="preserve"><value>运行程序解压后找不到 llama-server。</value></data>
+  <data name="Local_DownloadFailed" xml:space="preserve"><value>下载失败。</value></data>
+  <data name="Local_VerifyFailed" xml:space="preserve"><value>下载的文件校验失败，请重试。</value></data>
+  <data name="Local_ExtractFailed" xml:space="preserve"><value>运行程序解压失败。</value></data>
+  <data name="Local_HttpFailed" xml:space="preserve"><value>下载失败（HTTP {0}）。</value></data>
+  <data name="Info_LocalModelMissing" xml:space="preserve"><value>混元翻译还没有下载，先用 Google 翻译。请在“模型服务”里下载。</value></data>
+  <data name="Notice_DownloadToUse" xml:space="preserve"><value>下载后就能使用。</value></data>
+  <data name="Notice_EnterKey" xml:space="preserve"><value>填写 API 密钥后就能使用。密钥在服务商的网站上申请。</value></data>
+  <data name="Claude_Intro" xml:space="preserve"><value>使用本机已登录的 Claude Code，不需要 API 密钥。翻译要快，建议 Haiku；AI 助手和笔记更看重准确，可以选 Sonnet 或 Opus。</value></data>
+  <data name="Label_ForTranslation" xml:space="preserve"><value>翻译用</value></data>
+  <data name="Label_ForAssistant" xml:space="preserve"><value>AI 助手用</value></data>
+  <data name="Claude_Haiku" xml:space="preserve"><value>Haiku（最快）</value></data>
+  <data name="Claude_Sonnet" xml:space="preserve"><value>Sonnet（均衡）</value></data>
+  <data name="Claude_Opus" xml:space="preserve"><value>Opus（最准确、最慢）</value></data>
+  <data name="Label_AvailableModels" xml:space="preserve"><value>可用模型</value></data>
+  <data name="Tip_Test" xml:space="preserve"><value>用“翻译用”的模型翻译一句话，确认这个服务能用</value></data>
+  <data name="Local_Title" xml:space="preserve"><value>混元翻译 · 本机</value></data>
+  <data name="Local_Intro" xml:space="preserve"><value>腾讯混元的翻译模型 Hy-MT2（1.8B）。下载后在这台电脑上离线翻译，不需要联网和 API 密钥，速度取决于显卡和处理器。只能翻译，不能做 AI 助手。</value></data>
+  <data name="Label_ModelFile" xml:space="preserve"><value>模型文件</value></data>
+  <data name="Local_SizeNote" xml:space="preserve"><value>约 {0}，运行时占用约 1.4 GB 内存</value></data>
+  <data name="Button_Cancel" xml:space="preserve"><value>取消</value></data>
+  <data name="Local_Verifying" xml:space="preserve"><value>正在校验…</value></data>
+  <data name="Button_Retry" xml:space="preserve"><value>重试</value></data>
+  <data name="Tool_Record" xml:space="preserve"><value>录音</value></data>
+  <data name="Tool_StopRecording" xml:space="preserve"><value>停止录音</value></data>
+  <data name="Tool_Source" xml:space="preserve"><value>音源：{0}</value></data>
+  <data name="Tool_Settings" xml:space="preserve"><value>设置</value></data>
+  <data name="Tool_Quit" xml:space="preserve"><value>退出 {0}</value></data>
+  <data name="Overlay_StartTranslating" xml:space="preserve"><value>开始翻译</value></data>
+  <data name="Overlay_Recording" xml:space="preserve"><value>录音</value></data>
+  <data name="Label_Appearance" xml:space="preserve"><value>外观</value></data>
+  <data name="Appearance_System" xml:space="preserve"><value>跟随系统</value></data>
+  <data name="Appearance_Light" xml:space="preserve"><value>浅色</value></data>
+  <data name="Appearance_Dark" xml:space="preserve"><value>深色</value></data>
+  <data name="Tip_ResetSize" xml:space="preserve"><value>拖动字幕边框可以调整大小。点这里让字幕恢复默认大小，移回屏幕右上角；AI 助手回到字幕旁边。</value></data>
+  <data name="Section_Records" xml:space="preserve"><value>记录</value></data>
+  <data name="Section_Recognition" xml:space="preserve"><value>识别</value></data>
+  <data name="Label_History" xml:space="preserve"><value>字幕记录</value></data>
+  <data name="Label_Recordings" xml:space="preserve"><value>录音记录</value></data>
+  <data name="Button_View" xml:space="preserve"><value>查看…</value></data>
+  <data name="Recordings_Title" xml:space="preserve"><value>录音记录</value></data>
+  <data name="Recordings_Empty" xml:space="preserve"><value>还没有录音。字幕运行时点快捷按钮里的录音按钮，听到的声音就会存在这里。</value></data>
+  <data name="Recordings_Count" xml:space="preserve"><value>共 {0} 个录音</value></data>
+  <data name="Recordings_Play" xml:space="preserve"><value>播放</value></data>
+  <data name="Button_Refresh" xml:space="preserve"><value>刷新</value></data>
+  <data name="Recording_Name" xml:space="preserve"><value>录音</value></data>
+  <data name="Error_RecordingFailed" xml:space="preserve"><value>录音失败：{0}</value></data>
+  <data name="Error_RecordingNoEncoder" xml:space="preserve"><value>这台电脑上没有 AAC 编码器，无法录音。Windows 的 N 版本需要先安装“媒体功能包”。</value></data>
+  <data name="Menu_Record" xml:space="preserve"><value>录音</value></data>
+  <data name="Menu_Recordings" xml:space="preserve"><value>录音记录…</value></data>
+  <data name="Assistant_AddFiles" xml:space="preserve"><value>添加图片或文件</value></data>
+  <data name="Assistant_ChooseFiles" xml:space="preserve"><value>选择要发给 AI 助手的图片或文件</value></data>
+  <data name="Assistant_AllFiles" xml:space="preserve"><value>所有文件</value></data>
+  <data name="Assistant_Remove" xml:space="preserve"><value>去掉</value></data>
+  <data name="Assistant_PastedImage" xml:space="preserve"><value>粘贴的图片</value></data>
+  <data name="Assistant_Image" xml:space="preserve"><value>图片</value></data>
+  <data name="Assistant_TooManyAttachments" xml:space="preserve"><value>一次最多带 {0} 个附件。</value></data>
+  <data name="Assistant_SeeAttachments" xml:space="preserve"><value>请看附件。</value></data>
+  <data name="Attachment_Unsupported" xml:space="preserve"><value>暂不支持这种文件：{0}。可以存成 PDF 或图片再添加。</value></data>
+  <data name="Attachment_TooLarge" xml:space="preserve"><value>文件太大：{0}</value></data>
+  <data name="Attachment_Unreadable" xml:space="preserve"><value>读不了这个文件：{0}</value></data>
+  <data name="Attachment_PdfNoText" xml:space="preserve"><value>（这个 PDF 里没有可读取的文字，可能是扫描件。）</value></data>
+  <data name="Attachment_Truncated" xml:space="preserve"><value>[……后面还有 {0} 字没有附上]</value></data>
+  <data name="Assistant_TextOnly" xml:space="preserve"><value>附件太大，{0} 只发送了其中的文字。</value></data>
+  <data name="ListSeparator" xml:space="preserve"><value>、</value></data>
+  <data name="Error_LocalModelStart" xml:space="preserve"><value>混元翻译启动失败：{0}</value></data>
+  <data name="Info_LocalModelFallback" xml:space="preserve"><value>{0} 这次先用 Google 翻译。</value></data>
+  <data name="Local_ExitCode" xml:space="preserve"><value>llama-server 已退出（代码 {0}）。</value></data>
+  <data name="Local_DownloadStalled" xml:space="preserve"><value>下载 60 秒没有进展，请检查网络后重试。</value></data>
+  <data name="Net_NameResolution" xml:space="preserve"><value>找不到服务器，请检查网络。</value></data>
+  <data name="Net_ConnectionFailed" xml:space="preserve"><value>网络连接失败，请检查网络。</value></data>
+  <data name="Net_SecureConnection" xml:space="preserve"><value>无法建立安全连接，可能被代理或防火墙拦截了。</value></data>
+  <data name="Net_Proxy" xml:space="preserve"><value>通过代理服务器连接失败，请检查代理设置。</value></data>
+  <data name="Net_Interrupted" xml:space="preserve"><value>连接中断了，请重试。</value></data>
+  <data name="File_AccessDenied" xml:space="preserve"><value>没有权限写入这个文件夹。</value></data>
+  <data name="File_DiskFull" xml:space="preserve"><value>磁盘空间不足。</value></data>
+  <data name="Local_ConnectionLost" xml:space="preserve"><value>连不上本机的翻译服务。</value></data>
+  <data name="Attachment_PdfTextUnavailable" xml:space="preserve"><value>（没能读出这个 PDF 里的文字。）</value></data>
 </root>

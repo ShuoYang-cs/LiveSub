@@ -72,8 +72,11 @@ public static class ClaudeStream
         }
     }
 
-    /// <summary>一条 stream-json 输入消息（一行 JSON）。</summary>
-    public static string UserMessageLine(string text)
+    /// <summary>
+    /// 一条 stream-json 输入消息（一行 JSON）。附件（图片、PDF）和 Anthropic API 的 content 块格式相同
+    /// （macOS 2026-10-22 用 Claude Code 实测能读）。
+    /// </summary>
+    public static string UserMessageLine(string text, IReadOnlyList<Chat.ChatAttachment>? attachments = null)
     {
         using var stream = new MemoryStream();
         using (var w = new Utf8JsonWriter(stream, new JsonWriterOptions { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }))
@@ -82,12 +85,8 @@ public static class ClaudeStream
             w.WriteString("type", "user");
             w.WriteStartObject("message");
             w.WriteString("role", "user");
-            w.WriteStartArray("content");
-            w.WriteStartObject();
-            w.WriteString("type", "text");
-            w.WriteString("text", text);
-            w.WriteEndObject();
-            w.WriteEndArray();
+            w.WritePropertyName("content");
+            Chat.ChatContent.WriteAnthropicBlocks(w, text, attachments);
             w.WriteEndObject();
             w.WriteEndObject();
         }

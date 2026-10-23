@@ -115,7 +115,7 @@ public static class RecognitionText
     private static bool ContainsCJK(string s) => s.EnumerateRunes().Any(r => TextUtil.IsCJK(r.Value));
 
     /// <summary>
-    /// 过滤中文说话声：讲话语言不是中文、而这一段被判断为中文（在“讲话语言/中文”两者里选）时丢掉。
+    /// 过滤周围的中文交谈：讲话语言不是中文、而这一段被判断为中文（在“讲话语言/中文”两者里选）时丢掉。
     /// </summary>
     public static bool IsForeignChinese(string? detectedLanguage, float probability, string sourceWhisperCode) =>
         sourceWhisperCode != "zh" && detectedLanguage == "zh" && probability >= 0.5f;

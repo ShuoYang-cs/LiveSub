@@ -12,8 +12,12 @@ public sealed class LegacyModelSettings
     /// <summary>旧设置里出现任何一个、而又没有 TranslationModel 时，说明是旧版的设置文件。</summary>
     private static readonly string[] Keys = ["Engine", "ClaudeCodeModel", "AnthropicModel", "AnthropicModels", "Providers", "ActiveProviderId"];
 
-    /// <summary>迁移写出的新字段（翻译模型、模型服务）。有 TranslationModel 就不再当成旧版设置。</summary>
-    private static readonly string[] MigratedKeys = ["TranslationModel", "Endpoints"];
+    /// <summary>
+    /// 迁移写出的新字段（翻译模型、模型服务、Claude 的型号、删掉过的默认服务）。有 TranslationModel 就不再当成旧版设置。
+    /// 还没迁移成时这些字段只是默认值，不能写进文件：例如 Claude 型号存成了默认的 Haiku，下次真正迁移时
+    /// 会当成用户选过的型号，盖过旧设置里的 Sonnet。
+    /// </summary>
+    private static readonly string[] MigratedKeys = ["TranslationModel", "Endpoints", "ClaudeTranslationModel", "ClaudeAssistantModel", "DismissedBuiltIns"];
 
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true };
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };

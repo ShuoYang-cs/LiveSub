@@ -34,16 +34,22 @@ public interface IAudioSource : IDisposable
 /// 系统和声卡驱动对它做通话用的语音处理：降噪、回声消除，较新的 Windows 11 上还有“语音清晰度”（Voice Clarity）。
 /// 具体做哪些处理取决于驱动。设置类别失败时写日志，改为不降噪地打开，不让字幕因此启动失败。
 /// 环回采集（系统声音）不用通话类别。
+///
+/// 录音（快捷按钮里的录音按钮）打开时，同一块数据另外换成 48 kHz 单声道交给 <see cref="RecorderSlot"/>，补的静音也一样补上，
+/// 录下的声音和真实时间对齐。采集中断、换了新的 WasapiSource 时，两个采集之间的空缺由录音器补（第一块标上 newCapture）。
 /// </summary>
 public sealed class WasapiSource : IAudioSource
 {
     private readonly bool loopback;
     private readonly bool noiseReduction;
+    private readonly RecorderSlot? recording;
     private readonly object gate = new();
     private WasapiRecorder? recorder;
     /// <summary>正在录音的麦克风（环回采集时为 null，由 NAudio 自己找默认输出设备）。</summary>
     private MMDevice? device;
     private AudioConverter? converter;
+    /// <summary>录音用的转换器（48 kHz 单声道）；只在录音时用。</summary>
+    private AudioConverter? recordingConverter;
     private Timer? filler;
     private DateTime startedAt;
     private long emitted;
@@ -51,6 +57,8 @@ public sealed class WasapiSource : IAudioSource
     private byte[] silence = [];
     /// <summary>最近一次收到真实数据包的时刻（补静音用）。</summary>
     private DateTime lastPacketAt;
+    /// <summary>这个采集对象已经往录音里写过：第一块要告诉录音器这是新的采集，由它补上之前中断的时间。</summary>
+    private bool recorded;
 
     /// <summary>
     /// 麦克风、环回采集各自上次写进日志的采集格式。每次打开都会新建一个 WasapiSource（麦克风被隐私设置挡住时每几秒重试一次），
@@ -65,10 +73,12 @@ public sealed class WasapiSource : IAudioSource
     public DateTime LastDataAt { get; private set; } = DateTime.UtcNow;
 
     /// <param name="noiseReduction">麦克风降噪（只对麦克风有效）。</param>
-    public WasapiSource(bool loopback, bool noiseReduction = false)
+    /// <param name="recording">这一路的录音器（录音打开时才有录音器在里面）。</param>
+    internal WasapiSource(bool loopback, bool noiseReduction = false, RecorderSlot? recording = null)
     {
         this.loopback = loopback;
         this.noiseReduction = noiseReduction && !loopback;
+        this.recording = recording;
     }
 
     private static WasapiRecorderBuilder NewBuilder() => new WasapiRecorderBuilder().WithSharedMode().WithEventSync().WithBufferLength(50);
@@ -109,6 +119,7 @@ public sealed class WasapiSource : IAudioSource
         {
             var format = r.WaveFormat;
             converter = new AudioConverter(format.SampleRate, format.Channels, SampleFormatOf(format));
+            recordingConverter = new AudioConverter(format.SampleRate, format.Channels, SampleFormatOf(format), AudioRecorder.SampleRate);
             r.DataAvailable += OnData;
             r.RecordingStopped += (_, e) =>
             {
@@ -192,6 +203,7 @@ public sealed class WasapiSource : IAudioSource
                 buffer = silence.AsSpan(0, buffer.Length);
             }
             var samples = converter.Convert(buffer);
+            if (recording is { Active: true } && recordingConverter is not null) Record(recordingConverter.Convert(buffer));
             if (samples.Length == 0) return;
             Level = converter.LastRms;
             LastDataAt = lastPacketAt = DateTime.UtcNow;
@@ -213,7 +225,16 @@ public sealed class WasapiSource : IAudioSource
             Level = 0;
             LastDataAt = now;
             Samples?.Invoke(new float[missing]);
+            if (recording is { Active: true }) Record(new float[missing * (AudioRecorder.SampleRate / AudioConverter.TargetRate)]);
         }
+    }
+
+    /// <summary>在 gate 内调用。</summary>
+    private void Record(float[] samples)
+    {
+        if (samples.Length == 0 || recording is null) return;
+        recording.Append(samples, newCapture: !recorded);
+        recorded = true;
     }
 
     /// <summary>WASAPI 共享模式通常给 32 位浮点；也处理 16/24/32 位整数。</summary>
@@ -243,8 +264,10 @@ public sealed class WasapiSource : IAudioSource
 public sealed class FileSource : IAudioSource
 {
     private readonly string path;
+    private readonly RecorderSlot? recording;
     private WaveStream? reader;
     private AudioConverter? converter;
+    private AudioConverter? recordingConverter;
     private Timer? timer;
     private readonly object gate = new();
 
@@ -254,9 +277,10 @@ public sealed class FileSource : IAudioSource
     public float Level { get; private set; }
     public DateTime LastDataAt { get; private set; } = DateTime.UtcNow;
 
-    public FileSource(string path)
+    internal FileSource(string path, RecorderSlot? recording = null)
     {
         this.path = path;
+        this.recording = recording;
     }
 
     public void Start()
@@ -264,6 +288,7 @@ public sealed class FileSource : IAudioSource
         reader = path.EndsWith(".wav", StringComparison.OrdinalIgnoreCase) ? new WaveFileReader(path) : new MediaFoundationReader(path);
         var format = reader.WaveFormat;
         converter = new AudioConverter(format.SampleRate, format.Channels, WasapiSource.SampleFormatOf(format));
+        recordingConverter = new AudioConverter(format.SampleRate, format.Channels, WasapiSource.SampleFormatOf(format), AudioRecorder.SampleRate);
         int bytesPer100ms = format.AverageBytesPerSecond / 10 / format.BlockAlign * format.BlockAlign;
         var buffer = new byte[bytesPer100ms];
         timer = new Timer(_ =>
@@ -276,6 +301,10 @@ public sealed class FileSource : IAudioSource
                     int n = reader.Read(buffer, 0, buffer.Length);
                     // 文件读完后继续送静音，让最后一段能结束。
                     var samples = n > 0 ? converter.Convert(buffer.AsSpan(0, n)) : new float[AudioConverter.TargetRate / 10];
+                    if (recording is { Active: true })
+                    {
+                        recording.Append(n > 0 ? recordingConverter.Convert(buffer.AsSpan(0, n)) : new float[AudioRecorder.SampleRate / 10], newCapture: false);
+                    }
                     Level = n > 0 ? converter.LastRms : 0;
                     LastDataAt = DateTime.UtcNow;
                     Samples?.Invoke(samples);

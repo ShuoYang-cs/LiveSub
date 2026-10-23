@@ -15,13 +15,14 @@ using LiveSub.Core.Speech;
 namespace LiveSub.App.UI;
 
 /// <summary>
-/// 设置（一页，改了自动生效），布局与 macOS 版相同：翻译、字幕，以及默认收起的“更多”（不常用的设置和 Windows 版特有的识别设置）。
+/// 设置（一页，改了自动生效），布局与 macOS 版相同：翻译、字幕、记录三组全部直接列出（2026-10-22 用户要求去掉可折叠的“更多”），
+/// Windows 版特有的识别设置（识别模型、显卡加速、实时预览、模型下载地址）放在最后单独的“识别”一组，快捷键在“字幕”一组。
+/// 行尾不放说明文字，说明在悬停提示里。Claude 路径和每家服务用哪个具体模型在“模型服务”窗口里。
+/// 只有关闭按钮；用 LiveSub 时显示在字幕和 AI 助手上面（<see cref="WindowLevels"/>）。
 /// 托盘菜单、字幕上的按钮、模型服务窗口改了设置时，这里跟着更新。
 /// </summary>
 public sealed class SettingsWindow : Window
 {
-    private static readonly FontFamily IconFont = new("Segoe Fluent Icons, Segoe MDL2 Assets");
-
     private readonly SettingsService settings;
     private readonly AppShell shell;
     private AppSettings S => settings.Current;
@@ -35,7 +36,6 @@ public sealed class SettingsWindow : Window
     private readonly ComboBox modelBox = new();
     /// <summary>模型列表上次的内容；没变时不重建，免得打断正在打开的下拉列表。</summary>
     private string modelBoxSignature = "";
-    private readonly TextBlock claudeStatus = Note();
     private readonly TextBlock modelStatus = Note();
     private readonly Button downloadButton = new();
     private CancellationTokenSource? downloadCancel;
@@ -46,14 +46,20 @@ public sealed class SettingsWindow : Window
         this.shell = shell;
         Title = $"{Strings.AppName} · {Strings.Settings_Title}";
         Width = 560;
-        Height = 720;
+        Height = 760;
         MinWidth = 460;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        // 先套上外观（浅色、深色）再建控件：分段按钮要找主题里的切换按钮样式。
+        Appearance.Theme(this);
+        WindowLevels.Raise(this, closeButtonOnly: true);
+        // 小屏、高缩放时不超出屏幕（标题栏不能在屏幕外）。
+        ScreenFit.Apply(this);
         Content = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
 
         BuildTranslation();
         BuildOverlay();
-        BuildMore();
+        BuildRecords();
+        BuildRecognition();
         Refresh();
         loading = false;
 
@@ -135,9 +141,12 @@ public sealed class SettingsWindow : Window
         var services = Note();
         services.VerticalAlignment = VerticalAlignment.Center;
         services.Margin = new Thickness(0);
-        refreshers.Add(() => services.Text = S.Endpoints.Count == 0
-            ? Strings.ModelServices_None
-            : Strings.Format(Strings.ModelServices_Count, S.Endpoints.Count));
+        // 能用的模型服务：本地的，或者已经填了 API 密钥的（默认列出的那几个没填密钥不算；与 macOS 相同）。
+        refreshers.Add(() =>
+        {
+            int configured = S.Endpoints.Count(e => e.IsLocal || shell.Secrets.Has(SecretStore.EndpointKey(e.Id)));
+            services.Text = configured == 0 ? Strings.ModelServices_None : Strings.Format(Strings.ModelServices_Count, configured);
+        });
         Row(Strings.ModelServices_Title, WithButtons(services, SmallButton(Strings.Button_Manage, shell.ShowModelServices)));
 
         // 讲话语言是中文时没有意义，不显示。
@@ -145,13 +154,23 @@ public sealed class SettingsWindow : Window
             Check(() => S.FilterChinese, v => { S.FilterChinese = v; Commit(SettingsChange.Recognition); }, Strings.Tip_FilterChinese),
             Strings.Tip_FilterChinese);
         refreshers.Add(() => filter.SetVisible(!S.SourceLanguage.StartsWith("zh", StringComparison.Ordinal)));
+
+        Row(Strings.Label_AutoCorrect, Check(() => S.AutoCorrect, v => { S.AutoCorrect = v; Commit(SettingsChange.Translation); }, Strings.Tip_AutoCorrect),
+            Strings.Tip_AutoCorrect);
+        // 打开“自动纠正口音”后才出现，缩进表示从属于它。
+        var keepOriginal = Row(Strings.Label_KeepOriginal,
+            Check(() => S.KeepOriginalText, v => { S.KeepOriginalText = v; Commit(SettingsChange.None); }, Strings.Tip_KeepOriginal),
+            Strings.Tip_KeepOriginal);
+        keepOriginal.Label.Margin = new Thickness(16, 4, 12, 4);
+        refreshers.Add(() => keepOriginal.SetVisible(S.AutoCorrect));
     }
 
-    /// <summary>翻译模型：“云端模型”“本地模型”两组，组名不可选（与 macOS 的分组菜单相同）。</summary>
+    /// <summary>翻译模型：“基础”“云端模型”“本地模型”三组，组名不可选，每家服务一项（与 macOS 的分组菜单相同）。</summary>
     private void RefreshModelBox()
     {
         var groups = TranslationEngines.TranslationMenu(S);
-        var signature = string.Join('\u0001', groups.SelectMany(g => g.Items.Select(i => i.Title).Prepend("#" + g.Title)));
+        // 每家服务只列一项，服务名不变时它用的具体模型也可能变了：模型也算进去。
+        var signature = string.Join('\u0001', groups.SelectMany(g => g.Items.Select(i => $"{i.Title}\u0002{i.Choice}").Prepend("#" + g.Title)));
         if (signature != modelBoxSignature)
         {
             modelBoxSignature = signature;
@@ -177,6 +196,15 @@ public sealed class SettingsWindow : Window
         var modes = AppShell.DisplayModes;
         Row(Strings.Label_DisplayMode, Segmented(modes.Select(m => m.Title), () => IndexOf(modes, m => m.Mode == S.DisplayMode),
             i => { S.DisplayMode = modes[i].Mode; Commit(SettingsChange.Appearance); }));
+        // 外观：字幕、AI 助手和各个窗口一起变（与 macOS 相同）。
+        var appearances = new[]
+        {
+            (Mode: AppearanceMode.System, Title: Strings.Appearance_System),
+            (Mode: AppearanceMode.Light, Title: Strings.Appearance_Light),
+            (Mode: AppearanceMode.Dark, Title: Strings.Appearance_Dark),
+        };
+        Row(Strings.Label_Appearance, Segmented(appearances.Select(a => a.Title), () => IndexOf(appearances, a => a.Mode == S.Appearance),
+            i => { S.Appearance = appearances[i].Mode; Commit(SettingsChange.Appearance); }));
         // 一个滑块同时调译文和原文字号（原文约为译文的 0.62 倍）。
         Row(Strings.Label_FontSize, SliderWithValue(14, 56, 1, () => S.TranslationFontSize, "0", v =>
         {
@@ -195,60 +223,31 @@ public sealed class SettingsWindow : Window
             lines.SetVisible(S.OverlayHeight <= 0);
         });
 
-        var resizeNote = Note();
-        resizeNote.Text = Strings.Note_Resize;
-        resizeNote.VerticalAlignment = VerticalAlignment.Center;
-        resizeNote.Margin = new Thickness(0);
-        var reset = SmallButton(Strings.Button_ResetSize, () =>
-        {
-            S.OverlayWidth = OverlayWindow.DefaultWidth;
-            S.OverlayHeight = 0;
-            Commit(SettingsChange.Appearance);
-        });
-        Row(Strings.Label_Size, WithButtons(resizeNote, reset));
-    }
-
-    // MARK: - 更多
-
-    private void BuildMore()
-    {
-        // “更多”默认收起，不记住展开状态（与 macOS 相同）。
-        var content = new StackPanel { Visibility = Visibility.Collapsed };
-        var chevron = new TextBlock
-        {
-            Text = "", // ChevronRight
-            FontFamily = IconFont,
-            FontSize = 10,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 2, 8, 0),
-        };
-        var title = new StackPanel { Orientation = Orientation.Horizontal };
-        title.Children.Add(chevron);
-        title.Children.Add(new TextBlock { Text = Strings.Section_More, FontSize = 15, FontWeight = FontWeights.SemiBold });
-        var header = PlainButton(title);
-        header.Margin = new Thickness(0, 18, 0, 6);
-        header.Click += (_, _) =>
-        {
-            bool open = content.Visibility != Visibility.Visible;
-            content.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-            chevron.Text = open ? "" : ""; // ChevronDown / ChevronRight
-        };
-        body.Children.Add(header);
-        body.Children.Add(content);
-        currentGrid = NewGrid();
-        content.Children.Add(currentGrid);
+        // 只有“恢复默认”按钮：“拖动字幕边框调整”这句说明挪进了按钮的悬停提示（2026-10-22 用户要求）。
+        var reset = SmallButton(Strings.Button_ResetSize, shell.ResetOverlay);
+        reset.ToolTip = Strings.Tip_ResetSize;
+        reset.HorizontalAlignment = HorizontalAlignment.Left;
+        Row(Strings.Label_Size, reset, Strings.Tip_ResetSize);
 
         Row(Strings.Label_ShowStatusBar, Check(() => S.ShowStatusBar, v => { S.ShowStatusBar = v; Commit(SettingsChange.Appearance); }, Strings.Tip_ShowStatusBar),
             Strings.Tip_ShowStatusBar);
-        Row(Strings.Label_AutoCorrect, Check(() => S.AutoCorrect, v => { S.AutoCorrect = v; Commit(SettingsChange.Translation); }, Strings.Tip_AutoCorrect),
-            Strings.Tip_AutoCorrect);
-        // 打开“自动纠正口音”后才出现，缩进表示从属于它。
-        var keepOriginal = Row(Strings.Label_KeepOriginal,
-            Check(() => S.KeepOriginalText, v => { S.KeepOriginalText = v; Commit(SettingsChange.None); }, Strings.Tip_KeepOriginal),
-            Strings.Tip_KeepOriginal);
-        keepOriginal.Label.Margin = new Thickness(16, 4, 12, 4);
-        refreshers.Add(() => keepOriginal.SetVisible(S.AutoCorrect));
         Row(Strings.Label_Lock, Check(() => S.ClickThrough, v => { S.ClickThrough = v; Commit(SettingsChange.Appearance); }, Strings.Tip_Lock), Strings.Tip_Lock);
+
+        var keys = HotKeys.All;
+        var hotKey = Combo(keys.Select(k => HotKeys.Text(k) ?? Strings.HotKey_None), () => IndexOf(keys, k => k == S.HotKey),
+            i => { S.HotKey = keys[i]; Commit(SettingsChange.Appearance); });
+        hotKey.ToolTip = Strings.Tip_HotKey;
+        Row(Strings.Label_HotKey, hotKey, Strings.Tip_HotKey);
+    }
+
+    // MARK: - 记录
+
+    /// <summary>字幕记录、录音记录（都只有“查看…”按钮，2026-10-22 用户要求去掉行尾说明）、记录文件夹。</summary>
+    private void BuildRecords()
+    {
+        Section(Strings.Section_Records);
+        Row(Strings.Label_History, LeftButton(SmallButton(Strings.Button_View, shell.ShowHistory)));
+        Row(Strings.Label_Recordings, LeftButton(SmallButton(Strings.Button_View, shell.ShowRecordings)));
 
         var folder = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, Opacity = 0.7 };
         refreshers.Add(() =>
@@ -264,50 +263,20 @@ public sealed class SettingsWindow : Window
             Commit(SettingsChange.None);
         });
         Row(Strings.Label_TranscriptFolder, WithButtons(folder, changeFolder));
-
-        BuildClaudePath();
-        BuildRecognition();
-
-        var keys = HotKeys.All;
-        var hotKey = Combo(keys.Select(k => HotKeys.Text(k) ?? Strings.HotKey_None), () => IndexOf(keys, k => k == S.HotKey),
-            i => { S.HotKey = keys[i]; Commit(SettingsChange.Appearance); });
-        hotKey.ToolTip = Strings.Tip_HotKey;
-        Row(Strings.Label_HotKey, hotKey, Strings.Tip_HotKey);
     }
 
-    private void BuildClaudePath()
+    private static Button LeftButton(Button button)
     {
-        var path = new TextBox { ToolTip = Strings.Tip_ClaudePath };
-        refreshers.Add(() =>
-        {
-            if (path.Text.Trim() != S.ClaudePath) path.Text = S.ClaudePath;
-            UpdateClaudeStatus();
-        });
-        path.TextChanged += (_, _) =>
-        {
-            if (loading) return;
-            S.ClaudePath = path.Text.Trim();
-            Commit(SettingsChange.Translation);
-            UpdateClaudeStatus();
-        };
-        var browse = SmallButton(Strings.Button_Browse, () =>
-        {
-            var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "claude|claude.exe;claude.cmd|*.*|*.*" };
-            if (SystemDialogs.Show(dialog, this) == true) path.Text = dialog.FileName;
-        });
-        Row(Strings.Label_ClaudePath, WithButtons(WithPlaceholder(path, Strings.Hint_ClaudePath), browse), Strings.Tip_ClaudePath);
-        Row("", claudeStatus);
+        button.HorizontalAlignment = HorizontalAlignment.Left;
+        return button;
     }
 
-    private void UpdateClaudeStatus()
-    {
-        var launch = ClaudeLocator.Locate(S.ClaudePath);
-        claudeStatus.Text = launch is null ? Strings.Status_ClaudeMissing : Strings.Format(Strings.Status_ClaudeFound, launch.DisplayPath);
-    }
+    // MARK: - 识别（Windows 版特有）
 
     /// <summary>Windows 版特有：Whisper 识别模型、显卡加速、实时预览、模型下载地址。</summary>
     private void BuildRecognition()
     {
+        Section(Strings.Section_Recognition);
         var models = WhisperModel.All;
         var modelBox = Combo(models.Select(m => $"{m.Id} · {m.ApproxMegabytes} MB"), () => IndexOf(models, m => m.Id == S.WhisperModel),
             i => { S.WhisperModel = models[i].Id; Commit(SettingsChange.Recognition); });
@@ -566,22 +535,6 @@ public sealed class SettingsWindow : Window
         var b = new Button { Content = text, Padding = new Thickness(10, 2, 10, 2) };
         b.Click += (_, _) => action();
         return b;
-    }
-
-    /// <summary>没有边框和背景的按钮（“更多”的标题）。仍然可以用键盘操作。</summary>
-    private static Button PlainButton(UIElement content)
-    {
-        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
-        var border = new FrameworkElementFactory(typeof(Border));
-        border.SetValue(Border.BackgroundProperty, Brushes.Transparent);
-        border.AppendChild(presenter);
-        return new Button
-        {
-            Content = content,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Cursor = Cursors.Hand,
-            Template = new ControlTemplate(typeof(Button)) { VisualTree = border },
-        };
     }
 
     internal static FrameworkElement WithButtons(FrameworkElement main, params Button[] buttons)

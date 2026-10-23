@@ -1,5 +1,6 @@
 using System.Security;
 using System.Text;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using LiveSub.App.Localization;
 using LiveSub.App.Translation;
@@ -13,11 +14,15 @@ namespace LiveSub.App.Services;
 /// AI 助手对话（与 macOS 版 AssistantSession 相同），用 AI 助手模型的长驻会话。
 /// - 用户点“开始”、“开始新的记录”或“新对话”时开始新对话；
 /// - 提问时把上次提问以来新增的字幕（和正在说的半句）放在问题前面一起发，模型手上一直有完整的字幕记录；
-/// - 会话换新（换了模型、改了模型服务或语言、进程退出）时，自动把本次对话以来的全部字幕重新带上。
+/// - 会话换新（换了模型、改了模型服务或语言、进程退出）时，自动把本次对话以来的全部字幕重新带上；
+/// - 提问可以带图片和文件（粘贴、拖进面板、点回形针选择；与 macOS 相同），读好之后显示在输入框上方，随下一个问题一起发。
 /// 带哪些字幕的规则在 <see cref="AssistantConversation"/> 里。只在界面线程上使用。
 /// </summary>
 public sealed class AssistantSession
 {
+    /// <summary>输入框上方等着随下一个问题发送的附件。</summary>
+    public sealed record PendingAttachment(Guid Id, ChatAttachment Content);
+
     private readonly SettingsService settingsService;
     private readonly SecretStore secrets;
     private readonly Dispatcher dispatcher;
@@ -35,7 +40,19 @@ public sealed class AssistantSession
     public bool IsAnswering => conversation.IsAnswering;
     /// <summary>输入框里的文字。</summary>
     public string Draft { get; set; } = "";
-    public bool CanSend => !IsAnswering && Draft.Trim().Length > 0;
+    public IReadOnlyList<PendingAttachment> Attachments => attachments;
+    /// <summary>还在读取的附件个数：读完之前不能发送。</summary>
+    public int LoadingAttachments { get; private set; }
+    /// <summary>附件读取失败等提示，显示在输入框上方；下次添加或发送时清掉。</summary>
+    public string? AttachmentNotice { get; private set; }
+    /// <summary>能不能发送：有文字或附件，附件都读完了，而且不在回答中。</summary>
+    public bool CanSend => !IsAnswering && LoadingAttachments == 0 && (Draft.Trim().Length > 0 || attachments.Count > 0);
+    /// <summary>快捷问题能不能点（附件读完之前不能）。</summary>
+    public bool CanAsk => !IsAnswering && LoadingAttachments == 0;
+
+    private readonly List<PendingAttachment> attachments = [];
+    /// <summary>每次新对话加一：新对话之前开始读的附件，读完后不再加进来。</summary>
+    private int attachmentGeneration;
 
     private AppSettings Settings => settingsService.Current;
 
@@ -54,6 +71,9 @@ public sealed class AssistantSession
     {
         CloseSession();
         conversation.Reset(DateTime.UtcNow);
+        attachments.Clear();
+        AttachmentNotice = null;
+        attachmentGeneration++;
         AppLog.Info("assistant: new conversation");
         RaiseChanged();
     }
@@ -74,7 +94,7 @@ public sealed class AssistantSession
         }
     }
 
-    /// <summary>发送输入框里的问题。</summary>
+    /// <summary>发送输入框里的问题（正在回答时按回车：问题留在输入框里，不清掉）。</summary>
     public void Send()
     {
         if (!CanSend) return;
@@ -83,9 +103,88 @@ public sealed class AssistantSession
         Ask(question);
     }
 
+    // MARK: - 附件
+
+    /// <summary>选择的、拖进来的、粘贴的文件（资源管理器里复制的文件）。</summary>
+    public void AddFiles(IEnumerable<string> paths) =>
+        Load(paths.Select(path => (Func<ChatAttachment>)(() => AttachmentLoader.Load(path))).ToList());
+
+    /// <summary>粘贴的、从网页拖进来的图片。</summary>
+    public void AddImage(byte[] data, string name) => Load([() => AttachmentLoader.Image(data, name)]);
+
+    /// <summary>剪贴板里只有系统位图（没有 PNG）的截图：已经冻结，编码在后台做（大截图编码要几百毫秒）。</summary>
+    public void AddImage(BitmapSource bitmap, string name) => Load([() => AttachmentLoader.Image(bitmap, name)]);
+
+    public void RemoveAttachment(Guid id)
+    {
+        attachments.RemoveAll(a => a.Id == id);
+        AttachmentNotice = null;
+        RaiseChanged();
+    }
+
+    /// <summary>在后台读取，读完按顺序加到输入框上方；超过上限的、读不了的给出提示（与 macOS 相同）。</summary>
+    private async void Load(List<Func<ChatAttachment>> loaders)
+    {
+        if (loaders.Count == 0) return;
+        AttachmentNotice = null;
+        LoadingAttachments += loaders.Count;
+        int gen = attachmentGeneration;
+        RaiseChanged();
+        var results = await Task.Run(() => loaders.Select(loader =>
+        {
+            try
+            {
+                return (Content: loader(), Error: (string?)null);
+            }
+            catch (AttachmentLoader.Failure e)
+            {
+                return (Content: (ChatAttachment?)null, Error: e.Message);
+            }
+            catch (Exception e)
+            {
+                AppLog.Error("assistant: attachment failed", e);
+                return (Content: (ChatAttachment?)null, Error: e.Message);
+            }
+        }).ToList());
+        LoadingAttachments -= loaders.Count;
+        if (gen != attachmentGeneration)
+        {
+            RaiseChanged();
+            return;
+        }
+        var notices = new List<string>();
+        foreach (var (content, error) in results)
+        {
+            if (error is not null)
+            {
+                notices.Add(error);
+                continue;
+            }
+            if (content is null) continue;
+            if (attachments.Count >= AttachmentLimits.MaxAttachments)
+            {
+                notices.Add(Strings.Format(Strings.Assistant_TooManyAttachments, AttachmentLimits.MaxAttachments));
+                break;
+            }
+            attachments.Add(new PendingAttachment(Guid.NewGuid(), content));
+        }
+        AttachmentNotice = notices.Count == 0 ? null : string.Join("\n", notices.Distinct());
+        AppLog.Info($"assistant: {results.Count} attachments loaded, {notices.Count} problems");
+        RaiseChanged();
+    }
+
+    // MARK: - 提问
+
     public async void Ask(string question)
     {
-        if (IsAnswering) return;
+        if (!CanAsk) return;
+        // 几个大 PDF 加起来可能超过接口一次请求的上限，整个请求被拒：从大到小改成只发文字（与 macOS 相同）。
+        var (sent, textOnly) = ChatAttachmentBudget.Fit(attachments.Select(a => a.Content).ToList());
+        var labels = attachments.Select(a => a.Content.Label).ToList();
+        attachments.Clear();
+        AttachmentNotice = textOnly.Count == 0 ? null : Strings.Format(Strings.Assistant_TextOnly, string.Join(Strings.ListSeparator, textOnly));
+        // 只放了附件、没写问题：替用户问一句。
+        var prompt = question.Length == 0 ? Strings.Assistant_SeeAttachments : question;
         IChatSession current;
         try
         {
@@ -94,12 +193,12 @@ public sealed class AssistantSession
         catch (ChatProviderException e)
         {
             AppLog.Error("assistant: unavailable", e);
-            conversation.AddFailure(question, TranslationEngines.Describe(e));
+            conversation.AddFailure(question, TranslationEngines.Describe(e), labels);
             RaiseChanged();
             return;
         }
         var (lines, speaking) = transcript();
-        if (conversation.Begin(question, lines, speaking) is not { } pending) return;
+        if (conversation.Begin(question, lines, speaking, labels, prompt) is not { } pending) return;
         RaiseChanged();
         IReadOnlyList<AssistantFiles.File> files = [];
         try
@@ -110,7 +209,7 @@ public sealed class AssistantSession
                 dispatcher.BeginInvoke(() =>
                 {
                     if (conversation.UpdateAnswer(pending, partial)) RaiseChanged();
-                }), CancellationToken.None));
+                }), CancellationToken.None, sent.Count > 0 ? sent : null));
             if (conversation.Complete(pending, reply)) files = conversation.FilesToSave(pending);
         }
         catch (Exception e)

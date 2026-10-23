@@ -19,39 +19,38 @@ using Rectangle = System.Windows.Shapes.Rectangle;
 
 namespace LiveSub.App.UI;
 
-/// <summary>悬浮字幕上的快捷按钮、“⋯”菜单和状态条的回调（由托盘程序提供）。</summary>
+/// <summary>悬浮字幕上的快捷按钮和状态条的回调（由托盘程序提供）。</summary>
 public sealed record OverlayActions(
     Action ToggleRunning,
+    Action ToggleRecording,
     Action Lock,
-    Action<DisplayMode> SelectDisplayMode,
-    Action ShowHistory,
+    Action<AudioSourceMode> SelectAudioSource,
     Action ToggleAssistant,
     Action ShowSettings,
-    Action Hide,
+    Action Quit,
     Func<ContextMenu> ModelMenu,
     Action OpenMicrophoneSettings);
 
 /// <summary>
-/// 悬浮字幕窗口：无边框、透明背景上一块圆角半透明深色面板；置顶、不进任务栏、不抢焦点（WS_EX_NOACTIVATE）。
+/// 悬浮字幕窗口：无边框、透明背景上一块圆角半透明面板（深色外观黑底白字，浅色外观白底黑字，见 <see cref="OverlayPalette"/>）；
+/// 一直在最上层、不进任务栏、不抢焦点（WS_EX_NOACTIVATE）。新用户的字幕在屏幕右上角，面积是屏幕的 1/16（与 macOS 相同）。
 /// 窗口大小只随设置变化，不随字幕内容忽高忽低：高度默认按“显示句数”算，字幕在框里滚动，可往上翻看历史；
 /// “正在说”放在滚动区下面，至少占一行（“两者”模式下两个音源同时在说时是两行，窗口高度不变，滚动区让出位置）。
 /// “两者”模式下每句原文和“正在说”前面有小标签，标出来自麦克风还是系统音频（与 macOS 相同）。
-/// 鼠标移上去出现快捷按钮（与 macOS 相同：开始/停止、锁定、“⋯”菜单、收起）。
+/// 鼠标移上去出现快捷按钮（与 macOS 相同：开始/停止、录音、锁定、音源、AI 助手、设置、退出），停在按钮上立刻显示它的名字。
+/// 没开始时中间是“开始翻译”按钮。收起字幕用快捷键或托盘菜单。
 /// 按住拖动；拖边框和四角调整大小（拖上下边框改成自己想要的高度，双击上下边框恢复按句数算的高度）；
 /// 锁定后点击穿透（WS_EX_TRANSPARENT），点右上角的锁或在托盘菜单里解锁。
 /// </summary>
 public sealed class OverlayWindow : Window
 {
-    private static readonly SolidColorBrush Orange = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0xA5, 0x3D)));
+    private static readonly SolidColorBrush Orange = OverlayPalette.Orange;
     private static readonly SolidColorBrush Green = Freeze(new SolidColorBrush(Color.FromArgb(0xD9, 0x4C, 0xD9, 0x64)));
     private static readonly FontFamily IconFont = new("Segoe Fluent Icons, Segoe MDL2 Assets");
+    /// <summary>AI 助手按钮的 ✨（与标题栏相同，单色字形）。</summary>
+    private static readonly FontFamily SymbolFont = new("Segoe UI Emoji, Segoe UI Symbol");
     /// <summary>音源标签（界面文字，“麦克风”或 “Microphone”）的字体。</summary>
     private static readonly FontFamily TagFont = new("Segoe UI, Microsoft YaHei UI");
-    private static readonly SolidColorBrush TagBackground = Freeze(new SolidColorBrush(Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF)));
-    private static readonly SolidColorBrush TagForeground = Freeze(new SolidColorBrush(Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF)));
-    /// <summary>双语时原文的颜色（72% 的白色）。</summary>
-    private static readonly SolidColorBrush SourceDim = Freeze(new SolidColorBrush(Color.FromArgb(0xB8, 0xFF, 0xFF, 0xFF)));
-    public const double DefaultWidth = 900;
     private const int ScrollbackLines = 300;
     private static readonly Size MinSize = new(320, 70);
     /// <summary>每句字幕下面的间距（LineView 的下边距）。</summary>
@@ -85,13 +84,12 @@ public sealed class OverlayWindow : Window
     {
         Width = 4,
         CornerRadius = new CornerRadius(2),
-        Background = new SolidColorBrush(Color.FromArgb(0x73, 0xFF, 0xFF, 0xFF)),
         HorizontalAlignment = HorizontalAlignment.Right,
         VerticalAlignment = VerticalAlignment.Top,
         IsHitTestVisible = false,
         Visibility = Visibility.Collapsed,
     };
-    private readonly TextBlock placeholder = new() { TextWrapping = TextWrapping.Wrap, Opacity = 0.7, Foreground = Brushes.White };
+    private readonly TextBlock placeholder = new() { TextWrapping = TextWrapping.Wrap, Opacity = 0.7 };
     /// <summary>
     /// “正在说”（与 macOS 的 liveFooter 相同）：滚动区下面每个正在说的音源一行，至少占一行高，它的变化不会把上面的字幕往上推；
     /// 没有文字时也占着这一行，滚动区的高度不变。“两者”模式下两个音源同时在说时有两行。
@@ -111,11 +109,30 @@ public sealed class OverlayWindow : Window
     };
     private readonly StackPanel toolbarButtons = new() { Orientation = Orientation.Horizontal };
     private readonly Border toolbar;
+    /// <summary>鼠标停在快捷按钮上时立刻显示的名字（与 macOS 相同）。</summary>
+    private readonly InstantTip tips;
+    private Button? runButton;
+    private Button? recordButton;
+    private Button? sourceButton;
+    private Button? assistantButton;
+    /// <summary>没开始时字幕中间的“开始翻译”按钮（与 macOS 相同），下面一行是音源和语言，出错时是原因。</summary>
+    private readonly Grid startLayer = new();
+    private readonly Border startDim = new() { CornerRadius = new CornerRadius(14), IsHitTestVisible = false };
+    private Button? startButton;
+    private readonly StackPanel startContent = new() { Orientation = Orientation.Horizontal };
+    /// <summary>不接收鼠标：按在这行字上也是拖动字幕。</summary>
+    private readonly TextBlock startDetails = new()
+    {
+        FontSize = 11,
+        TextTrimming = TextTrimming.CharacterEllipsis,
+        HorizontalAlignment = HorizontalAlignment.Center,
+        Margin = new Thickness(18, 8, 18, 0),
+        IsHitTestVisible = false,
+    };
+    private string startSignature = "";
     /// <summary>锁定后鼠标移到字幕上时右上角的锁，点一下解锁。第一次用到时才创建。</summary>
     private LockBadgeWindow? lockBadge;
     private readonly Button backToLive;
-    private Button? runButton;
-    private Button? hideButton;
     private readonly DispatcherTimer topmostTimer;
     /// <summary>
     /// 要一直在字幕上面的窗口（打开着的 AI 助手面板），由托盘程序设置。定时提到最上层时先提字幕、再提它：
@@ -125,7 +142,7 @@ public sealed class OverlayWindow : Window
     /// <summary>锁定后窗口收不到鼠标事件（MouseEnter 不再触发）：改为定时看鼠标在不在字幕上。</summary>
     private readonly DispatcherTimer lockedHoverTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     /// <summary>
-    /// 正在显示的菜单（“⋯”或状态条上的模型菜单）。打开着时快捷按钮不消失，鼠标移到菜单上、离开字幕也一样（macOS 的 menuOpen）。
+    /// 正在显示的菜单（音源或状态条上的模型菜单）。打开着时快捷按钮不消失，鼠标移到菜单上、离开字幕也一样（macOS 的 menuOpen）。
     /// </summary>
     private ContextMenu? openMenu;
     private bool hovering;
@@ -154,12 +171,17 @@ public sealed class OverlayWindow : Window
         Focusable = false;
         UseLayoutRounding = true;
 
-        linesPanel.Effect = TextShadow();
+        linesPanel.SetResourceReference(EffectProperty, OverlayPalette.Shadow);
+        placeholder.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg);
+        scrollThumb.SetResourceReference(Border.BackgroundProperty, OverlayPalette.Fg45);
+        // 浅色外观下白底叠在白色网页上看不出边缘，加一圈很淡的描边（与 macOS 相同）。
+        panel.BorderThickness = new Thickness(1);
+        panel.SetResourceReference(Border.BorderBrushProperty, OverlayPalette.Fg08);
         linesPanel.Children.Add(placeholder);
         scroller.Content = linesPanel;
         scrollArea.Children.Add(scroller);
         scrollArea.Children.Add(scrollThumb);
-        liveRows.Effect = TextShadow();
+        liveRows.SetResourceReference(EffectProperty, OverlayPalette.Shadow);
         liveFooter.Child = liveRows;
         // 宽度变了，“正在说”能放下的字数也变了。
         liveFooter.SizeChanged += (_, e) =>
@@ -168,7 +190,7 @@ public sealed class OverlayWindow : Window
         };
 
         // 从下往上：状态条、麦克风提示、“正在说”，剩下的是字幕滚动区。
-        statusBar = new StatusBarView(el => OpenMenu(actions.ModelMenu(), el, PlacementMode.Top));
+        statusBar = new StatusBarView(el => OpenMenu(actions.ModelMenu(), el, PlacementMode.Top, () => statusBar!.ResetEngineHover()));
         DockPanel.SetDock(statusBar, Dock.Bottom);
         layout.Children.Add(statusBar);
         microphoneNotice = BuildMicrophoneNotice();
@@ -179,18 +201,23 @@ public sealed class OverlayWindow : Window
         layout.Children.Add(scrollArea);
         panel.Child = layout;
         root.Children.Add(panel);
+        BuildStartButton();
+        root.Children.Add(startLayer);
 
         toolbar = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(0x8C, 0, 0, 0)),
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(15),
             Padding = new Thickness(4),
             Margin = new Thickness(6),
+            BorderThickness = new Thickness(1),
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Top,
             Visibility = Visibility.Collapsed,
             Child = toolbarButtons,
         };
+        toolbar.SetResourceReference(Border.BackgroundProperty, OverlayPalette.Bg80);
+        toolbar.SetResourceReference(Border.BorderBrushProperty, OverlayPalette.Fg10);
+        tips = new InstantTip(root);
         BuildToolbar();
         root.Children.Add(toolbar);
 
@@ -200,7 +227,7 @@ public sealed class OverlayWindow : Window
         backToLive.FontSize = 12;
         backToLive.FontWeight = FontWeights.SemiBold;
         backToLive.Padding = new Thickness(10, 4, 10, 4);
-        backToLive.Background = new SolidColorBrush(Color.FromArgb(0xB3, 0, 0, 0));
+        backToLive.SetResourceReference(BackgroundProperty, OverlayPalette.Bg70);
         backToLive.HorizontalAlignment = HorizontalAlignment.Right;
         backToLive.VerticalAlignment = VerticalAlignment.Bottom;
         backToLive.Margin = new Thickness(0, 0, 24, 30);
@@ -247,10 +274,9 @@ public sealed class OverlayWindow : Window
         Loaded += (_, _) => RestorePosition();
 
         controller.Changed += RequestRender;
-        settingsService.Changed += change =>
-        {
-            if (change.HasFlag(SettingsChange.Appearance) || change.HasFlag(SettingsChange.Translation)) ApplySettings();
-        };
+        settingsService.Changed += OnSettingsChanged;
+        // 外观变了：字幕背景按新的颜色和不透明度重画（其他颜色由资源自动换）。
+        OverlayPalette.Changed += ApplySettings;
 
         // 全屏视频等其他置顶窗口出现后，定期把字幕重新提到最上层（不激活），再把 AI 助手提到字幕上面。
         // 只用这一个计时器：两个窗口各自定时提会轮流盖住对方。锁归字幕窗口所有，系统让它总在字幕上面，不用另外提。
@@ -261,13 +287,22 @@ public sealed class OverlayWindow : Window
             if (!IsVisible || SystemDialogs.IsOpen) return;
             BringToTop(this);
             if (KeepAbove is { IsVisible: true } above) BringToTop(above);
+            // 用 LiveSub 时设置、模型服务等窗口在字幕和 AI 助手上面（与 macOS 相同）。
+            WindowLevels.Update();
         };
         topmostTimer.Start();
 
         ApplySettings();
-        var work = SystemParameters.WorkArea;
-        Left = work.Left + (work.Width - Width) / 2;
-        Top = work.Bottom - 190;
+        var (left, top) = OverlayLayout.TopRight(ToScreenRect(SystemParameters.WorkArea), Width);
+        Left = left;
+        Top = top;
+    }
+
+    private void OnSettingsChanged(SettingsChange change)
+    {
+        if (change.HasFlag(SettingsChange.Appearance) || change.HasFlag(SettingsChange.Translation)) ApplySettings();
+        // 录音、AI 助手开关等不影响布局，只更新快捷按钮。
+        else RequestRender();
     }
 
     // MARK: - 窗口样式
@@ -329,7 +364,7 @@ public sealed class OverlayWindow : Window
             return;
         }
         // 点一下解锁：和托盘菜单里取消“锁定字幕”一样。
-        lockBadge ??= new LockBadgeWindow(toolbar.Background, actions.Lock) { Owner = this };
+        lockBadge ??= new LockBadgeWindow(actions.Lock) { Owner = this };
         // 放在快捷按钮的位置（右上角，边距 6）。
         lockBadge.Left = Left + ActualWidth - 6 - lockBadge.Width;
         lockBadge.Top = Top + 6;
@@ -343,6 +378,9 @@ public sealed class OverlayWindow : Window
         RequestRender();
     }
 
+    /// <summary>不改设置的状态变了（例如打开、收起 AI 助手）：更新快捷按钮。</summary>
+    public void Refresh() => RequestRender();
+
     /// <summary>提到置顶窗口的最上层，不激活。</summary>
     private static void BringToTop(Window window) => NativeMethods.SetWindowPos(window.Handle(), NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
         NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
@@ -351,7 +389,7 @@ public sealed class OverlayWindow : Window
 
     private void ApplySettings()
     {
-        panel.Background = new SolidColorBrush(Color.FromArgb((byte)Math.Round(Math.Clamp(S.BackgroundOpacity, 0, 1) * 255), 0, 0, 0));
+        panel.Background = OverlayPalette.BgBrush(S.BackgroundOpacity);
         Width = Math.Max(MinSize.Width, S.OverlayWidth);
         Height = Math.Max(MinSize.Height, S.OverlayHeight > 0 ? S.OverlayHeight : AutoHeight());
         placeholder.FontSize = S.SourceFontSize;
@@ -384,9 +422,6 @@ public sealed class OverlayWindow : Window
     private double LiveFooterHeight() => SourceLineHeight() + 6;
 
     private static double LineSpacing(FontFamily font) => font.LineSpacing > 1 ? font.LineSpacing : 1.33;
-
-    private static DropShadowEffect TextShadow() =>
-        new() { Color = Colors.Black, Opacity = 0.6, BlurRadius = 3, ShadowDepth = 1, Direction = 270 };
 
     // MARK: - 渲染
 
@@ -442,30 +477,22 @@ public sealed class OverlayWindow : Window
         var notice = controller.MicrophoneNotice;
         microphoneNotice.Visibility = notice is null ? Visibility.Collapsed : Visibility.Visible;
         microphoneNoticeText.Text = notice ?? "";
-        placeholder.Visibility = visible.Count == 0 && live.Count == 0 && notice is null ? Visibility.Visible : Visibility.Collapsed;
-        placeholder.Text = controller.IsRunning
-            ? S.AudioSource switch
-            {
-                // 写明在听哪里的声音：新用户默认听的是系统声音，对着麦克风说话不会出字幕。
-                AudioSourceMode.Microphone => Strings.Overlay_ListeningMicrophone,
-                AudioSourceMode.Both => Strings.Overlay_ListeningBoth,
-                _ => Strings.Overlay_ListeningSystem,
-            }
-            : Strings.Format(Strings.Overlay_Ready, Strings.AppName, controller.Status);
+        // 没开始时中间是“开始翻译”按钮，这里不再写一遍（与 macOS 相同）。
+        placeholder.Visibility = controller.IsRunning && visible.Count == 0 && live.Count == 0 && notice is null
+            ? Visibility.Visible : Visibility.Collapsed;
+        placeholder.Text = S.AudioSource switch
+        {
+            // 写明在听哪里的声音：对着麦克风说话、音源却只选了系统音频时不会出字幕。
+            AudioSourceMode.Microphone => Strings.Overlay_ListeningMicrophone,
+            AudioSourceMode.Both => Strings.Overlay_ListeningBoth,
+            _ => Strings.Overlay_ListeningSystem,
+        };
+        UpdateStartButton(visible.Count > 0);
 
         bool showStatus = S.ShowStatusBar && controller.IsRunning;
         statusBar.Visibility = showStatus ? Visibility.Visible : Visibility.Collapsed;
         if (showStatus) statusBar.Update(controller);
-        if (runButton is not null)
-        {
-            bool active = controller.IsRunning || controller.IsStarting;
-            runButton.Content = active ? "\uE769" : "\uE768";
-            runButton.ToolTip = active ? Strings.Tool_Stop : Strings.Tool_Start;
-        }
-        if (hideButton is not null)
-        {
-            hideButton.ToolTip = HotKeys.Text(S.HotKey) is { } key ? Strings.Format(Strings.Tool_Hide, key) : Strings.Tool_HideNoKey;
-        }
+        UpdateToolButtons();
 
         if (atBottom)
         {
@@ -488,24 +515,29 @@ public sealed class OverlayWindow : Window
         }
     }
 
-    /// <summary>音源标签（与 macOS 相同）：10 号中等粗细的字，半透明白色胶囊底。</summary>
-    private static Border SourceTag(string text) => new()
+    /// <summary>音源标签（与 macOS 相同）：10 号中等粗细的字，半透明胶囊底。</summary>
+    private static Border SourceTag(string text)
     {
-        Background = TagBackground,
-        CornerRadius = new CornerRadius(7),
-        Padding = new Thickness(5, 1, 5, 1),
-        Margin = new Thickness(0, 0, 6, 0),
-        VerticalAlignment = VerticalAlignment.Center,
-        Child = new TextBlock
+        var label = new TextBlock
         {
             Text = text,
             FontFamily = TagFont,
             FontSize = 10,
             FontWeight = FontWeights.Medium,
             FontStyle = FontStyles.Normal,
-            Foreground = TagForeground,
-        },
-    };
+        };
+        label.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg80);
+        var tag = new Border
+        {
+            CornerRadius = new CornerRadius(7),
+            Padding = new Thickness(5, 1, 5, 1),
+            Margin = new Thickness(0, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = label,
+        };
+        tag.SetResourceReference(Border.BackgroundProperty, OverlayPalette.Fg18);
+        return tag;
+    }
 
     private static void FadeIn(FrameworkElement element)
     {
@@ -562,7 +594,7 @@ public sealed class OverlayWindow : Window
         open.FontSize = 12;
         open.FontWeight = FontWeights.SemiBold;
         open.Padding = new Thickness(10, 4, 10, 4);
-        open.Background = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+        open.SetResourceReference(BackgroundProperty, OverlayPalette.Fg18);
         open.Margin = new Thickness(12, 0, 0, 0);
         open.VerticalAlignment = VerticalAlignment.Center;
         var row = new DockPanel { LastChildFill = true };
@@ -574,43 +606,86 @@ public sealed class OverlayWindow : Window
 
     // MARK: - 快捷按钮和菜单
 
-    /// <summary>与 macOS 相同的四个：开始/停止、锁定、“⋯”菜单、收起。不常用的操作放在“⋯”菜单里。</summary>
+    /// <summary>
+    /// 与 macOS 相同的七个：开始/停止、录音、锁定、音源（菜单）、AI 助手、设置、退出。字幕一直在最上层，没有“置顶”开关；
+    /// 字幕记录在设置 › 记录里；收起字幕用快捷键或托盘菜单。鼠标停在按钮上立刻在下面显示它的名字（名字随状态变）。
+    /// </summary>
     private void BuildToolbar()
     {
-        runButton = IconButton("\uE768", Strings.Tool_Start, actions.ToggleRunning); // Play
-        toolbarButtons.Children.Add(runButton);
-        toolbarButtons.Children.Add(IconButton("\uE785", Strings.Tool_Lock, actions.Lock)); // Unlock：没锁定时显示开口的锁
-        Button? more = null;
-        more = IconButton("\uE712", Strings.Tool_More, () => ShowMoreMenu(more!)); // More
-        toolbarButtons.Children.Add(more);
-        hideButton = IconButton("\uE921", Strings.Tool_HideNoKey, actions.Hide); // ChromeMinimize
-        toolbarButtons.Children.Add(hideButton);
+        runButton = ToolButton("\uE768", () => controller.IsRunning || controller.IsStarting ? Strings.Tool_Stop : Strings.Tool_Start,
+            actions.ToggleRunning); // Play / Pause
+        // 录音：打开后，字幕运行期间把听到的声音存进记录文件夹（和字幕记录同名）。
+        recordButton = ToolButton("\uE7C8", () => controller.RecordButtonOn ? Strings.Tool_StopRecording : Strings.Tool_Record, actions.ToggleRecording);
+        // 没锁定时显示开口的锁（锁定后右上角是闭合的锁，见 LockBadgeWindow）。
+        var lockButton = ToolButton("\uE785", () => Strings.Tool_Lock, actions.Lock);
+        sourceButton = ToolButton("", () => Strings.Format(Strings.Tool_Source, S.AudioSource.Title()), () => ShowSourceMenu(sourceButton!));
+        assistantButton = ToolButton("\u2728", () => S.AssistantVisible ? Strings.Menu_HideAssistant : Strings.Menu_ShowAssistant,
+            actions.ToggleAssistant);
+        assistantButton.FontFamily = SymbolFont;
+        var settings = ToolButton("\uE713", () => Strings.Tool_Settings, actions.ShowSettings); // Setting
+        var quit = ToolButton("\uE711", () => Strings.Format(Strings.Tool_Quit, Strings.AppName), actions.Quit); // Cancel
+        foreach (var b in new[] { runButton, recordButton, lockButton, sourceButton, assistantButton, settings, quit })
+        {
+            toolbarButtons.Children.Add(b);
+        }
+        UpdateToolButtons();
     }
 
-    /// <summary>“⋯”菜单（与 macOS 相同）：显示内容、字幕记录、AI 助手、设置。往回看最近几句在字幕上滚动即可，不另设菜单项。</summary>
-    private void ShowMoreMenu(FrameworkElement anchor)
+    /// <summary>快捷按钮跟着状态变：开始/停止、录音时变红、音源的图标、AI 助手打开时变黄（浅色外观为橙色）。</summary>
+    private void UpdateToolButtons()
+    {
+        if (runButton is null || recordButton is null || sourceButton is null || assistantButton is null) return;
+        runButton.Content = controller.IsRunning || controller.IsStarting ? "\uE769" : "\uE768";
+        // 按实际是否在录：录音出错停下时不再显示成红色。
+        SetTint(recordButton, controller.RecordButtonOn ? OverlayPalette.Red : null);
+        SetTint(assistantButton, S.AssistantVisible ? OverlayPalette.AssistantTint : null);
+        if (sourceButton.Tag is not AudioSourceMode shown || shown != S.AudioSource)
+        {
+            sourceButton.Tag = S.AudioSource;
+            sourceButton.Content = SourceIcon(S.AudioSource);
+        }
+        tips.Refresh();
+    }
+
+    /// <summary>按钮的颜色：<paramref name="tint"/> 为 null 时用前景色（随外观变）。</summary>
+    private static void SetTint(Button button, Brush? tint)
+    {
+        if (tint is null) button.SetResourceReference(ForegroundProperty, OverlayPalette.Fg);
+        else button.Foreground = tint;
+    }
+
+    /// <summary>音源的图标：麦克风、扬声器；“两者”时两个小图标并排（相当于 macOS 的 waveform.badge.mic）。</summary>
+    private static object SourceIcon(AudioSourceMode mode)
+    {
+        if (mode != AudioSourceMode.Both) return mode == AudioSourceMode.Microphone ? "\uE720" : "\uE767"; // Microphone / Volume
+        var both = new StackPanel { Orientation = Orientation.Horizontal };
+        both.Children.Add(new TextBlock { Text = "\uE720", FontFamily = IconFont, FontSize = 9 });
+        both.Children.Add(new TextBlock { Text = "\uE767", FontFamily = IconFont, FontSize = 9, Margin = new Thickness(1, 0, 0, 0) });
+        return both;
+    }
+
+    /// <summary>音源菜单：麦克风、系统音频、两者（当前的打勾）。</summary>
+    private void ShowSourceMenu(FrameworkElement anchor)
     {
         var menu = new ContextMenu();
-        var display = new MenuItem { Header = new TextBlock { Text = Strings.Menu_Display } };
-        foreach (var (mode, title) in AppShell.DisplayModes)
+        foreach (var (mode, title, _) in AppShell.AudioSources)
         {
-            display.Items.Add(PopupMenus.Item(title, () => actions.SelectDisplayMode(mode), S.DisplayMode == mode));
+            menu.Items.Add(PopupMenus.Item(title, () => actions.SelectAudioSource(mode), S.AudioSource == mode));
         }
-        menu.Items.Add(display);
-        menu.Items.Add(PopupMenus.Item(Strings.Menu_History, actions.ShowHistory));
-        menu.Items.Add(PopupMenus.Item(S.AssistantVisible ? Strings.Menu_HideAssistant : Strings.Menu_ShowAssistant, actions.ToggleAssistant));
-        menu.Items.Add(new Separator());
-        menu.Items.Add(PopupMenus.Item(Strings.Menu_Settings, actions.ShowSettings));
         OpenMenu(menu, anchor, PlacementMode.Bottom);
     }
 
     /// <summary>弹出字幕上的菜单（不激活字幕窗口），记下它开着：这期间快捷按钮不消失。</summary>
-    private void OpenMenu(ContextMenu menu, FrameworkElement anchor, PlacementMode placement)
+    /// <param name="onClosed">菜单关上时（例如复原状态条上模型名的悬停颜色）。</param>
+    private void OpenMenu(ContextMenu menu, FrameworkElement anchor, PlacementMode placement, Action? onClosed = null)
     {
         if (openMenu is not null) openMenu.IsOpen = false;
         openMenu = menu;
+        // 菜单打开期间收不到鼠标移出，先收起按钮的名字。
+        tips.Hide();
         menu.Closed += (_, _) =>
         {
+            onClosed?.Invoke();
             if (!ReferenceEquals(openMenu, menu)) return;
             openMenu = null;
             // 菜单开着时鼠标可能离开了字幕（MouseLeave 已经来过），也可能停在字幕上。
@@ -621,50 +696,184 @@ public sealed class OverlayWindow : Window
         UpdateToolbar();
     }
 
-    private static Button IconButton(string glyph, string tip, Action action)
+    /// <summary>快捷按钮：鼠标停在上面时底下出现浅色圆形、图标略微放大（与 macOS 相同），并立刻显示名字。</summary>
+    private Button ToolButton(string glyph, Func<string> name, Action action)
+    {
+        var b = IconButton(glyph, action);
+        b.RenderTransformOrigin = new Point(0.5, 0.5);
+        var scale = new ScaleTransform(1, 1);
+        b.RenderTransform = scale;
+        b.MouseEnter += (_, _) => scale.ScaleX = scale.ScaleY = 1.15;
+        b.MouseLeave += (_, _) => scale.ScaleX = scale.ScaleY = 1;
+        tips.Attach(b, name);
+        return b;
+    }
+
+    private static Button IconButton(string glyph, Action action)
     {
         var b = FlatButton(glyph, action);
         b.FontFamily = IconFont;
         b.FontSize = 12;
+        b.FontWeight = FontWeights.SemiBold;
         b.Width = 26;
-        b.Height = 22;
-        b.ToolTip = tip;
+        b.Height = 24;
+        b.Margin = new Thickness(1, 0, 1, 0);
         return b;
     }
 
-    /// <summary>无边框的扁平按钮；鼠标移上去时背景稍亮。</summary>
+    /// <summary>
+    /// 无边框的扁平按钮；鼠标移上去时盖上一层淡淡的前景色（不改按钮自己的底色，底色可以引用外观资源）。
+    /// 文字颜色默认是前景色，跟着外观变。
+    /// </summary>
     internal static Button FlatButton(string content, Action? action)
     {
         var border = new FrameworkElementFactory(typeof(Border));
         border.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
         border.SetBinding(Border.BackgroundProperty, new Binding(nameof(Background)) { RelativeSource = RelativeSource.TemplatedParent });
-        border.SetBinding(Border.PaddingProperty, new Binding(nameof(Padding)) { RelativeSource = RelativeSource.TemplatedParent });
+        var hover = new FrameworkElementFactory(typeof(Border), "hover");
+        hover.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
+        hover.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        hover.SetBinding(Border.PaddingProperty, new Binding(nameof(Padding)) { RelativeSource = RelativeSource.TemplatedParent });
         var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
         presenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
         presenter.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
-        border.AppendChild(presenter);
+        hover.AppendChild(presenter);
+        border.AppendChild(hover);
+        var template = new ControlTemplate(typeof(Button)) { VisualTree = border };
+        var trigger = new Trigger { Property = IsMouseOverProperty, Value = true };
+        trigger.Setters.Add(new Setter(Border.BackgroundProperty, new DynamicResourceExtension(OverlayPalette.Fg15), "hover"));
+        template.Triggers.Add(trigger);
 
-        var normal = Brushes.Transparent;
         var b = new Button
         {
             Content = content,
-            Foreground = Brushes.White,
-            Background = normal,
+            Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
             Focusable = false,
             Cursor = Cursors.Hand,
-            Template = new ControlTemplate(typeof(Button)) { VisualTree = border },
+            Template = template,
         };
-        Brush? resting = null;
-        b.MouseEnter += (_, _) =>
-        {
-            resting = b.Background;
-            b.Background = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
-        };
-        b.MouseLeave += (_, _) => b.Background = resting ?? normal;
+        b.SetResourceReference(ForegroundProperty, OverlayPalette.Fg);
         if (action is not null) b.Click += (_, _) => action();
         return b;
+    }
+
+    /// <summary>
+    /// “开始翻译”（与 macOS 相同）：醒目的胶囊按钮，鼠标停上去略微放大；准备中（下载、加载识别模型）时不可点。
+    /// 下面一行是音源和语言；上次出错时是原因；准备中时是进度。上次的字幕压暗，开始按钮更醒目。
+    /// 空白处不接收鼠标：按住那里照样拖动字幕。
+    /// </summary>
+    private void BuildStartButton()
+    {
+        var pill = new FrameworkElementFactory(typeof(Border));
+        pill.SetValue(Border.CornerRadiusProperty, new CornerRadius(22));
+        pill.SetValue(Border.PaddingProperty, new Thickness(22, 10, 22, 10));
+        pill.SetBinding(Border.BackgroundProperty, new Binding(nameof(Background)) { RelativeSource = RelativeSource.TemplatedParent });
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        pill.AppendChild(presenter);
+        var shadow = new DropShadowEffect { Color = Colors.Black, Opacity = 0.35, BlurRadius = 8, ShadowDepth = 2, Direction = 270 };
+        var scale = new ScaleTransform(1, 1);
+        var button = new Button
+        {
+            Content = startContent,
+            BorderThickness = new Thickness(0),
+            Focusable = false,
+            Cursor = Cursors.Hand,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Template = new ControlTemplate(typeof(Button)) { VisualTree = pill },
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Effect = shadow,
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = scale,
+        };
+        button.SetResourceReference(BackgroundProperty, OverlayPalette.Fg);
+        button.SetResourceReference(ForegroundProperty, OverlayPalette.Bg);
+        button.MouseEnter += (_, _) =>
+        {
+            if (!button.IsEnabled) return;
+            scale.ScaleX = scale.ScaleY = 1.06;
+            shadow.Opacity = 0.5;
+            shadow.BlurRadius = 12;
+        };
+        button.MouseLeave += (_, _) =>
+        {
+            scale.ScaleX = scale.ScaleY = 1;
+            shadow.Opacity = 0.35;
+            shadow.BlurRadius = 8;
+        };
+        button.Click += (_, _) => actions.ToggleRunning();
+        startButton = button;
+
+        var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Center };
+        center.Children.Add(button);
+        center.Children.Add(startDetails);
+        startLayer.Children.Add(startDim);
+        startLayer.Children.Add(center);
+    }
+
+    /// <param name="hasLines">已经有字幕：压暗它们，开始按钮更醒目。</param>
+    private void UpdateStartButton(bool hasLines)
+    {
+        bool show = !controller.IsRunning;
+        startLayer.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (!show || startButton is null) return;
+        bool starting = controller.IsStarting;
+        startButton.IsEnabled = !starting;
+        startDim.Background = hasLines ? OverlayPalette.BgBrush(0.5) : null;
+        var src = Strings.IsChinese ? S.Source.DisplayName : S.Source.EnglishName;
+        var dst = Strings.IsChinese ? S.Target.DisplayName : S.Target.EnglishName;
+        // 准备中显示进度（下载识别模型可能要一会儿），上次出错时显示原因，否则显示音源和语言。
+        var (details, error) = starting ? (controller.Status, false)
+            : controller.Alert is { } alert ? (alert, true)
+            : ($"{S.AudioSource.Title()} · {src} → {dst}", false);
+        startDetails.Text = details;
+        if (error) startDetails.Foreground = Orange;
+        else startDetails.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg60);
+        var signature = starting ? "starting" : "start";
+        if (signature == startSignature) return;
+        startSignature = signature;
+        startContent.Children.Clear();
+        if (starting)
+        {
+            startContent.Children.Add(Spinner());
+            startContent.Children.Add(new TextBlock { Text = Strings.Status_Preparing, Margin = new Thickness(8, 0, 0, 0) });
+        }
+        else
+        {
+            startContent.Children.Add(new TextBlock
+            {
+                Text = "\uE768", // Play
+                FontFamily = IconFont,
+                FontSize = 14,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 1, 8, 0),
+            });
+            startContent.Children.Add(new TextBlock { Text = Strings.Overlay_StartTranslating });
+        }
+    }
+
+    /// <summary>转圈的小圆弧（准备中）。只在显示着的时候转：一直运行的动画会让 WPF 不停地重绘。</summary>
+    private static FrameworkElement Spinner()
+    {
+        var spinner = new System.Windows.Shapes.Ellipse
+        {
+            Width = 14,
+            Height = 14,
+            StrokeThickness = 2,
+            StrokeDashArray = new DoubleCollection { 9, 7 },
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        spinner.SetResourceReference(System.Windows.Shapes.Shape.StrokeProperty, OverlayPalette.Bg);
+        var rotate = new RotateTransform();
+        spinner.RenderTransform = rotate;
+        spinner.Loaded += (_, _) => rotate.BeginAnimation(RotateTransform.AngleProperty,
+            new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1)) { RepeatBehavior = RepeatBehavior.Forever });
+        spinner.Unloaded += (_, _) => rotate.BeginAnimation(RotateTransform.AngleProperty, null);
+        return spinner;
     }
 
     // MARK: - 拖动
@@ -812,17 +1021,27 @@ public sealed class OverlayWindow : Window
 
     // MARK: - 位置
 
-    /// <summary>改了字号、句数等设置使窗口变高时，底边不动、向上生长（字幕贴着屏幕底部）。</summary>
+    /// <summary>
+    /// 改了字号、句数等设置使窗口变高时，底边不动、向上生长；超出屏幕时推回屏幕内
+    /// （默认放在右上角，往上长就会出界；与 macOS 的 fit 相同）。
+    /// </summary>
     private void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (!positioned || resizing is not null || !e.HeightChanged || e.PreviousSize.Height <= 0) return;
         Top += e.PreviousSize.Height - e.NewSize.Height;
+        KeepOnScreen();
+    }
+
+    private void KeepOnScreen()
+    {
+        var (left, top) = OverlayLayout.Clamp(new ScreenRect(Left, Top, ActualWidth, ActualHeight), ToScreenRect(CurrentWorkArea()));
+        if (Math.Abs(left - Left) > 0.5) Left = left;
+        if (Math.Abs(top - Top) > 0.5) Top = top;
     }
 
     private void RestorePosition()
     {
-        var work = SystemParameters.WorkArea;
-        double height = ActualHeight > 0 ? ActualHeight : 120;
+        double height = ActualHeight > 0 ? ActualHeight : Height;
         if (S.OverlayLeft is { } left && S.OverlayBottom is { } bottom
             && left > SystemParameters.VirtualScreenLeft - 50
             && left < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 50
@@ -834,20 +1053,54 @@ public sealed class OverlayWindow : Window
         }
         else
         {
-            Left = work.Left + (work.Width - Width) / 2;
-            Top = work.Bottom - 70 - height;
+            // 默认放在主屏幕右上角，离边缘留一点距离（与 macOS 相同）。
+            PlaceTopRightOfPrimary();
         }
         positioned = true;
     }
 
-    public void ResetPosition()
+    /// <summary>
+    /// 放到主屏幕右上角，按物理像素放：几块屏幕缩放不同、字幕在另一块屏幕上时，Left、Top 按字幕当前所在屏幕的缩放换算，
+    /// 用主屏幕的坐标去设会放偏（甚至放到别的屏幕上）。先把窗口挪到主屏幕上（系统按主屏幕的缩放调整它的大小），排好版再放到右上角。
+    /// </summary>
+    /// <param name="moved">已经挪过一次（窗口大部分落在旁边的屏幕上时，系统仍认为它在那块屏幕上：不再挪，直接放）。</param>
+    private void PlaceTopRightOfPrimary(bool moved = false)
     {
-        S.OverlayLeft = null;
-        S.OverlayBottom = null;
-        S.OverlayWidth = DefaultWidth;
-        S.OverlayHeight = 0;
-        settingsService.Commit(SettingsChange.Appearance);
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, RestorePosition);
+        var hwnd = this.Handle();
+        var primary = NativeMethods.PrimaryMonitor();
+        if (hwnd == IntPtr.Zero || NativeMethods.WorkArea(primary) is not { } work)
+        {
+            (Left, Top) = OverlayLayout.TopRight(ToScreenRect(SystemParameters.WorkArea), Width);
+            return;
+        }
+        const uint flags = NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE;
+        if (!moved && NativeMethods.MonitorFromWindow(hwnd, NativeMethods.MONITOR_DEFAULTTONEAREST) != primary)
+        {
+            NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, work.Left, work.Top, 0, 0, flags);
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => PlaceTopRightOfPrimary(moved: true));
+            return;
+        }
+        if (!NativeMethods.GetWindowRect(hwnd, out var r)) return;
+        double scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var (left, top) = OverlayLayout.TopRight(new ScreenRect(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top),
+            r.Right - r.Left, OverlayLayout.Margin * scale);
+        NativeMethods.SetWindowPos(hwnd, IntPtr.Zero, (int)Math.Round(left), (int)Math.Round(top), 0, 0, flags);
+    }
+
+    /// <summary>“恢复默认”：调用方已经把大小、位置设回默认（<see cref="AppSettings.ResetOverlay"/>）；等按新的大小排好版再放回右上角。</summary>
+    public void ResetPosition() => Dispatcher.BeginInvoke(DispatcherPriority.Loaded, RestorePosition);
+
+    private static ScreenRect ToScreenRect(Rect r) => new(r.Left, r.Top, r.Width, r.Height);
+
+    /// <summary>字幕所在屏幕的工作区（与设备无关的像素）。</summary>
+    private Rect CurrentWorkArea()
+    {
+        var hwnd = this.Handle();
+        var screen = hwnd != IntPtr.Zero ? System.Windows.Forms.Screen.FromHandle(hwnd) : System.Windows.Forms.Screen.PrimaryScreen;
+        if (screen is null) return SystemParameters.WorkArea;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var r = screen.WorkingArea;
+        return new Rect(r.Left / dpi.DpiScaleX, r.Top / dpi.DpiScaleY, r.Width / dpi.DpiScaleX, r.Height / dpi.DpiScaleY);
     }
 
     private void SavePosition()
@@ -864,6 +1117,8 @@ public sealed class OverlayWindow : Window
         if (openMenu is not null) openMenu.IsOpen = false;
         lockBadge?.Close();
         controller.Changed -= RequestRender;
+        settingsService.Changed -= OnSettingsChanged;
+        OverlayPalette.Changed -= ApplySettings;
         base.OnClosed(e);
     }
 
@@ -881,7 +1136,7 @@ public sealed class OverlayWindow : Window
     /// </summary>
     private sealed class LockBadgeWindow : Window
     {
-        public LockBadgeWindow(Brush background, Action onUnlock)
+        public LockBadgeWindow(Action onUnlock)
         {
             WindowStyle = WindowStyle.None;
             AllowsTransparency = true;
@@ -891,16 +1146,21 @@ public sealed class OverlayWindow : Window
             ShowInTaskbar = false;
             ShowActivated = false;
             Focusable = false;
-            // 和快捷按钮一样大：按钮 26×22，加上 4 的内边距。
-            Width = 34;
-            Height = 30;
-            Content = new Border
+            // 和快捷按钮一样大：按钮 26×24，加上 4 的内边距和 1 的描边。
+            Width = 38;
+            Height = 34;
+            var unlock = IconButton("\uE72E", onUnlock); // Lock
+            unlock.ToolTip = Strings.Tool_Unlock;
+            var badge = new Border
             {
-                Background = background,
-                CornerRadius = new CornerRadius(12),
+                CornerRadius = new CornerRadius(15),
                 Padding = new Thickness(4),
-                Child = IconButton("\uE72E", Strings.Tool_Unlock, onUnlock), // Lock
+                BorderThickness = new Thickness(1),
+                Child = unlock,
             };
+            badge.SetResourceReference(Border.BackgroundProperty, OverlayPalette.Bg80);
+            badge.SetResourceReference(Border.BorderBrushProperty, OverlayPalette.Fg10);
+            Content = badge;
             SourceInitialized += (_, _) =>
             {
                 var hwnd = this.Handle();
@@ -913,8 +1173,8 @@ public sealed class OverlayWindow : Window
     /// <summary>一句字幕：原文（小字）+ 译文（大字）。</summary>
     private sealed class LineView : StackPanel
     {
-        private readonly TextBlock source = new() { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.White };
-        private readonly TextBlock translation = new() { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.White, Margin = new Thickness(0, 2, 0, 0) };
+        private readonly TextBlock source = new() { TextWrapping = TextWrapping.Wrap };
+        private readonly TextBlock translation = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
         private string signature = "";
         private string sourceSignature = "";
 
@@ -923,6 +1183,7 @@ public sealed class OverlayWindow : Window
         public LineView()
         {
             Margin = new Thickness(0, 0, 0, 8);
+            source.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg);
             Children.Add(source);
             Children.Add(translation);
         }
@@ -949,7 +1210,9 @@ public sealed class OverlayWindow : Window
                 {
                     source.Inlines.Add(new InlineUIContainer(SourceTag(label)) { BaselineAlignment = BaselineAlignment.Center });
                 }
-                source.Inlines.Add(new Run(line.Source) { Foreground = mode == DisplayMode.SourceOnly ? Brushes.White : SourceDim });
+                var run = new Run(line.Source);
+                run.SetResourceReference(TextElement.ForegroundProperty, mode == DisplayMode.SourceOnly ? OverlayPalette.Fg : OverlayPalette.Fg72);
+                source.Inlines.Add(run);
                 source.FontSize = sourceSize;
                 source.FontFamily = sourceFont;
             }
@@ -959,14 +1222,14 @@ public sealed class OverlayWindow : Window
             switch (line.State)
             {
                 case LineState.Waiting:
-                    Set(translation, "…", translationSize, FontWeights.Normal, 0.4, Brushes.White);
+                    Set(translation, "…", translationSize, FontWeights.Normal, 0.4, null);
                     break;
                 case LineState.Translating:
-                    Set(translation, line.Translation.Length == 0 ? "…" : line.Translation, translationSize, FontWeights.SemiBold, 0.85, Brushes.White);
+                    Set(translation, line.Translation.Length == 0 ? "…" : line.Translation, translationSize, FontWeights.SemiBold, 0.85, null);
                     break;
                 case LineState.Done:
                     var text = line.Note is null ? line.Translation : $"{line.Translation}  · {line.Note}";
-                    Set(translation, text, translationSize, FontWeights.SemiBold, 1, Brushes.White);
+                    Set(translation, text, translationSize, FontWeights.SemiBold, 1, null);
                     if (line.Translation.Length == 0) translation.Visibility = Visibility.Collapsed;
                     break;
                 case LineState.Failed:
@@ -975,13 +1238,15 @@ public sealed class OverlayWindow : Window
             }
         }
 
-        private static void Set(TextBlock t, string text, double size, FontWeight weight, double opacity, Brush brush)
+        /// <param name="brush">null 时用前景色（随外观变）。</param>
+        private static void Set(TextBlock t, string text, double size, FontWeight weight, double opacity, Brush? brush)
         {
             t.Text = text;
             t.FontSize = size;
             t.FontWeight = weight;
             t.Opacity = opacity;
-            t.Foreground = brush;
+            if (brush is null) t.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg);
+            else t.Foreground = brush;
         }
     }
 
@@ -1029,7 +1294,7 @@ public sealed class OverlayWindow : Window
         {
             TextWrapping = TextWrapping.NoWrap;
             FontStyle = FontStyles.Italic;
-            Foreground = Brushes.White;
+            SetResourceReference(ForegroundProperty, OverlayPalette.Fg);
             Opacity = 0.55;
             VerticalAlignment = VerticalAlignment.Top;
         }
@@ -1050,31 +1315,48 @@ public sealed class OverlayWindow : Window
         }
     }
 
-    /// <summary>一小行状态：有没有收到声音、识别是否清晰、翻译模型、待翻译句数、最近的错误。</summary>
+    /// <summary>一小行状态：有没有收到声音、识别是否清晰、是否在录音、翻译模型、待翻译句数、最近的错误。</summary>
     private sealed class StatusBarView : DockPanel
     {
         private readonly Rectangle[] meter = new Rectangle[5];
         private readonly TextBlock sound = new();
         private readonly TextBlock recognition = new();
+        private readonly TextBlock recordingSeparator = Separator();
+        /// <summary>正在录音（与 macOS 相同：红色的录音图标和“录音”）。</summary>
+        private readonly StackPanel recording = new() { Orientation = Orientation.Horizontal };
         private readonly TextBlock engine = new();
-        /// <summary>模型名和后面的小箭头（与 macOS 相同），点击弹出模型菜单。背景透明，两者之间的空隙也能点。</summary>
-        private readonly StackPanel engineButton = new()
+        private readonly TextBlock chevron = new()
         {
-            Orientation = Orientation.Horizontal,
+            Text = "\uE70D", // ChevronDown
+            FontFamily = IconFont,
+            FontSize = 8,
+            Margin = new Thickness(3, 1, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        /// <summary>
+        /// 模型名和后面的小箭头（与 macOS 相同），点击弹出模型菜单；鼠标移上去文字变蓝、底下出现淡淡的胶囊
+        /// （和 AI 助手的模型菜单一样，2026-10-22 用户要求）。背景透明，两者之间的空隙也能点。
+        /// </summary>
+        private readonly Border engineButton = new()
+        {
             Background = Brushes.Transparent,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(6, 1, 6, 1),
+            Margin = new Thickness(-6, 0, -6, 0),
             Cursor = Cursors.Hand,
             ToolTip = Strings.Tip_ModelMenu,
         };
         private readonly TextBlock backlogSeparator = Separator();
         private readonly TextBlock backlog = new() { Foreground = Orange };
         private readonly TextBlock alert = new() { Foreground = Orange, TextTrimming = TextTrimming.CharacterEllipsis, TextAlignment = TextAlignment.Right, Margin = new Thickness(12, 0, 0, 0) };
+        private bool menuOpen;
 
         public StatusBarView(Action<FrameworkElement> onEngineClick)
         {
             Margin = new Thickness(18, 0, 18, 7);
             LastChildFill = true;
             TextElement.SetFontSize(this, 11);
-            TextElement.SetForeground(this, new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)));
+            SetResourceReference(TextElement.ForegroundProperty, OverlayPalette.Fg60);
 
             var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             var meterPanel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 6, 2) };
@@ -1087,28 +1369,64 @@ public sealed class OverlayWindow : Window
             left.Children.Add(sound);
             left.Children.Add(Separator());
             left.Children.Add(recognition);
-            left.Children.Add(Separator());
-            engineButton.Children.Add(engine);
-            engineButton.Children.Add(new TextBlock
+            recording.Children.Add(new TextBlock
             {
-                Text = "\uE70D", // ChevronDown
+                Text = "\uE7C8", // Record
                 FontFamily = IconFont,
-                FontSize = 8,
-                Margin = new Thickness(3, 1, 0, 0),
+                FontSize = 10,
+                Foreground = OverlayPalette.Red,
+                Margin = new Thickness(0, 1, 4, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             });
+            recording.Children.Add(new TextBlock { Text = Strings.Overlay_Recording, Foreground = OverlayPalette.Red });
+            left.Children.Add(recordingSeparator);
+            left.Children.Add(recording);
+            left.Children.Add(Separator());
+            var engineContent = new StackPanel { Orientation = Orientation.Horizontal };
+            engineContent.Children.Add(engine);
+            engineContent.Children.Add(chevron);
+            engineButton.Child = engineContent;
             left.Children.Add(engineButton);
             left.Children.Add(backlogSeparator);
             left.Children.Add(backlog);
+            engineButton.MouseEnter += (_, _) => SetEngineHover(true);
+            engineButton.MouseLeave += (_, _) =>
+            {
+                // 菜单打开期间鼠标在菜单上，保持蓝色，关掉菜单时复原（ResetEngineHover）。
+                if (!menuOpen) SetEngineHover(false);
+            };
             engineButton.MouseLeftButtonUp += (_, e) =>
             {
                 e.Handled = true;
+                menuOpen = true;
                 onEngineClick(engineButton);
             };
             engineButton.MouseLeftButtonDown += (_, e) => e.Handled = true; // 不要触发拖动
             SetDock(left, Dock.Left);
             Children.Add(left);
             Children.Add(alert);
+        }
+
+        /// <summary>模型菜单关上了：鼠标已经不在模型名上时复原颜色。</summary>
+        public void ResetEngineHover()
+        {
+            menuOpen = false;
+            SetEngineHover(engineButton.IsMouseOver);
+        }
+
+        private void SetEngineHover(bool hovered)
+        {
+            if (hovered)
+            {
+                engine.Foreground = chevron.Foreground = OverlayPalette.Blue;
+                engineButton.Background = OverlayPalette.FgBrush(0.12);
+            }
+            else
+            {
+                engine.ClearValue(TextBlock.ForegroundProperty);
+                chevron.ClearValue(TextBlock.ForegroundProperty);
+                engineButton.Background = Brushes.Transparent;
+            }
         }
 
         private static TextBlock Separator() => new() { Text = "·", Margin = new Thickness(6, 0, 6, 0), Opacity = 0.6 };
@@ -1118,18 +1436,21 @@ public sealed class OverlayWindow : Window
             bool hasInput = c.SilentFor < 3; // 超过 3 秒没收到任何音频数据：采集断了（和“安静”不同）。
             for (int i = 0; i < meter.Length; i++)
             {
-                meter[i].Fill = i < c.InputLevel * 5 ? Green : new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+                if (i < c.InputLevel * 5) meter[i].Fill = Green;
+                else meter[i].SetResourceReference(System.Windows.Shapes.Shape.FillProperty, OverlayPalette.Fg20);
             }
             sound.Text = c.MicrophoneBlock != MicrophoneBlock.None ? Strings.Overlay_MicrophoneBlocked
                 : !hasInput ? Strings.Overlay_NoInput
                 : c.InputLevel > 0 ? Strings.Overlay_Receiving : Strings.Overlay_Quiet;
             if (hasInput && c.MicrophoneBlock == MicrophoneBlock.None) sound.ClearValue(TextBlock.ForegroundProperty);
             else sound.Foreground = Orange;
-            // 识别困难但没打开“自动纠正口音”时只提示，告诉用户在哪里打开。
+            // 识别困难但没打开“自动纠正口音”时只提示，告诉用户在哪里打开；打开了但没有能纠正的模型（用 Google 翻译、混元翻译，
+            // 本机又没有 Claude Code）时说明需要 Claude Code（与 macOS 相同）。
             (recognition.Text, recognition.ToolTip) = c.Correcting ? (Strings.Overlay_RecognitionCorrecting, Strings.Tip_RecognitionCorrecting)
-                : c.RecognitionDifficult ? (Strings.Overlay_RecognitionHard, Strings.Tip_RecognitionHard)
+                : c.RecognitionDifficult ? (Strings.Overlay_RecognitionHard, c.CorrectionUnavailable ? Strings.Tip_RecognitionNeedsClaude : Strings.Tip_RecognitionHard)
                 : (Strings.Overlay_RecognitionClear, Strings.Tip_RecognitionClear);
-            engine.Text = c.EngineName;
+            recording.Visibility = recordingSeparator.Visibility = c.IsRecording ? Visibility.Visible : Visibility.Collapsed;
+            engine.Text = c.EngineLabel;
             int waiting = c.Book.Backlog;
             backlog.Text = waiting > 0 ? Strings.Format(Strings.Overlay_Backlog, waiting) : "";
             backlog.Visibility = backlogSeparator.Visibility = waiting > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -1161,7 +1482,7 @@ internal static class TextFonts
     }
 }
 
-/// <summary>字幕、状态条和 AI 助手上弹出的菜单（“⋯”、模型菜单）共用的做法。</summary>
+/// <summary>字幕、状态条和 AI 助手上弹出的菜单（音源、模型菜单）共用的做法。</summary>
 internal static class PopupMenus
 {
     /// <summary>菜单项。标题用 TextBlock 原样显示：Header 是字符串时下划线会被当成快捷键标记（模型名里常有 _）。</summary>

@@ -2,7 +2,12 @@ namespace LiveSub.Core.Chat;
 
 public enum ChatRole { User, Assistant }
 
-public sealed record ChatMessage(ChatRole Role, string Text);
+/// <param name="Attachments">随这条消息发送的图片和文件（只有 AI 助手的提问会带）；没有时为 null。</param>
+public sealed record ChatMessage(ChatRole Role, string Text, IReadOnlyList<ChatAttachment>? Attachments = null)
+{
+    /// <summary>有没有附件。</summary>
+    public bool HasAttachments => Attachments is { Count: > 0 };
+}
 
 /// <summary>出错的种类。界面按种类显示本地化的说明。</summary>
 public enum ChatErrorKind
@@ -63,7 +68,9 @@ public interface IChatSession : IDisposable
     void WarmUp();
 
     /// <param name="onPartial">收到逐步变长的完整回复文本（不是增量）。</param>
-    Task<string> RequestAsync(string newSessionMessage, string ongoingMessage, Action<string>? onPartial, CancellationToken cancellationToken);
+    /// <param name="attachments">随这次提问发送的图片和文件（AI 助手用；与 macOS 相同）。</param>
+    Task<string> RequestAsync(string newSessionMessage, string ongoingMessage, Action<string>? onPartial, CancellationToken cancellationToken,
+                              IReadOnlyList<ChatAttachment>? attachments = null);
 }
 
 /// <summary>一次流式请求：把整段对话发给提供方，逐段回调增量文本，返回完整回复。</summary>
@@ -104,7 +111,7 @@ public sealed class HistoryChatSession : IChatSession
     public void WarmUp() { }
 
     public async Task<string> RequestAsync(string newSessionMessage, string ongoingMessage, Action<string>? onPartial,
-                                           CancellationToken cancellationToken)
+                                           CancellationToken cancellationToken, IReadOnlyList<ChatAttachment>? attachments = null)
     {
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -115,7 +122,9 @@ public sealed class HistoryChatSession : IChatSession
                 TurnsInSession = 0;
             }
             var message = TurnsInSession == 0 ? newSessionMessage : ongoingMessage;
-            var messages = new List<ChatMessage>(history) { new(ChatRole.User, message) };
+            var question = new ChatMessage(ChatRole.User, message, attachments is { Count: > 0 } ? attachments : null);
+            // 历史里留着的附件加上这一问的，可能超过接口一次请求的上限：从最早的开始换成文字，这一问不动（与 macOS 相同）。
+            var messages = ChatAttachmentBudget.Compact([.. history, question]);
 
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, disposed.Token);
             linked.CancelAfter(timeout);
@@ -135,7 +144,10 @@ public sealed class HistoryChatSession : IChatSession
             }
             reply = reply.Trim();
             // 只有成功的一轮才记入历史；失败时历史不变，下次请求的对话仍然完整。
-            history.Add(new ChatMessage(ChatRole.User, message));
+            // 附件也留在历史里（与 macOS 相同）：之后追问“图里第二行是什么”时模型还看得到。
+            // 存的是换过的历史，下次不用再换一遍，也不会把已经换成文字的附件又发出去。
+            history.Clear();
+            history.AddRange(messages);
             history.Add(new ChatMessage(ChatRole.Assistant, reply));
             TurnsInSession += 1;
             return reply;

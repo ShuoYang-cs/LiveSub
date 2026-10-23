@@ -5,10 +5,10 @@ using LiveSub.Core.Chat;
 
 namespace LiveSub.App.Translation;
 
-/// <summary>模型菜单里的一项：显示名称，以及是不是当前选中的模型。</summary>
+/// <summary>模型菜单里的一项：服务名（具体模型在“模型服务”里选），以及是不是当前选中的模型。</summary>
 public sealed record ModelMenuItem(ModelChoice Choice, string Title, bool Selected);
 
-/// <summary>模型菜单里的一组（“云端模型”“本地模型”，菜单里是不可点的标题）。</summary>
+/// <summary>模型菜单里的一组（“基础”“云端模型”“本地模型”，菜单里是不可点的标题）。</summary>
 public sealed record ModelMenuGroup(string Title, IReadOnlyList<ModelMenuItem> Items);
 
 /// <summary>按所选模型创建会话（翻译、AI 助手、笔记）；列出可选模型；把错误转成给用户看的说明。</summary>
@@ -18,13 +18,15 @@ public static class TranslationEngines
     public static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
 
     /// <summary>
-    /// Claude Code → 长驻的 claude 进程；Anthropic 格式的服务 → 官方 SDK；OpenAI 兼容的服务 → HTTP 流式接口。
+    /// 大模型会话（翻译、AI 助手、笔记）：Claude Code → 长驻的 claude 进程；Anthropic 格式的服务 → 官方 SDK；
+    /// OpenAI 兼容的服务 → HTTP 流式接口。Google 翻译、混元翻译不是大模型，不能用在这里（翻译器见 SubtitleController）。
     /// </summary>
     /// <param name="maxTurns">一个会话最多几轮，之后换新会话（翻译 40 轮；AI 助手 10000 轮，相当于不换；笔记 1 轮）。</param>
     /// <param name="timeout">每次请求的超时（默认是翻译用的 25 秒）。</param>
     public static IChatSession Create(ModelChoice choice, AppSettings settings, SecretStore secrets, string systemPrompt,
                                       int maxTurns = ClaudeCli.MaxTurnsPerSession, TimeSpan? timeout = null)
     {
+        if (!choice.IsLanguageModel) throw new ChatProviderException(ChatErrorKind.Configuration, Strings.Error_NotLanguageModel);
         if (choice.Kind == ModelKind.ClaudeCode)
         {
             var launch = ClaudeLocator.Locate(settings.ClaudePath)
@@ -69,21 +71,29 @@ public static class TranslationEngines
         }
     }
 
-    /// <summary>托盘菜单、状态条菜单和设置里的翻译模型列表（分组，带当前选中的模型）。</summary>
-    public static List<ModelMenuGroup> TranslationMenu(AppSettings settings) => ModelMenu(settings, settings.TranslationModel);
+    /// <summary>托盘菜单、状态条菜单和设置里的翻译模型列表：基础、云端模型、本地模型三组，每家服务一项，带当前选中的模型。</summary>
+    public static List<ModelMenuGroup> TranslationMenu(AppSettings settings) =>
+        ModelMenu(settings, ModelPurpose.Translation, settings.TranslationModel);
 
-    /// <summary>AI 助手面板里的模型列表：分组与翻译模型相同，选中的是 AI 助手的模型。</summary>
-    public static List<ModelMenuGroup> AssistantMenu(AppSettings settings) => ModelMenu(settings, settings.AssistantModel);
+    /// <summary>AI 助手面板里的模型列表：云端模型、本地模型两组（没有只能翻译的 Google 翻译、混元翻译），选中的是 AI 助手的模型。</summary>
+    public static List<ModelMenuGroup> AssistantMenu(AppSettings settings) =>
+        ModelMenu(settings, ModelPurpose.Assistant, settings.AssistantModel);
 
-    private static List<ModelMenuGroup> ModelMenu(AppSettings settings, ModelChoice selected) =>
-        settings.ModelGroups().Select(g => new ModelMenuGroup(
-            g.Kind == ModelGroupKind.Local ? Strings.Group_Local : Strings.Group_Cloud,
-            g.Choices.Select(c => new ModelMenuItem(c, settings.DisplayName(c), c == selected)).ToList()))
+    private static List<ModelMenuGroup> ModelMenu(AppSettings settings, ModelPurpose purpose, ModelChoice selected) =>
+        settings.ModelGroups(purpose).Select(g => new ModelMenuGroup(
+            g.Kind switch
+            {
+                ModelGroupKind.Basic => Strings.Group_Basic,
+                ModelGroupKind.Local => Strings.Group_Local,
+                _ => Strings.Group_Cloud,
+            },
+            g.Choices.Select(c => new ModelMenuItem(c, settings.ServiceName(c), c == selected)).ToList()))
         .ToList();
 
     /// <summary>给用户看的错误说明。</summary>
     public static string Describe(Exception e) => e switch
     {
+        TranslatorException t => t.Message,
         ChatProviderException { Kind: ChatErrorKind.ClaudeNotFound } => Strings.Error_ClaudeNotFound,
         ChatProviderException { Kind: ChatErrorKind.NotLoggedIn } => Strings.Error_NotLoggedIn,
         ChatProviderException { Kind: ChatErrorKind.Unauthorized } c => Strings.Format(Strings.Error_Unauthorized, c.Detail),
@@ -91,6 +101,9 @@ public static class TranslationEngines
         ChatProviderException { Kind: ChatErrorKind.ProcessExited } c =>
             Strings.Format(Strings.Error_ProcessExited, c.Detail.Length == 0 ? Strings.Error_NoOutput : Shorten(c.Detail)),
         ChatProviderException { Kind: ChatErrorKind.Http } c => Strings.Format(Strings.Error_Http, c.StatusCode?.ToString() ?? "HTTP", Shorten(c.Detail)),
+        // .NET 的网络错误说明只有英文：按种类换成中英文的说明（原文在日志里）。
+        ChatProviderException { Kind: ChatErrorKind.Network, InnerException: HttpRequestException h } =>
+            Strings.Format(Strings.Error_Network, ErrorText.Network(h)),
         ChatProviderException { Kind: ChatErrorKind.Network } c => Strings.Format(Strings.Error_Network, Shorten(c.Detail)),
         ChatProviderException { Kind: ChatErrorKind.Refused } => Strings.Error_Refused,
         ChatProviderException { Kind: ChatErrorKind.Configuration } c => c.Detail,

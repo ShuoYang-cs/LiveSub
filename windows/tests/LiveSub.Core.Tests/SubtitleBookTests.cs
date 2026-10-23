@@ -15,6 +15,42 @@ public class SubtitleBookTests
     }
 
     [Fact]
+    public void PersistsInSubtitleOrderEvenWhenALaterLineFinishesFirst()
+    {
+        // 与 macOS 的 persist() 相同：两句同时翻译、后一句先翻完时，等前一句翻完了再一起按顺序写。
+        var book = BookWith("one.", "two.");
+        var first = book.DequeueMerged()!;
+        var second = book.DequeueMerged()!;
+        book.MarkTranslating(first.Id, T0);
+        book.MarkTranslating(second.Id, T0);
+        book.Finish(second.Id, "二", null, null, false, T0);
+        Assert.Empty(book.TakePersistable());
+        book.Fail(first.Id, T0);
+        Assert.Equal(["one.", "two."], book.TakePersistable().Select(l => l.Source));
+        Assert.Empty(book.TakePersistable());
+    }
+
+    [Fact]
+    public void TakeRemainingWritesTheRestOnceAndClearResetsTheCursor()
+    {
+        var book = BookWith("one.", "two.");
+        var first = book.DequeueMerged()!;
+        book.Finish(first.Id, "一", null, null, false, T0);
+        Assert.Single(book.TakePersistable());
+        Assert.Equal(["two."], book.TakeRemaining().Select(l => l.Source));
+        // 退出前已经只写了原文的句子，之后翻完了也不再写一遍。
+        var second = book.DequeueMerged()!;
+        book.Finish(second.Id, "二", null, null, false, T0);
+        Assert.Empty(book.TakePersistable());
+
+        book.Clear();
+        book.Enqueue(["three."], null, null, T0, T0);
+        var third = book.DequeueMerged()!;
+        book.Finish(third.Id, "三", null, null, false, T0);
+        Assert.Equal(["three."], book.TakePersistable().Select(l => l.Source));
+    }
+
+    [Fact]
     public void SingleQueuedLinesAreNotMerged()
     {
         var book = BookWith("one two three four.", "five six seven eight.");

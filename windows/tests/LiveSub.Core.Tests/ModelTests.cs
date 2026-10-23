@@ -6,60 +6,212 @@ namespace LiveSub.Core.Tests;
 
 public class ModelCatalogTests
 {
-    private static readonly ModelEndpoint DeepSeek = new()
+    private static readonly BasicEngineNames Names = new("Google 翻译", "混元翻译");
+
+    private static ModelEndpoint DeepSeek() => new()
     {
         Id = "ds", Name = "DeepSeek", BaseUrl = "https://api.deepseek.com/v1", Models = ["deepseek-chat", "deepseek-reasoner"],
     };
-    private static readonly ModelEndpoint Ollama = new() { Id = "ol", Name = "Ollama", BaseUrl = "http://localhost:11434/v1", Models = ["qwen3:8b"] };
-    private static readonly ModelEndpoint Empty = new() { Id = "em", Name = "OpenAI", BaseUrl = "https://api.openai.com/v1" };
+    private static ModelEndpoint Ollama() => new() { Id = "ol", Name = "Ollama", BaseUrl = "http://localhost:11434/v1", Models = ["qwen3:8b"] };
+    private static ModelEndpoint Empty() => new() { Id = "em", Name = "OpenAI", BaseUrl = "https://api.openai.com/v1" };
 
     private static readonly ModelChoice Haiku = ModelChoice.ClaudeCode("haiku");
     private static readonly ModelChoice Sonnet = ModelChoice.ClaudeCode("sonnet");
     private static readonly ModelChoice Opus = ModelChoice.ClaudeCode("opus");
 
     [Fact]
-    public void DefaultsAreHaikuForTranslationAndSonnetForAssistant()
+    public void DefaultsAreGoogleForTranslationAndSonnetForAssistant()
     {
-        Assert.Equal(Haiku, ModelCatalog.DefaultTranslation);
+        // 新用户默认 Google 翻译（与 macOS 相同）；AI 助手只能用大模型。
+        Assert.Equal(ModelChoice.Google, ModelCatalog.DefaultTranslation);
         Assert.Equal(Sonnet, ModelCatalog.DefaultAssistant);
+        Assert.Equal("haiku", ModelCatalog.DefaultClaudeModel(ModelPurpose.Translation));
+        Assert.Equal("sonnet", ModelCatalog.DefaultClaudeModel(ModelPurpose.Assistant));
+        Assert.False(ModelChoice.Google.IsLanguageModel);
+        Assert.False(ModelChoice.LocalModel.IsLanguageModel);
+        Assert.True(Haiku.IsLanguageModel);
+        Assert.True(ModelChoice.Endpoint("ds", "deepseek-chat").IsLanguageModel);
     }
 
     [Fact]
-    public void GroupsWithoutServicesAlwaysListOpus()
+    public void TranslationGroupsWithoutServices()
     {
-        // Opus 总是列在 Haiku、Sonnet 后面，没有单独的开关。
-        var groups = ModelCatalog.Groups([]);
+        // 基础一组是 Google 翻译；Claude 只列一项（用“翻译用”的型号）；本地一组总有混元翻译。
+        var groups = ModelCatalog.Groups(ModelPurpose.Translation, [], "opus");
+        Assert.Equal([ModelGroupKind.Basic, ModelGroupKind.Cloud, ModelGroupKind.Local], groups.Select(g => g.Kind));
+        Assert.Equal([ModelChoice.Google], groups[0].Choices);
+        Assert.Equal([Opus], groups[1].Choices);
+        Assert.Equal([ModelChoice.LocalModel], groups[2].Choices);
+    }
+
+    [Fact]
+    public void AssistantGroupsHaveNoTranslationOnlyEngines()
+    {
+        var groups = ModelCatalog.Groups(ModelPurpose.Assistant, [], "sonnet");
         var cloud = Assert.Single(groups);
         Assert.Equal(ModelGroupKind.Cloud, cloud.Kind);
-        Assert.Equal([Haiku, Sonnet, Opus], cloud.Choices);
+        Assert.Equal([Sonnet], cloud.Choices);
+
+        var withLocal = ModelCatalog.Groups(ModelPurpose.Assistant, [Ollama()], "sonnet");
+        Assert.Equal([ModelGroupKind.Cloud, ModelGroupKind.Local], withLocal.Select(g => g.Kind));
+        Assert.Equal([ModelChoice.Endpoint("ol", "qwen3:8b")], withLocal[1].Choices);
     }
 
     [Fact]
-    public void CloudServicesFollowClaudeAndLocalOnesGetTheirOwnGroup()
+    public void EachServiceIsListedOnceWithItsModelForThePurpose()
     {
-        var groups = ModelCatalog.Groups([Ollama, DeepSeek, Empty]);
-        Assert.Equal([ModelGroupKind.Cloud, ModelGroupKind.Local], groups.Select(g => g.Kind));
-        Assert.Equal([Haiku, Sonnet, Opus, ModelChoice.Endpoint("ds", "deepseek-chat"), ModelChoice.Endpoint("ds", "deepseek-reasoner")],
-                     groups[0].Choices);
-        Assert.Equal([ModelChoice.Endpoint("ol", "qwen3:8b")], groups[1].Choices);
+        var ds = DeepSeek();
+        ds.AssistantModel = "deepseek-reasoner";
+        IReadOnlyList<ModelEndpoint> endpoints = [Ollama(), ds, Empty()];
+        var translation = ModelCatalog.Groups(ModelPurpose.Translation, endpoints, "haiku");
+        // 没有模型的服务不列出；本地服务排在混元翻译后面。
+        Assert.Equal([Haiku, ModelChoice.Endpoint("ds", "deepseek-chat")], translation[1].Choices);
+        Assert.Equal([ModelChoice.LocalModel, ModelChoice.Endpoint("ol", "qwen3:8b")], translation[2].Choices);
+        var assistant = ModelCatalog.Groups(ModelPurpose.Assistant, endpoints, "sonnet");
+        Assert.Equal([Sonnet, ModelChoice.Endpoint("ds", "deepseek-reasoner")], assistant[0].Choices);
     }
 
     [Fact]
-    public void DisplayNames()
+    public void ModelForFallsBackToTheFirstModel()
     {
-        IReadOnlyList<ModelEndpoint> endpoints = [DeepSeek];
-        Assert.Equal("Claude Haiku", ModelCatalog.DisplayName(Haiku, endpoints));
-        Assert.Equal("Claude Opus", ModelCatalog.DisplayName(Opus, endpoints));
-        Assert.Equal("DeepSeek · deepseek-chat", ModelCatalog.DisplayName(ModelChoice.Endpoint("ds", "deepseek-chat"), endpoints));
+        var ds = DeepSeek();
+        Assert.Equal("deepseek-chat", ds.ModelFor(ModelPurpose.Translation));
+        ds.SetModel("deepseek-reasoner", ModelPurpose.Translation);
+        Assert.Equal("deepseek-reasoner", ds.TranslationModel);
+        Assert.Equal("deepseek-reasoner", ds.ModelFor(ModelPurpose.Translation));
+        Assert.Equal("deepseek-chat", ds.ModelFor(ModelPurpose.Assistant));
+        // 选的模型从列表里删掉了：用第一个。
+        ds.Models = ["deepseek-flash"];
+        Assert.Equal("deepseek-flash", ds.ModelFor(ModelPurpose.Translation));
+        Assert.Null(Empty().ModelFor(ModelPurpose.Translation));
+    }
+
+    [Fact]
+    public void DisplayAndServiceNames()
+    {
+        IReadOnlyList<ModelEndpoint> endpoints = [DeepSeek()];
+        Assert.Equal("Claude · Haiku", ModelCatalog.DisplayName(Haiku, endpoints, Names));
+        Assert.Equal("Claude · Opus", ModelCatalog.DisplayName(Opus, endpoints, Names));
+        Assert.Equal("DeepSeek · deepseek-chat", ModelCatalog.DisplayName(ModelChoice.Endpoint("ds", "deepseek-chat"), endpoints, Names));
+        Assert.Equal("Google 翻译", ModelCatalog.DisplayName(ModelChoice.Google, endpoints, Names));
+        Assert.Equal("混元翻译 · Hy-MT2 1.8B", ModelCatalog.DisplayName(ModelChoice.LocalModel, endpoints, Names));
         // 服务已删除：只显示模型名。
-        Assert.Equal("gpt-5", ModelCatalog.DisplayName(ModelChoice.Endpoint("gone", "gpt-5"), endpoints));
+        Assert.Equal("gpt-5", ModelCatalog.DisplayName(ModelChoice.Endpoint("gone", "gpt-5"), endpoints, Names));
+
+        // 菜单和列表上只写服务名。
+        Assert.Equal("Claude", ModelCatalog.ServiceName(Opus, endpoints, Names));
+        Assert.Equal("DeepSeek", ModelCatalog.ServiceName(ModelChoice.Endpoint("ds", "deepseek-reasoner"), endpoints, Names));
+        Assert.Equal("Google 翻译", ModelCatalog.ServiceName(ModelChoice.Google, endpoints, Names));
+        Assert.Equal("混元翻译", ModelCatalog.ServiceName(ModelChoice.LocalModel, endpoints, Names));
+        Assert.Equal("gpt-5", ModelCatalog.ServiceName(ModelChoice.Endpoint("gone", "gpt-5"), endpoints, Names));
+        Assert.Equal("Sonnet", ModelCatalog.ClaudeModelName("sonnet"));
+    }
+
+    [Fact]
+    public void OldChoicesAreAdoptedAsTheServicesModel()
+    {
+        // 旧设置里直接选过某家的某个模型：记成这家的“翻译用”，接着用原来的模型。
+        IReadOnlyList<ModelEndpoint> endpoints = [DeepSeek()];
+        Assert.True(ModelCatalog.Adopt(ModelChoice.Endpoint("ds", "deepseek-reasoner"), ModelPurpose.Translation, endpoints));
+        Assert.Equal("deepseek-reasoner", endpoints[0].TranslationModel);
+        Assert.Null(endpoints[0].AssistantModel);
+        // 已经是这家选的模型、服务不存在、不是模型服务：不改。
+        Assert.False(ModelCatalog.Adopt(ModelChoice.Endpoint("ds", "deepseek-reasoner"), ModelPurpose.Translation, endpoints));
+        Assert.False(ModelCatalog.Adopt(ModelChoice.Endpoint("ds", "deepseek-chat"), ModelPurpose.Assistant, endpoints));
+        Assert.False(ModelCatalog.Adopt(ModelChoice.Endpoint("gone", "x"), ModelPurpose.Assistant, endpoints));
+        Assert.False(ModelCatalog.Adopt(Opus, ModelPurpose.Translation, endpoints));
+    }
+
+    [Fact]
+    public void ChoicesMissingFromTheListAreAddedNotReplaced()
+    {
+        // 与 macOS 的 adopt 相同：正在用、但已经不在可用模型里的（获取列表时被挤掉、手动删过），加进列表接着用，不换成第一个。
+        IReadOnlyList<ModelEndpoint> endpoints = [DeepSeek()];
+        var before = endpoints[0].Models.ToList();
+        var choice = ModelChoice.Endpoint("ds", "gone-model");
+        Assert.True(ModelCatalog.Adopt(choice, ModelPurpose.Assistant, endpoints));
+        Assert.Equal([.. before, "gone-model"], endpoints[0].Models);
+        Assert.Equal("gone-model", endpoints[0].AssistantModel);
+        Assert.Equal(choice, ModelCatalog.Synced(choice, ModelPurpose.Assistant, endpoints));
+        // 再来一次不重复加。
+        Assert.False(ModelCatalog.Adopt(choice, ModelPurpose.Assistant, endpoints));
+        Assert.Equal(before.Count + 1, endpoints[0].Models.Count);
+    }
+
+    [Fact]
+    public void ChoicesFollowTheServicesModel()
+    {
+        IReadOnlyList<ModelEndpoint> endpoints = [DeepSeek()];
+        var choice = ModelChoice.Endpoint("ds", "deepseek-chat");
+        Assert.Equal(choice, ModelCatalog.Synced(choice, ModelPurpose.Translation, endpoints));
+        // 在“模型服务”里换了这家的“翻译用”：正在用这家的翻译跟着换，AI 助手不变。
+        endpoints[0].TranslationModel = "deepseek-reasoner";
+        Assert.Equal(ModelChoice.Endpoint("ds", "deepseek-reasoner"), ModelCatalog.Synced(choice, ModelPurpose.Translation, endpoints));
+        Assert.Equal(choice, ModelCatalog.Synced(choice, ModelPurpose.Assistant, endpoints));
+        // 删掉了正在用的模型：换成第一个。
+        endpoints[0].Models = ["deepseek-flash"];
+        Assert.Equal(ModelChoice.Endpoint("ds", "deepseek-flash"), ModelCatalog.Synced(choice, ModelPurpose.Assistant, endpoints));
+        // 一个模型都没有、服务删掉了、不是模型服务：保持原样。
+        endpoints[0].Models = [];
+        Assert.Null(ModelCatalog.Synced(choice, ModelPurpose.Translation, endpoints));
+        Assert.Null(ModelCatalog.Synced(ModelChoice.Endpoint("gone", "x"), ModelPurpose.Translation, endpoints));
+        Assert.Null(ModelCatalog.Synced(ModelChoice.Google, ModelPurpose.Translation, endpoints));
+    }
+
+    [Fact]
+    public void OldClaudeChoicesBecomeTheClaudeModel()
+    {
+        // 旧设置里直接选过 Claude Opus（没有“翻译用”的型号）：接着用 Opus；已经存过型号的用存的。
+        Assert.Equal("opus", ModelCatalog.AdoptClaudeModel("", Opus, ModelPurpose.Translation));
+        Assert.Equal("opus", ModelCatalog.AdoptClaudeModel(null, Opus, ModelPurpose.Assistant));
+        Assert.Equal("haiku", ModelCatalog.AdoptClaudeModel("haiku", Opus, ModelPurpose.Translation));
+        // 选的不是 Claude：用默认型号（翻译 Haiku，AI 助手 Sonnet）；存的型号被手改坏了也一样。
+        Assert.Equal("haiku", ModelCatalog.AdoptClaudeModel("", ModelChoice.Google, ModelPurpose.Translation));
+        Assert.Equal("sonnet", ModelCatalog.AdoptClaudeModel("gpt", ModelChoice.Endpoint("ds", "x"), ModelPurpose.Assistant));
+    }
+
+    [Fact]
+    public void OnlyModelChangedWithinTheSameService()
+    {
+        Assert.True(ModelCatalog.OnlyModelChanged(ModelChoice.Endpoint("ds", "a"), ModelChoice.Endpoint("ds", "b")));
+        Assert.False(ModelCatalog.OnlyModelChanged(ModelChoice.Endpoint("ds", "a"), ModelChoice.Endpoint("ds", "a")));
+        Assert.False(ModelCatalog.OnlyModelChanged(ModelChoice.Endpoint("ds", "a"), ModelChoice.Endpoint("qw", "a")));
+        Assert.False(ModelCatalog.OnlyModelChanged(ModelChoice.Google, ModelChoice.Endpoint("ds", "a")));
+        Assert.False(ModelCatalog.OnlyModelChanged(Haiku, Sonnet));
+    }
+
+    private static string Chinese(ChatEndpointPreset p) => p.ChineseName;
+
+    [Fact]
+    public void BuiltInServicesAreAddedInFrontWithFixedIds()
+    {
+        var saved = new List<ModelEndpoint> { Ollama() };
+        var all = ModelCatalog.WithBuiltInServices(saved, [], Chinese);
+        Assert.Equal(["OpenAI", "通义千问", "DeepSeek", "Kimi", "Grok", "Ollama"], all.Select(e => e.Name));
+        Assert.Equal("B0000001-0000-4000-8000-000000000002", all[1].Id);
+        Assert.Equal(["qwen-flash"], all[1].Models);
+        Assert.Equal("https://dashscope.aliyuncs.com/compatible-mode/v1", all[1].BaseUrl);
+        Assert.All(all.Take(5), e => Assert.True(ModelCatalog.IsBuiltIn(e.Id)));
+        Assert.False(ModelCatalog.IsBuiltIn("ol"));
+        // 再补一次不会重复（固定 Id）。
+        Assert.Equal(6, ModelCatalog.WithBuiltInServices(all, [], Chinese).Count);
+    }
+
+    [Fact]
+    public void DismissedOrAlreadyAddedBuiltInsAreNotAddedAgain()
+    {
+        // 删掉过的不补；自己加过同一个地址的（主机名相同，路径不同也算）不补。
+        var saved = new List<ModelEndpoint> { DeepSeek() };
+        var all = ModelCatalog.WithBuiltInServices(saved, ["B0000001-0000-4000-8000-000000000001"], p => p.Name);
+        Assert.Equal(["Qwen", "Kimi", "Grok", "DeepSeek"], all.Select(e => e.Name));
+        Assert.Equal("ds", all[^1].Id);
     }
 
     [Fact]
     public void DeletingAServiceFallsBackToDefaults()
     {
         var deepSeek = ModelChoice.Endpoint("ds", "deepseek-chat");
-        Assert.Equal(Haiku, ModelCatalog.WithoutEndpoint(deepSeek, "ds", ModelCatalog.DefaultTranslation));
+        Assert.Equal(ModelChoice.Google, ModelCatalog.WithoutEndpoint(deepSeek, "ds", ModelCatalog.DefaultTranslation));
         Assert.Equal(deepSeek, ModelCatalog.WithoutEndpoint(deepSeek, "other", ModelCatalog.DefaultTranslation));
         Assert.Equal(Opus, ModelCatalog.WithoutEndpoint(Opus, "ds", ModelCatalog.DefaultTranslation));
     }
@@ -89,7 +241,18 @@ public class ModelCatalogTests
         var json = JsonSerializer.Serialize(endpoint, options);
         Assert.Equal("""{"Kind":"Endpoint","Model":"deepseek-chat","EndpointId":"ds"}""", json);
         Assert.Equal(endpoint, JsonSerializer.Deserialize<ModelChoice>(json, options));
-        Assert.DoesNotContain("IsLocal", JsonSerializer.Serialize(DeepSeek, options));
+        Assert.Equal("""{"Kind":"Google","Model":""}""", JsonSerializer.Serialize(ModelChoice.Google, options));
+        Assert.Equal(ModelChoice.LocalModel, JsonSerializer.Deserialize<ModelChoice>("""{"Kind":"LocalModel","Model":""}""", options));
+
+        // 服务：没选过“翻译用”“AI 助手用”时不写这两项（旧设置文件读进来也是这样）。
+        var ds = DeepSeek();
+        var plain = JsonSerializer.Serialize(ds, options);
+        Assert.DoesNotContain("IsLocal", plain);
+        Assert.DoesNotContain("TranslationModel", plain);
+        ds.SetModel("deepseek-reasoner", ModelPurpose.Assistant);
+        var read = JsonSerializer.Deserialize<ModelEndpoint>(JsonSerializer.Serialize(ds, options), options)!;
+        Assert.Equal("deepseek-reasoner", read.AssistantModel);
+        Assert.Null(read.TranslationModel);
     }
 }
 
@@ -310,5 +473,27 @@ public class ModelMigrationTests
         Assert.Equal(4, (int)root["VisibleLines"]!);
         Assert.Equal("en-US", (string)root["SourceLanguage"]!);
         Assert.Equal(ModelChoice.Endpoint("p1", "deepseek-chat"), ModelMigration.Migrate(read, hasAnthropicKey: false).Translation);
+    }
+
+    [Fact]
+    public void UnmigratedSettingsDoNotKeepDefaultClaudeModels()
+    {
+        // secrets.bin 读不出来的那次运行，内存里的 Claude 型号是默认值（翻译 Haiku）；不能写进文件，
+        // 否则下次真正迁移时会当成用户选过的型号，盖过旧设置里的 Sonnet。
+        var legacy = """{"Engine":"ClaudeCode","ClaudeCodeModel":"sonnet"}""";
+        var current = """
+            {"TranslationModel":{"Kind":"ClaudeCode","Model":"haiku"},"Endpoints":[],"ClaudeTranslationModel":"haiku",
+             "ClaudeAssistantModel":"sonnet","DismissedBuiltIns":["B0000001-0000-4000-8000-000000000001"],"VisibleLines":4}
+            """;
+        var json = LegacyModelSettings.KeepUnmigrated(current, legacy);
+        var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+        Assert.False(root.ContainsKey("ClaudeTranslationModel"));
+        Assert.False(root.ContainsKey("ClaudeAssistantModel"));
+        Assert.False(root.ContainsKey("DismissedBuiltIns"));
+        Assert.Equal(4, (int)root["VisibleLines"]!);
+        // 下次启动真正迁移：文件里没有存过型号，接着用旧设置里的 Sonnet。
+        var translation = ModelMigration.Migrate(LegacyModelSettings.TryRead(json)!, hasAnthropicKey: false).Translation;
+        Assert.Equal(ModelChoice.ClaudeCode("sonnet"), translation);
+        Assert.Equal("sonnet", ModelCatalog.AdoptClaudeModel((string?)root["ClaudeTranslationModel"], translation, ModelPurpose.Translation));
     }
 }

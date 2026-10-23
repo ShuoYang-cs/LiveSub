@@ -106,6 +106,7 @@ public sealed class AppShell : IDisposable
     private SettingsWindow? settingsWindow;
     private ModelServicesWindow? modelServicesWindow;
     private HistoryWindow? historyWindow;
+    private RecordingsWindow? recordingsWindow;
     private DispatcherTimer? trayTimer;
 
     public SecretStore Secrets { get; }
@@ -134,14 +135,17 @@ public sealed class AppShell : IDisposable
 
     public void Start()
     {
+        // 先定好外观（字幕、AI 助手的颜色，设置类窗口的主题），再建窗口。
+        appliedAppearance = Settings.Current.Appearance;
+        Appearance.Apply(appliedAppearance);
         overlay = new OverlayWindow(Controller, Settings, new OverlayActions(
             ToggleRunning: ToggleRunning,
+            ToggleRecording: ToggleRecording,
             Lock: ToggleLock,
-            SelectDisplayMode: SelectDisplayMode,
-            ShowHistory: ShowHistory,
+            SelectAudioSource: SelectAudioSource,
             ToggleAssistant: ToggleAssistant,
             ShowSettings: ShowSettings,
-            Hide: HideOverlay,
+            Quit: Quit,
             ModelMenu: ModelMenu,
             OpenMicrophoneSettings: MicrophonePrivacy.OpenSettings));
         tray = new TrayIcon(this);
@@ -151,9 +155,16 @@ public sealed class AppShell : IDisposable
         trayTimer.Start();
 
         ApplyHotKey();
+        // 选了还没填 API 密钥的服务、还没下载的混元翻译：打开“模型服务”，滚到这一栏（与 macOS 相同）。
+        Settings.ModelNeedsSetup += ShowModelServices;
         Settings.Changed += _ =>
         {
             if (Settings.Current.HotKey != registeredHotKey) ApplyHotKey();
+            if (Settings.Current.Appearance != appliedAppearance)
+            {
+                appliedAppearance = Settings.Current.Appearance;
+                Appearance.Apply(appliedAppearance);
+            }
         };
         // secrets.bin 读不出来：这次运行不会写它（见 SecretStore.Unreadable），告诉用户密钥暂时不能用、也存不上。
         if (Secrets.Unreadable) Controller.ShowAlert(Strings.Error_SecretsUnreadable);
@@ -163,6 +174,7 @@ public sealed class AppShell : IDisposable
     }
 
     private HotKeyChoice? registeredHotKey;
+    private AppearanceMode appliedAppearance;
 
     /// <summary>按设置注册显示/隐藏字幕的快捷键（设置里改了会重新注册）。</summary>
     private void ApplyHotKey()
@@ -220,13 +232,15 @@ public sealed class AppShell : IDisposable
         Controller.Assistant.WarmUp();
     }
 
-    /// <summary>打开或收起 AI 助手（面板上的“收起”和字幕上的“⋯”菜单）。字幕隐藏着时只记下状态。</summary>
+    /// <summary>打开或收起 AI 助手（面板上的“收起”和字幕上的快捷按钮）。字幕隐藏着时只记下状态。</summary>
     public void ToggleAssistant()
     {
         var s = Settings.Current;
         s.AssistantVisible = !s.AssistantVisible;
         if (s.AssistantVisible && OverlayVisible) ShowAssistant();
         else assistantWindow?.Hide();
+        // 快捷按钮里的 AI 助手按钮跟着变色。
+        overlay?.Refresh();
     }
 
     /// <summary>托盘菜单里的“AI 助手”：字幕隐藏着时先把字幕显示出来。</summary>
@@ -244,6 +258,13 @@ public sealed class AppShell : IDisposable
         tray?.Update();
     }
 
+    /// <summary>录音按钮（快捷按钮和托盘菜单）：字幕运行中也可以随时打开或关掉。</summary>
+    public void ToggleRecording()
+    {
+        Controller.ToggleRecording();
+        tray?.Update();
+    }
+
     public void SelectAudioSource(AudioSourceMode mode)
     {
         if (Settings.Current.AudioSource == mode) return;
@@ -258,26 +279,22 @@ public sealed class AppShell : IDisposable
         Settings.Commit(SettingsChange.Translation);
     }
 
-    public void SelectDisplayMode(DisplayMode mode)
-    {
-        Settings.Current.DisplayMode = mode;
-        Settings.Commit(SettingsChange.Appearance);
-    }
-
     public void ToggleLock()
     {
         Settings.Current.ClickThrough = !Settings.Current.ClickThrough;
         Settings.Commit(SettingsChange.Appearance);
     }
 
-    /// <summary>字幕移回屏幕底部；AI 助手也忘掉拖到的位置，回到字幕旁边。</summary>
-    public void ResetOverlayPosition()
+    /// <summary>
+    /// 设置里的“恢复默认”（与 macOS 相同）：字幕恢复默认大小（面积是屏幕的 1/16、宽高比 3:1）、移回屏幕右上角；
+    /// AI 助手也忘掉拖到的位置，回到字幕旁边。
+    /// </summary>
+    public void ResetOverlay()
     {
+        Settings.Current.ResetOverlay();
+        Settings.Commit(SettingsChange.Appearance);
         ShowOverlay();
         overlay?.ResetPosition();
-        Settings.Current.AssistantLeft = null;
-        Settings.Current.AssistantTop = null;
-        Settings.Commit(SettingsChange.None);
         assistantWindow?.ResetPosition();
     }
 
@@ -301,7 +318,8 @@ public sealed class AppShell : IDisposable
         return menu;
     }
 
-    public void Export(SubtitleFileFormat format) => Controller.ExportSubtitles(format);
+    /// <param name="owner">点导出的窗口（字幕记录窗口）：保存对话框显示在它上面，不被设置类窗口挡住。</param>
+    public void Export(SubtitleFileFormat format, Window? owner = null) => Controller.ExportSubtitles(format, owner);
 
     public void GenerateNotes() => Controller.GenerateNotes();
 
@@ -309,12 +327,25 @@ public sealed class AppShell : IDisposable
     {
         if (historyWindow is null)
         {
-            historyWindow = new HistoryWindow(Controller, Settings);
+            historyWindow = new HistoryWindow(Controller, Settings, this);
             historyWindow.Closed += (_, _) => historyWindow = null;
         }
         historyWindow.Show();
         if (historyWindow.WindowState == WindowState.Minimized) historyWindow.WindowState = WindowState.Normal;
         historyWindow.Activate();
+    }
+
+    /// <summary>录音记录（设置 › 记录 › 录音记录，托盘菜单）。</summary>
+    public void ShowRecordings()
+    {
+        if (recordingsWindow is null)
+        {
+            recordingsWindow = new RecordingsWindow(Settings);
+            recordingsWindow.Closed += (_, _) => recordingsWindow = null;
+        }
+        recordingsWindow.Show();
+        if (recordingsWindow.WindowState == WindowState.Minimized) recordingsWindow.WindowState = WindowState.Normal;
+        recordingsWindow.Activate();
     }
 
     public void ShowSettings()
@@ -330,7 +361,10 @@ public sealed class AppShell : IDisposable
     }
 
     /// <summary>“模型服务”窗口：只开一个，已经打开时提到前面。</summary>
-    public void ShowModelServices()
+    public void ShowModelServices() => ShowModelServices(null);
+
+    /// <param name="focusServiceId">要滚到的服务（还没填 API 密钥、还没下载混元翻译时），并说明怎么开始用。</param>
+    public void ShowModelServices(string? focusServiceId)
     {
         if (modelServicesWindow is null)
         {
@@ -340,6 +374,7 @@ public sealed class AppShell : IDisposable
         modelServicesWindow.Show();
         if (modelServicesWindow.WindowState == WindowState.Minimized) modelServicesWindow.WindowState = WindowState.Normal;
         modelServicesWindow.Activate();
+        if (focusServiceId is not null) modelServicesWindow.FocusService(focusServiceId);
     }
 
     public async void NewSession()
@@ -412,9 +447,12 @@ public sealed class AppShell : IDisposable
 
     public void Dispose()
     {
+        Appearance.Shutdown();
         trayTimer?.Stop();
         hotKey?.Dispose();
         tray?.Dispose();
         Controller.Dispose();
+        // 正在下载混元翻译时取消（下了一半的临时文件下次重新下）。
+        LocalModelStore.Shared.Cancel();
     }
 }

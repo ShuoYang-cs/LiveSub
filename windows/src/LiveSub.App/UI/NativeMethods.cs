@@ -8,7 +8,11 @@ namespace LiveSub.App.UI;
 
 internal static partial class NativeMethods
 {
+    public const int GWL_STYLE = -16;
     public const int GWL_EXSTYLE = -20;
+    public const int WS_MAXIMIZEBOX = 0x00010000;
+    public const int WS_MINIMIZEBOX = 0x00020000;
+    public const int WS_EX_TOPMOST = 0x00000008;
     public const int WS_EX_TRANSPARENT = 0x00000020;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int WS_EX_LAYERED = 0x00080000;
@@ -24,7 +28,11 @@ internal static partial class NativeMethods
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOMOVE = 0x0002;
     public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_NOZORDER = 0x0004;
+    public const uint MONITOR_DEFAULTTOPRIMARY = 1;
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
     public static readonly IntPtr HWND_TOPMOST = new(-1);
+    public static readonly IntPtr HWND_NOTOPMOST = new(-2);
     public const int VK_LBUTTON = 0x01;
     public const int VK_RBUTTON = 0x02;
     public const int VK_MBUTTON = 0x04;
@@ -43,6 +51,15 @@ internal static partial class NativeMethods
         public int Top;
         public int Right;
         public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
     }
 
     [LibraryImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
@@ -84,6 +101,43 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll")]
     public static partial uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
+    [LibraryImport("user32.dll")]
+    public static partial IntPtr GetForegroundWindow();
+
+    [LibraryImport("user32.dll")]
+    public static partial IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+    [LibraryImport("user32.dll")]
+    public static partial IntPtr MonitorFromPoint(POINT point, uint flags);
+
+    [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+
+    /// <summary>这块屏幕的工作区（物理像素，不含任务栏）；拿不到时为 null。</summary>
+    public static RECT? WorkArea(IntPtr monitor)
+    {
+        if (monitor == IntPtr.Zero) return null;
+        var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        return GetMonitorInfo(monitor, ref info) ? info.rcWork : null;
+    }
+
+    /// <summary>主屏幕（任务栏通常在上面的那块；坐标原点所在的屏幕）。</summary>
+    public static IntPtr PrimaryMonitor() => MonitorFromPoint(new POINT(), MONITOR_DEFAULTTOPRIMARY);
+
+    /// <summary>系统的 ANSI 代码页（“非 Unicode 程序的语言”，中文 Windows 上是 936）。</summary>
+    [LibraryImport("kernel32.dll")]
+    public static partial uint GetACP();
+
+    /// <summary>前台窗口是本程序的（用户正在用 LiveSub 的设置、AI 助手等窗口）。</summary>
+    public static bool ForegroundIsOurs()
+    {
+        var hwnd = GetForegroundWindow();
+        if (hwnd == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(hwnd, out uint processId);
+        return processId == (uint)Environment.ProcessId;
+    }
+
     /// <summary>鼠标键正按在别的程序的窗口上（看的是物理按键，本程序不在前台时也能用）。</summary>
     public static bool MouseDownInOtherProcess()
     {
@@ -95,11 +149,18 @@ internal static partial class NativeMethods
         return processId != (uint)Environment.ProcessId;
     }
 
-    public static void SetExStyle(IntPtr hwnd, int add, int remove)
+    /// <summary>窗口实际在不在置顶层（看扩展样式，不看 WPF 的 Topmost 属性：插到置顶窗口下面时系统会把它带进置顶层）。</summary>
+    public static bool IsTopmost(IntPtr hwnd) => hwnd != IntPtr.Zero && (GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64() & WS_EX_TOPMOST) != 0;
+
+    public static void SetExStyle(IntPtr hwnd, int add, int remove) => ChangeStyle(hwnd, GWL_EXSTYLE, add, remove);
+
+    public static void SetStyle(IntPtr hwnd, int add, int remove) => ChangeStyle(hwnd, GWL_STYLE, add, remove);
+
+    private static void ChangeStyle(IntPtr hwnd, int index, int add, int remove)
     {
-        long style = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
+        long style = GetWindowLongPtr(hwnd, index).ToInt64();
         style = (style | (long)add) & ~(long)remove;
-        SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(style));
+        SetWindowLongPtr(hwnd, index, new IntPtr(style));
     }
 }
 

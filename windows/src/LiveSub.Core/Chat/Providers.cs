@@ -35,22 +35,66 @@ public sealed record AnthropicModelPolicy(bool DisableThinking, string? Effort)
     }
 }
 
+/// <summary>OpenAI 兼容请求里怎么关掉思考：不发参数、<c>thinking: {type: disabled}</c>，或 <c>enable_thinking: false</c>。</summary>
+public enum OpenAIThinking { Default, Disabled, EnableThinkingFalse }
+
 /// <summary>请求体构造（JSON 文本），便于单测与调试。</summary>
 public static class RequestBodies
 {
     private static readonly JsonWriterOptions Options = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    /// <summary>OpenAI 兼容 Chat Completions：<c>{model, messages:[{role:"system"},…], stream:true}</c>。</summary>
+    /// <summary>
+    /// OpenAI 兼容 Chat Completions：<c>{model, messages:[{role:"system"},…], stream:true}</c>，
+    /// 认得的服务再加上关掉思考的参数（<see cref="OpenAILatencySettings"/>）。
+    /// </summary>
     public static string OpenAIChat(string model, string systemPrompt, IReadOnlyList<ChatMessage> messages, bool stream = true) =>
         Write(w =>
         {
             w.WriteString("model", model);
             w.WriteStartArray("messages");
             WriteMessage(w, "system", systemPrompt);
-            foreach (var m in messages) WriteMessage(w, m.Role == ChatRole.User ? "user" : "assistant", m.Text);
+            foreach (var m in messages)
+            {
+                if (!m.HasAttachments)
+                {
+                    WriteMessage(w, Role(m), m.Text);
+                    continue;
+                }
+                // 带附件的提问（AI 助手）：图片用 data URL，PDF 和文档发文字（ChatContent）。
+                w.WriteStartObject();
+                w.WriteString("role", Role(m));
+                w.WritePropertyName("content");
+                ChatContent.WriteOpenAIContent(w, m.Text, m.Attachments);
+                w.WriteEndObject();
+            }
             w.WriteEndArray();
             w.WriteBoolean("stream", stream);
+            switch (OpenAILatencySettings(model))
+            {
+                case OpenAIThinking.Disabled:
+                    w.WriteStartObject("thinking");
+                    w.WriteString("type", "disabled");
+                    w.WriteEndObject();
+                    break;
+                case OpenAIThinking.EnableThinkingFalse:
+                    w.WriteBoolean("enable_thinking", false);
+                    break;
+            }
         });
+
+    /// <summary>
+    /// OpenAI 兼容服务里默认“思考”的模型：关掉，否则每句字幕要多等好几秒（与 macOS 的 ChatAPI.openAILatencySettings 相同）。
+    /// 参数不是 OpenAI 标准的，只给认得它的服务发（OpenAI 收到不认识的参数会返回 400）。2026-10-22 查的各家文档：
+    /// DeepSeek 的 deepseek-flash 默认开着思考；Kimi 只有 kimi-k2.6 能关（kimi-k3 不能关，kimi-k2.7-code 会拒绝）；
+    /// 通义千问（百炼兼容模式）用 enable_thinking。
+    /// </summary>
+    public static OpenAIThinking OpenAILatencySettings(string model)
+    {
+        var m = model.ToLowerInvariant();
+        if (m.StartsWith("deepseek", StringComparison.Ordinal) || m.StartsWith("kimi-k2.6", StringComparison.Ordinal)) return OpenAIThinking.Disabled;
+        if (m.StartsWith("qwen", StringComparison.Ordinal)) return OpenAIThinking.EnableThinkingFalse;
+        return OpenAIThinking.Default;
+    }
 
     /// <summary>Anthropic Messages API 请求体（按 <see cref="AnthropicModelPolicy"/> 设置 thinking / effort）。</summary>
     public static string AnthropicMessages(string model, string systemPrompt, IReadOnlyList<ChatMessage> messages,
@@ -62,7 +106,20 @@ public static class RequestBodies
             w.WriteNumber("max_tokens", maxTokens);
             w.WriteString("system", systemPrompt);
             w.WriteStartArray("messages");
-            foreach (var m in messages) WriteMessage(w, m.Role == ChatRole.User ? "user" : "assistant", m.Text);
+            foreach (var m in messages)
+            {
+                if (!m.HasAttachments)
+                {
+                    WriteMessage(w, Role(m), m.Text);
+                    continue;
+                }
+                // 带附件的提问：图片、PDF 是 content 块（与 Claude Code 的 stream-json 输入相同）。
+                w.WriteStartObject();
+                w.WriteString("role", Role(m));
+                w.WritePropertyName("content");
+                ChatContent.WriteAnthropicBlocks(w, m.Text, m.Attachments);
+                w.WriteEndObject();
+            }
             w.WriteEndArray();
             if (policy.DisableThinking)
             {
@@ -81,6 +138,8 @@ public static class RequestBodies
 
     /// <summary>字幕很短，但开着思考时思考内容也算在 max_tokens 里，留足余量。</summary>
     public const int AnthropicMaxTokens = 4096;
+
+    private static string Role(ChatMessage m) => m.Role == ChatRole.User ? "user" : "assistant";
 
     private static void WriteMessage(Utf8JsonWriter w, string role, string content)
     {

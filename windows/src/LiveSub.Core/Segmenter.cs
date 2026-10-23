@@ -16,8 +16,8 @@ public sealed class Segmenter
     {
         /// <summary>句子最少多少“单位”才单独送出（英文按单词，中日韩按每 2 个字算 1 个单位）。</summary>
         public int MinUnits { get; init; } = 4;
-        /// <summary>未完成句子的最大长度，超过就强制切分。</summary>
-        public int MaxUnits { get; init; } = 32;
+        /// <summary>未完成句子的最大长度，超过就强制切分（与 macOS 相同，2026-10-22 从 32 降到 24：一条字幕不要太长）。</summary>
+        public int MaxUnits { get; init; } = 24;
         /// <summary>距离上一次确认结果多久后，把剩余内容送出。</summary>
         public TimeSpan IdleFlush { get; init; } = TimeSpan.FromSeconds(1.6);
 
@@ -61,12 +61,22 @@ public sealed class Segmenter
         return FlushAll();
     }
 
+    /// <summary>全部送出；太长时同样在从句边界切成几条，字幕不会一条占满整个窗口（与 macOS 相同）。</summary>
     public List<string> FlushAll()
     {
         var rest = Pending.Trim();
         Pending = "";
         lastFinalAt = null;
-        return rest.Length == 0 ? [] : [rest];
+        var output = new List<string>();
+        while (Units(rest) > Settings.MaxUnits)
+        {
+            var (head, tail) = SplitLong(rest, Settings.MaxUnits);
+            if (head.Length == 0 || tail.Length == 0) break;
+            output.Add(head);
+            rest = tail;
+        }
+        if (rest.Length > 0) output.Add(rest);
+        return output;
     }
 
     // MARK: - 内部

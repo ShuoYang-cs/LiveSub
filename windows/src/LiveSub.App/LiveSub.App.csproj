@@ -31,6 +31,8 @@
     <PackageReference Include="Whisper.net" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
     <PackageReference Include="Anthropic" Version="12.58.0" />
+    <!-- AI 助手的 PDF 附件：发给 OpenAI 兼容服务时提取文字（Apache-2.0）。 -->
+    <PackageReference Include="PdfPig" Version="0.1.16" />
   </ItemGroup>
 
   <!-- 可选的显卡运行库：dotnet build -p:LiveSubGpu=vulkan（或 cuda）。默认只带处理器版本，安装包小。 -->

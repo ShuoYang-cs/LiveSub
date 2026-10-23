@@ -13,17 +13,15 @@
   <data name="Source_Both" xml:space="preserve"><value>Microphone and System Audio</value></data>
   <data name="Source_BothShort" xml:space="preserve"><value>Both</value></data>
   <data name="Menu_Model" xml:space="preserve"><value>Translation Model</value></data>
-  <data name="Menu_Display" xml:space="preserve"><value>Display</value></data>
   <data name="Display_Bilingual" xml:space="preserve"><value>Bilingual</value></data>
   <data name="Display_TranslationOnly" xml:space="preserve"><value>Translation Only</value></data>
   <data name="Display_SourceOnly" xml:space="preserve"><value>Original Only</value></data>
   <data name="Menu_ShowOverlay" xml:space="preserve"><value>Show Subtitles</value></data>
   <data name="Menu_HideOverlay" xml:space="preserve"><value>Hide Subtitles</value></data>
   <data name="Menu_Lock" xml:space="preserve"><value>Lock Subtitles</value></data>
-  <data name="Menu_ResetPosition" xml:space="preserve"><value>Move Subtitles to Bottom</value></data>
   <data name="Menu_Export" xml:space="preserve"><value>Export Subtitles</value></data>
   <data name="Menu_History" xml:space="preserve"><value>Transcript…</value></data>
-  <data name="Menu_NewSession" xml:space="preserve"><value>New Transcript</value></data>
+  <data name="Menu_NewSession" xml:space="preserve"><value>Start New Transcript</value></data>
   <data name="Menu_OpenFolder" xml:space="preserve"><value>Open Transcript Folder</value></data>
   <data name="Menu_Settings" xml:space="preserve"><value>Settings…</value></data>
   <data name="Menu_Quit" xml:space="preserve"><value>Quit</value></data>
@@ -39,13 +37,12 @@
   <data name="Status_Listening" xml:space="preserve"><value>Listening: {0} · {1} → {2} · {3}</value></data>
   <data name="Status_Stopped" xml:space="preserve"><value>Stopped</value></data>
   <data name="Status_NewSession" xml:space="preserve"><value>New transcript started</value></data>
-  <data name="Status_Filtered" xml:space="preserve"><value>{0} Chinese segments filtered</value></data>
+  <data name="Status_Filtered" xml:space="preserve"><value>{0} Chinese conversation segments filtered</value></data>
   <data name="Status_Exported" xml:space="preserve"><value>Subtitles exported: {0}</value></data>
   <data name="Status_StartFailed" xml:space="preserve"><value>Failed to start: {0}</value></data>
   <data name="Overlay_ListeningSystem" xml:space="preserve"><value>Listening to system audio…</value></data>
   <data name="Overlay_ListeningMicrophone" xml:space="preserve"><value>Listening to the microphone…</value></data>
   <data name="Overlay_ListeningBoth" xml:space="preserve"><value>Listening to the microphone and system audio…</value></data>
-  <data name="Overlay_Ready" xml:space="preserve"><value>{0} is ready · {1}</value></data>
   <data name="Overlay_TranslationFailed" xml:space="preserve"><value>Translation failed</value></data>
   <data name="Overlay_NoInput" xml:space="preserve"><value>No audio input</value></data>
   <data name="Overlay_Receiving" xml:space="preserve"><value>Receiving</value></data>
@@ -54,23 +51,20 @@
   <data name="Overlay_RecognitionClear" xml:space="preserve"><value>Clear recognition</value></data>
   <data name="Overlay_RecognitionCorrecting" xml:space="preserve"><value>Hard to recognize · Auto-correcting</value></data>
   <data name="Tip_RecognitionCorrecting" xml:space="preserve"><value>Recognition confidence is low. Misheard words are corrected automatically.</value></data>
-  <data name="Tip_RecognitionHard" xml:space="preserve"><value>Recognition confidence is low. You can turn on “Correct Accented Speech Automatically” in Settings › More.</value></data>
+  <data name="Tip_RecognitionHard" xml:space="preserve"><value>Recognition confidence is low. You can turn on “Correct Accented Speech Automatically” in Settings.</value></data>
   <data name="Tip_RecognitionClear" xml:space="preserve"><value>Recognition confidence is normal.</value></data>
   <data name="Overlay_Backlog" xml:space="preserve"><value>{0} waiting</value></data>
   <data name="Overlay_BackToLive" xml:space="preserve"><value>Back to Live</value></data>
-  <data name="Tip_ModelMenu" xml:space="preserve"><value>Click to change the translation model.</value></data>
+  <data name="Tip_ModelMenu" xml:space="preserve"><value>Change Translation Model</value></data>
   <data name="Tool_Start" xml:space="preserve"><value>Start</value></data>
   <data name="Tool_Stop" xml:space="preserve"><value>Stop</value></data>
-  <data name="Tool_Lock" xml:space="preserve"><value>Lock subtitles</value></data>
-  <data name="Tool_Unlock" xml:space="preserve"><value>Unlock subtitles</value></data>
-  <data name="Tool_More" xml:space="preserve"><value>More</value></data>
-  <data name="Tool_Hide" xml:space="preserve"><value>Hide subtitles. Press {0} to show them again.</value></data>
-  <data name="Tool_HideNoKey" xml:space="preserve"><value>Hide subtitles. Show them again from the tray menu.</value></data>
+  <data name="Tool_Lock" xml:space="preserve"><value>Lock Subtitles</value></data>
+  <data name="Tool_Unlock" xml:space="preserve"><value>Unlock Subtitles</value></data>
   <data name="Tip_Tray" xml:space="preserve"><value>{0} · {1}</value></data>
-  <data name="Error_ClaudeNotFound" xml:space="preserve"><value>The claude command was not found. Install Claude Code, or set the Claude path in Settings.</value></data>
+  <data name="Error_ClaudeNotFound" xml:space="preserve"><value>The claude command was not found. Install Claude Code, or set the Claude path in Model Services.</value></data>
   <data name="Error_NotLoggedIn" xml:space="preserve"><value>Claude Code is not signed in. Run claude in a terminal and enter /login.</value></data>
   <data name="Error_Unauthorized" xml:space="preserve"><value>The API key was rejected: {0}</value></data>
-  <data name="Error_MissingKey" xml:space="preserve"><value>Enter an API key for {0} in Model Services.</value></data>
+  <data name="Error_MissingKey" xml:space="preserve"><value>No API key for {0} yet. Add it in Model Services.</value></data>
   <data name="Error_EndpointMissing" xml:space="preserve"><value>The selected model service no longer exists. Choose another one in Model Services.</value></data>
   <data name="Error_InvalidBaseUrl" xml:space="preserve"><value>Invalid base URL: {0}</value></data>
   <data name="Error_Timeout" xml:space="preserve"><value>Translation timed out.</value></data>
@@ -104,11 +98,10 @@
   <data name="Label_TargetLanguage" xml:space="preserve"><value>Subtitle Language</value></data>
   <data name="Label_AudioSource" xml:space="preserve"><value>Audio Source</value></data>
   <data name="Label_TranslationModel" xml:space="preserve"><value>Translation Model</value></data>
-  <data name="Tip_TranslationModel" xml:space="preserve"><value>For live subtitles, choose a fast model such as Claude Haiku; Opus is the most accurate but the slowest.</value></data>
-  <data name="ModelServices_None" xml:space="preserve"><value>Add your own API or a local model</value></data>
-  <data name="ModelServices_Count" xml:space="preserve"><value>{0} added</value></data>
+  <data name="Tip_TranslationModel" xml:space="preserve"><value>Fast models work best for live subtitles. Choose the specific model for each service in Model Services.</value></data>
+  <data name="ModelServices_None" xml:space="preserve"><value>Add an API key to use GPT, Qwen and more</value></data>
+  <data name="ModelServices_Count" xml:space="preserve"><value>{0} set up</value></data>
   <data name="Button_Manage" xml:space="preserve"><value>Manage…</value></data>
-  <data name="Label_Model" xml:space="preserve"><value>Model</value></data>
   <data name="Label_ClaudePath" xml:space="preserve"><value>Claude Path</value></data>
   <data name="Hint_ClaudePath" xml:space="preserve"><value>Find automatically</value></data>
   <data name="Tip_ClaudePath" xml:space="preserve"><value>Leave empty to find it automatically.</value></data>
@@ -117,7 +110,7 @@
   <data name="Button_Browse" xml:space="preserve"><value>Browse…</value></data>
   <data name="Button_Change" xml:space="preserve"><value>Change…</value></data>
   <data name="ModelServices_Title" xml:space="preserve"><value>Model Services</value></data>
-  <data name="ModelServices_Intro" xml:space="preserve"><value>After you add your own API or a model running on this PC, you can choose it for translation and the assistant. API keys are encrypted with Windows Data Protection and stored on this PC.</value></data>
+  <data name="ModelServices_Intro" xml:space="preserve"><value>OpenAI, Qwen, DeepSeek, Kimi and Grok are already listed under translation models and the AI assistant; add your own API key to use them, and choose below which of each service's models to use for translation and for the AI assistant. You can also add other APIs or models running on this PC. API keys are encrypted with Windows Data Protection and stored on this PC.</value></data>
   <data name="Button_AddService" xml:space="preserve"><value>Add Model Service</value></data>
   <data name="Service_CustomName" xml:space="preserve"><value>Custom Service</value></data>
   <data name="Service_Local" xml:space="preserve"><value>{0} · Local</value></data>
@@ -146,8 +139,8 @@
   <data name="Tip_UseGpu" xml:space="preserve"><value>Use the GPU when a GPU runtime is installed. Takes effect after restart.</value></data>
   <data name="Label_LivePreview" xml:space="preserve"><value>Live Preview</value></data>
   <data name="Tip_LivePreview" xml:space="preserve"><value>Show a draft while someone is still speaking. Uses more CPU.</value></data>
-  <data name="Label_FilterChinese" xml:space="preserve"><value>Filter Chinese Speech</value></data>
-  <data name="Tip_FilterChinese" xml:space="preserve"><value>When the spoken language is not Chinese, drop segments detected as Chinese. Adds one language check per segment.</value></data>
+  <data name="Label_FilterChinese" xml:space="preserve"><value>Filter Nearby Chinese Conversation</value></data>
+  <data name="Tip_FilterChinese" xml:space="preserve"><value>When people nearby chat in Chinese, their words are left out of the subtitles; only the speaker's language is kept.</value></data>
   <data name="Label_MicNoiseReduction" xml:space="preserve"><value>Microphone Noise Reduction</value></data>
   <data name="Tip_MicNoiseReduction" xml:space="preserve"><value>Uses Windows communications voice processing to reduce background noise and remove echo; results depend on the audio driver. Accuracy may drop when the speaker is far away.</value></data>
   <data name="Label_ModelMirror" xml:space="preserve"><value>Model Download Host</value></data>
@@ -158,13 +151,11 @@
   <data name="Label_Opacity" xml:space="preserve"><value>Background</value></data>
   <data name="Label_VisibleLines" xml:space="preserve"><value>Show last {0} lines</value></data>
   <data name="Label_Size" xml:space="preserve"><value>Size</value></data>
-  <data name="Note_Resize" xml:space="preserve"><value>Drag the subtitle edges to resize</value></data>
   <data name="Button_ResetSize" xml:space="preserve"><value>Reset</value></data>
-  <data name="Section_More" xml:space="preserve"><value>More</value></data>
   <data name="Label_ShowStatusBar" xml:space="preserve"><value>Show Status Bar</value></data>
   <data name="Tip_ShowStatusBar" xml:space="preserve"><value>Show the input level, recognition state, model and backlog below the subtitles.</value></data>
   <data name="Label_AutoCorrect" xml:space="preserve"><value>Correct Accented Speech Automatically</value></data>
-  <data name="Tip_AutoCorrect" xml:space="preserve"><value>When the speaker has a strong accent and recognition is unreliable, the language model fixes misheard words from pronunciation and context.</value></data>
+  <data name="Tip_AutoCorrect" xml:space="preserve"><value>When the speaker has a strong accent and recognition is unreliable, a language model fixes misheard words from pronunciation and context. With Google Translate or Hunyuan Translate, Claude Sonnet is used while correcting; this requires Claude Code signed in on this PC.</value></data>
   <data name="Label_Lock" xml:space="preserve"><value>Lock Subtitles</value></data>
   <data name="Label_HotKey" xml:space="preserve"><value>Shortcut</value></data>
   <data name="Tip_HotKey" xml:space="preserve"><value>Shows or hides the subtitles. On some keyboard layouts, such as Polish, Ctrl+Alt acts as AltGr, so that choice blocks characters typed with AltGr.</value></data>
@@ -199,11 +190,101 @@
   <data name="Quick_Concepts" xml:space="preserve"><value>Explain related concepts</value></data>
   <data name="Quick_LastSentence" xml:space="preserve"><value>Explain the last sentence</value></data>
   <data name="Menu_GenerateNotes" xml:space="preserve"><value>Generate Notes</value></data>
-  <data name="Menu_GeneratingNotes" xml:space="preserve"><value>Generating Notes…</value></data>
   <data name="Status_GeneratingNotes" xml:space="preserve"><value>Generating notes with {0}…</value></data>
   <data name="Status_NotesSaved" xml:space="preserve"><value>Notes saved: {0}</value></data>
   <data name="Status_NotesFailed" xml:space="preserve"><value>Failed to generate notes: {0}</value></data>
   <data name="Status_NoNotes" xml:space="preserve"><value>There are no subtitles yet to generate notes from.</value></data>
   <data name="Notes_Name" xml:space="preserve"><value>Notes</value></data>
   <data name="Notes_TempName" xml:space="preserve"><value>LiveSub Notes</value></data>
+  <data name="Engine_Google" xml:space="preserve"><value>Google Translate</value></data>
+  <data name="Engine_LocalModel" xml:space="preserve"><value>Hunyuan Translate</value></data>
+  <data name="Group_Basic" xml:space="preserve"><value>Basic</value></data>
+  <data name="Overlay_Correcting" xml:space="preserve"><value>{0} · Correcting</value></data>
+  <data name="Tip_RecognitionNeedsClaude" xml:space="preserve"><value>Recognition confidence is low. Automatic correction requires Claude Code signed in on this PC.</value></data>
+  <data name="Error_NotLanguageModel" xml:space="preserve"><value>This feature needs a language model. Choose Claude Code, or add a model in Model Services.</value></data>
+  <data name="Error_Google" xml:space="preserve"><value>Google Translate error: {0}</value></data>
+  <data name="Error_LocalModel" xml:space="preserve"><value>Hunyuan Translate error: {0}</value></data>
+  <data name="Error_UnrecognizedReply" xml:space="preserve"><value>Unrecognized response</value></data>
+  <data name="Local_NotDownloaded" xml:space="preserve"><value>The Hunyuan Translate model hasn't been downloaded yet.</value></data>
+  <data name="Local_StartTimeout" xml:space="preserve"><value>Timed out while starting.</value></data>
+  <data name="Local_NoPort" xml:space="preserve"><value>No free port is available.</value></data>
+  <data name="Local_MissingRuntimeLibrary" xml:space="preserve"><value>The Microsoft Visual C++ runtime is missing. Install the latest Visual C++ Redistributable from Microsoft and try again.</value></data>
+  <data name="Local_ServerMissing" xml:space="preserve"><value>llama-server wasn't found after extracting the runtime.</value></data>
+  <data name="Local_DownloadFailed" xml:space="preserve"><value>Download failed.</value></data>
+  <data name="Local_VerifyFailed" xml:space="preserve"><value>The downloaded file failed verification. Please try again.</value></data>
+  <data name="Local_ExtractFailed" xml:space="preserve"><value>Failed to extract the runtime.</value></data>
+  <data name="Local_HttpFailed" xml:space="preserve"><value>Download failed (HTTP {0}).</value></data>
+  <data name="Info_LocalModelMissing" xml:space="preserve"><value>Hunyuan Translate hasn't been downloaded yet, so Google Translate is used for now. Download it in Model Services.</value></data>
+  <data name="Notice_DownloadToUse" xml:space="preserve"><value>Ready to use once downloaded.</value></data>
+  <data name="Notice_EnterKey" xml:space="preserve"><value>Enter an API key to use this service. Get one from the provider's website.</value></data>
+  <data name="Claude_Intro" xml:space="preserve"><value>Uses Claude Code signed in on this PC; no API key needed. Translation should be fast, so Haiku is recommended; for the AI assistant and notes, accuracy matters more, so Sonnet or Opus work well.</value></data>
+  <data name="Label_ForTranslation" xml:space="preserve"><value>For Translation</value></data>
+  <data name="Label_ForAssistant" xml:space="preserve"><value>For AI Assistant</value></data>
+  <data name="Claude_Haiku" xml:space="preserve"><value>Haiku (fastest)</value></data>
+  <data name="Claude_Sonnet" xml:space="preserve"><value>Sonnet (balanced)</value></data>
+  <data name="Claude_Opus" xml:space="preserve"><value>Opus (most accurate, slowest)</value></data>
+  <data name="Label_AvailableModels" xml:space="preserve"><value>Available Models</value></data>
+  <data name="Tip_Test" xml:space="preserve"><value>Translates one sentence with the translation model to check that this service works</value></data>
+  <data name="Local_Title" xml:space="preserve"><value>Hunyuan Translate · On This PC</value></data>
+  <data name="Local_Intro" xml:space="preserve"><value>Tencent Hunyuan's translation model Hy-MT2 (1.8B). Once downloaded, it translates offline on this PC with no internet connection or API key; speed depends on your graphics card and processor. It can only translate and can't be used as the AI assistant.</value></data>
+  <data name="Label_ModelFile" xml:space="preserve"><value>Model File</value></data>
+  <data name="Local_SizeNote" xml:space="preserve"><value>About {0}; uses about 1.4 GB of memory while running</value></data>
+  <data name="Button_Cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="Local_Verifying" xml:space="preserve"><value>Verifying…</value></data>
+  <data name="Button_Retry" xml:space="preserve"><value>Retry</value></data>
+  <data name="Tool_Record" xml:space="preserve"><value>Record</value></data>
+  <data name="Tool_StopRecording" xml:space="preserve"><value>Stop Recording</value></data>
+  <data name="Tool_Source" xml:space="preserve"><value>Audio source: {0}</value></data>
+  <data name="Tool_Settings" xml:space="preserve"><value>Settings</value></data>
+  <data name="Tool_Quit" xml:space="preserve"><value>Quit {0}</value></data>
+  <data name="Overlay_StartTranslating" xml:space="preserve"><value>Start Translating</value></data>
+  <data name="Overlay_Recording" xml:space="preserve"><value>Recording</value></data>
+  <data name="Label_Appearance" xml:space="preserve"><value>Appearance</value></data>
+  <data name="Appearance_System" xml:space="preserve"><value>System</value></data>
+  <data name="Appearance_Light" xml:space="preserve"><value>Light</value></data>
+  <data name="Appearance_Dark" xml:space="preserve"><value>Dark</value></data>
+  <data name="Tip_ResetSize" xml:space="preserve"><value>Drag the subtitle edges to resize. Click here to restore the default subtitle size and move it back to the top-right corner; the AI assistant returns next to the subtitles.</value></data>
+  <data name="Section_Records" xml:space="preserve"><value>Transcripts</value></data>
+  <data name="Section_Recognition" xml:space="preserve"><value>Recognition</value></data>
+  <data name="Label_History" xml:space="preserve"><value>Transcript</value></data>
+  <data name="Label_Recordings" xml:space="preserve"><value>Recordings</value></data>
+  <data name="Button_View" xml:space="preserve"><value>View…</value></data>
+  <data name="Recordings_Title" xml:space="preserve"><value>Recordings</value></data>
+  <data name="Recordings_Empty" xml:space="preserve"><value>No recordings yet. While subtitles are running, click the record button on the subtitles to save what LiveSub hears here.</value></data>
+  <data name="Recordings_Count" xml:space="preserve"><value>{0} recordings</value></data>
+  <data name="Recordings_Play" xml:space="preserve"><value>Play</value></data>
+  <data name="Button_Refresh" xml:space="preserve"><value>Refresh</value></data>
+  <data name="Recording_Name" xml:space="preserve"><value>Recording</value></data>
+  <data name="Error_RecordingFailed" xml:space="preserve"><value>Recording failed: {0}</value></data>
+  <data name="Error_RecordingNoEncoder" xml:space="preserve"><value>This PC has no AAC encoder, so LiveSub cannot record. Windows N editions need the Media Feature Pack.</value></data>
+  <data name="Menu_Record" xml:space="preserve"><value>Record</value></data>
+  <data name="Menu_Recordings" xml:space="preserve"><value>Recordings…</value></data>
+  <data name="Assistant_AddFiles" xml:space="preserve"><value>Add Images or Files</value></data>
+  <data name="Assistant_ChooseFiles" xml:space="preserve"><value>Choose images or files to send to the AI assistant</value></data>
+  <data name="Assistant_AllFiles" xml:space="preserve"><value>All files</value></data>
+  <data name="Assistant_Remove" xml:space="preserve"><value>Remove</value></data>
+  <data name="Assistant_PastedImage" xml:space="preserve"><value>Pasted Image</value></data>
+  <data name="Assistant_Image" xml:space="preserve"><value>Image</value></data>
+  <data name="Assistant_TooManyAttachments" xml:space="preserve"><value>You can attach up to {0} files per question.</value></data>
+  <data name="Assistant_SeeAttachments" xml:space="preserve"><value>Please look at the attachments.</value></data>
+  <data name="Attachment_Unsupported" xml:space="preserve"><value>This kind of file isn't supported yet: {0}. Save it as a PDF or image and add it again.</value></data>
+  <data name="Attachment_TooLarge" xml:space="preserve"><value>File is too large: {0}</value></data>
+  <data name="Attachment_Unreadable" xml:space="preserve"><value>Couldn't read this file: {0}</value></data>
+  <data name="Attachment_PdfNoText" xml:space="preserve"><value>(This PDF has no readable text; it may be a scan.)</value></data>
+  <data name="Attachment_Truncated" xml:space="preserve"><value>[… {0} more characters not attached]</value></data>
+  <data name="Assistant_TextOnly" xml:space="preserve"><value>Attachments are too large, so only the text of {0} was sent.</value></data>
+  <data name="ListSeparator" xml:space="preserve"><value>, </value></data>
+  <data name="Error_LocalModelStart" xml:space="preserve"><value>Hunyuan Translate failed to start: {0}</value></data>
+  <data name="Info_LocalModelFallback" xml:space="preserve"><value>{0} Google Translate is used for now.</value></data>
+  <data name="Local_ExitCode" xml:space="preserve"><value>llama-server exited (code {0}).</value></data>
+  <data name="Local_DownloadStalled" xml:space="preserve"><value>The download made no progress for 60 seconds. Check your network and try again.</value></data>
+  <data name="Net_NameResolution" xml:space="preserve"><value>Couldn't find the server. Check your network connection.</value></data>
+  <data name="Net_ConnectionFailed" xml:space="preserve"><value>Couldn't connect. Check your network connection.</value></data>
+  <data name="Net_SecureConnection" xml:space="preserve"><value>Couldn't establish a secure connection. A proxy or firewall may be blocking it.</value></data>
+  <data name="Net_Proxy" xml:space="preserve"><value>Couldn't connect through the proxy. Check your proxy settings.</value></data>
+  <data name="Net_Interrupted" xml:space="preserve"><value>The connection was interrupted. Try again.</value></data>
+  <data name="File_AccessDenied" xml:space="preserve"><value>No permission to write to this folder.</value></data>
+  <data name="File_DiskFull" xml:space="preserve"><value>Not enough disk space.</value></data>
+  <data name="Local_ConnectionLost" xml:space="preserve"><value>Couldn't reach the local translation service.</value></data>
+  <data name="Attachment_PdfTextUnavailable" xml:space="preserve"><value>(Couldn't extract the text of this PDF.)</value></data>
 </root>

@@ -91,13 +91,39 @@ public sealed class AnthropicTransport : IChatTransport
         return text.ToString();
     }
 
+    /// <summary>
+    /// 带附件的提问（与 <see cref="ChatContent.WriteAnthropicBlocks"/> 的顺序相同）：图片、PDF 在前，文字附件和问题放在最后的文字块里。
+    /// </summary>
+    private static List<ContentBlockParam> Blocks(string text, IReadOnlyList<ChatAttachment> attachments)
+    {
+        var blocks = new List<ContentBlockParam>();
+        foreach (var attachment in attachments)
+        {
+            switch (attachment)
+            {
+                case ChatAttachment.Image image:
+                    blocks.Add(new ImageBlockParam(new Base64ImageSource
+                    {
+                        Data = Convert.ToBase64String(image.Data),
+                        MediaType = image.MediaType,
+                    }));
+                    break;
+                case ChatAttachment.Pdf pdf:
+                    blocks.Add(new DocumentBlockParam(new Base64PdfSource(Convert.ToBase64String(pdf.Data))) { Title = pdf.Name });
+                    break;
+            }
+        }
+        blocks.Add(new TextBlockParam(ChatContent.TextWithDocuments(text, attachments.OfType<ChatAttachment.Text>())));
+        return blocks;
+    }
+
     private MessageCreateParams BuildParameters(string systemPrompt, IReadOnlyList<ChatMessage> messages)
     {
         var policy = AnthropicModelPolicy.For(model);
         var turns = messages.Select(m => new MessageParam
         {
             Role = m.Role == ChatRole.User ? Role.User : Role.Assistant,
-            Content = m.Text,
+            Content = m.HasAttachments ? Blocks(m.Text, m.Attachments!) : m.Text,
         }).ToList();
 
         // 对话会逐句变长：开启自动缓存，前面的历史不用每次重新计费和处理（太短时服务器会忽略）。

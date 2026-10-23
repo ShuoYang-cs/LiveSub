@@ -35,6 +35,8 @@ public sealed class SubtitleController : IDisposable
     public event Action? Changed;
 
     public bool IsRunning { get; private set; }
+    /// <summary>正在把听到的声音存成文件（录音按钮打开、字幕在运行）。</summary>
+    public bool IsRecording { get; private set; }
     /// <summary>正在开始、停止，或正在重新打开某个音源的采集。</summary>
     public bool IsBusy => busy || pipelines.Any(p => p.Switching);
     /// <summary>正在准备（下载或加载识别模型）；此时“停止”会取消启动。</summary>
@@ -46,8 +48,18 @@ public sealed class SubtitleController : IDisposable
     public float InputLevel { get; private set; }
     public double SilentFor { get; private set; }
     public bool RecognitionDifficult { get; private set; }
-    /// <summary>翻译时是否按发音纠正识别错误：打开了“自动纠正口音”，并且最近识别困难。</summary>
-    public bool Correcting => Settings.AutoCorrect && RecognitionDifficult;
+    /// <summary>翻译时是否按发音纠正识别错误：打开了“自动纠正口音”、最近识别困难，并且有能纠正的大模型。</summary>
+    public bool Correcting => Settings.AutoCorrect && RecognitionDifficult && CorrectionModel is not null;
+    /// <summary>
+    /// 按发音纠正用的大模型（与 macOS 相同）：所选翻译模型是大模型就用它；Google 翻译、混元翻译不能纠正，本机有 Claude Code 时
+    /// 临时换成 Claude Sonnet（ICT 2026-10-22 实测：带上下文时 Sonnet 和 Haiku 一样快，但 Haiku 会编造原文没有的词）。
+    /// </summary>
+    public ModelChoice? CorrectionModel => Settings.TranslationModel.IsLanguageModel ? Settings.TranslationModel
+        : ClaudeAvailable && !correctionBroken ? ModelChoice.ClaudeCode(ModelCatalog.Sonnet) : null;
+    /// <summary>本机有没有 Claude Code（准备翻译器时查一次：判断能不能纠正要用，不能每次刷新状态条都去找）。</summary>
+    public bool ClaudeAvailable { get; private set; }
+    /// <summary>打开了“自动纠正口音”，但没有能纠正的大模型（用 Google 翻译、混元翻译，本机又没有可用的 Claude Code）。</summary>
+    public bool CorrectionUnavailable => Settings.AutoCorrect && CorrectionModel is null;
     /// <summary>
     /// 麦克风被 Windows 隐私设置挡住（或多半如此）：字幕不停，权限打开后自动继续。
     /// “两者”模式下只影响麦克风这一路，系统音频照常识别。
@@ -60,7 +72,12 @@ public sealed class SubtitleController : IDisposable
         MicrophoneBlock.Likely => Strings.Notice_MicrophoneMaybeOff,
         _ => null,
     };
-    public string EngineName => session?.Name ?? Settings.DisplayName(Settings.TranslationModel);
+    /// <summary>状态里的翻译模型：正在用的翻译器的完整名称（“Claude · Haiku”“Google 翻译”）。</summary>
+    public string EngineName => translator?.Name ?? Settings.DisplayName(Settings.TranslationModel);
+    /// <summary>状态条上的翻译模型：服务名；Google 翻译、混元翻译在纠正期间实际用的是 Claude，写成“Claude · 纠正中”（与 macOS 相同）。</summary>
+    public string EngineLabel => !Settings.TranslationModel.IsLanguageModel && Correcting && CorrectionModel is { } model
+        ? Strings.Format(Strings.Overlay_Correcting, Settings.ServiceName(model))
+        : Settings.ServiceName(Settings.TranslationModel);
     public string? TranscriptPath => store?.FilePath;
     /// <summary>正在生成笔记（托盘菜单里的“生成笔记”这时不可点）。</summary>
     public bool IsGeneratingNotes { get; private set; }
@@ -96,14 +113,25 @@ public sealed class SubtitleController : IDisposable
     private static readonly TimeSpan AudioRecoveredAfter = TimeSpan.FromSeconds(5);
 
     // 翻译
-    private IChatSession? session;
-    /// <summary>当前会话是按哪种提示词建的（是否带“按发音纠正”）；与 <see cref="Correcting"/> 不一致时换会话。</summary>
+    /// <summary>正在用的翻译器：大模型会话，或 Google 翻译、混元翻译（识别困难时临时换成带纠正的 Claude 会话）。</summary>
+    private ITranslator? translator;
+    /// <summary>
+    /// 选了 Google 翻译、混元翻译这类只能翻译的模型时，它们的翻译器（与 macOS 的 basicTranslator 相同）。
+    /// 识别困难时 <see cref="translator"/> 临时换成带纠正的 Claude 会话，清楚了再换回它；Claude 出错时这一句也用它顶上。
+    /// </summary>
+    private ITranslator? basicTranslator;
+    /// <summary>当前大模型会话是按哪种提示词建的（是否带“按发音纠正”）；与 <see cref="Correcting"/> 不一致时换会话。</summary>
     private bool sessionCorrecting;
     /// <summary>上次出现“重试也没用”的错误（未登录、缺密钥）；设置改变或重新开始前不再请求。</summary>
     private string? brokenMessage;
-    private bool workerRunning;
-    /// <summary>换下来、等正在翻译的句子完成后再关的旧会话；退出程序时一并关闭，不留下 claude 进程。</summary>
-    private readonly HashSet<IChatSession> retired = [];
+    /// <summary>纠正用的 Claude 出过“重试也没用”的错误（例如未登录）：这次不再纠正，一直用基础翻译器；设置改变或重新开始时再试。</summary>
+    private bool correctionBroken;
+    /// <summary>混元翻译启动不了，这次改用了 Google 翻译；设置改变或重新开始时再试混元翻译。</summary>
+    private bool localModelFellBack;
+    /// <summary>正在翻译的句数。</summary>
+    private int activeTranslations;
+    /// <summary>换下来、等正在翻译的句子完成后再关的旧翻译器；退出程序时一并关闭，不留下 claude、llama-server 进程。</summary>
+    private readonly HashSet<ITranslator> retired = [];
     private RecognitionQualityMonitor quality = new();
     private DateTime alertAt;
 
@@ -113,8 +141,6 @@ public sealed class SubtitleController : IDisposable
     // 记录
     private TranscriptStore? store;
     private DateTime? sessionStart;
-    /// <summary>已经写进记录文件的句子（避免重复写入）。</summary>
-    private readonly HashSet<Guid> persisted = [];
 
     public SubtitleController(SettingsService settingsService, SecretStore secrets, Dispatcher dispatcher)
     {
@@ -132,13 +158,14 @@ public sealed class SubtitleController : IDisposable
             await ApplySettings(change);
         };
         settingsService.Changed += OnSettingsChanged;
+        LocalModelStore.Shared.InstalledChanged += OnLocalModelInstalledChanged;
         Assistant = new AssistantSession(settingsService, secrets, dispatcher, () => (Book.Lines, LiveText));
     }
 
     // MARK: - 开始 / 停止
 
     /// <summary>
-    /// 用户点“开始/停止”。开始时重新判断讲者好不好识别，并重试上次不可用的翻译服务；
+    /// 用户点“开始/停止”。开始时重新判断讲者好不好识别，并重试上次不可用的翻译服务（包括纠正用的 Claude）；
     /// AI 助手开始新的对话（设置变化引起的自动重启不会清空对话），面板开着时提前启动它的会话。
     /// </summary>
     public async Task Toggle()
@@ -159,7 +186,7 @@ public sealed class SubtitleController : IDisposable
             if (Settings.AssistantVisible) Assistant.WarmUp();
             quality = new RecognitionQualityMonitor();
             RecognitionDifficult = false;
-            if (brokenMessage is not null) ResetSession();
+            if (brokenMessage is not null || correctionBroken || localModelFellBack) ResetSession();
             await Start();
         }
     }
@@ -175,8 +202,8 @@ public sealed class SubtitleController : IDisposable
         AppLog.Info($"start: source={Settings.AudioSource} noiseReduction={Settings.MicNoiseReduction} lang={Settings.SourceLanguage} model={Settings.DisplayName(Settings.TranslationModel)} whisper={Settings.WhisperModel} autoCorrect={Settings.AutoCorrect}");
         try
         {
-            // 先启动翻译会话（Claude 进程启动需要几秒），与加载识别模型同时进行。
-            PrepareSession();
+            // 先启动翻译器（Claude 进程、llama-server 启动需要几秒），与加载识别模型同时进行。
+            PrepareTranslator();
 
             var model = WhisperModel.Find(Settings.WhisperModel);
             var progress = new Progress<int>(p => SetStatus(Strings.Format(Strings.Status_DownloadingModel, model.Id, p)));
@@ -187,7 +214,8 @@ public sealed class SubtitleController : IDisposable
             }
             catch (Exception e) when (e is HttpRequestException or IOException)
             {
-                throw new InvalidOperationException(Strings.Format(Strings.Error_ModelDownload, e.Message), e);
+                AppLog.Error("whisper model download failed", e);
+                throw new InvalidOperationException(Strings.Format(Strings.Error_ModelDownload, ErrorText.Download(e)), e);
             }
             SetStatus(Strings.Status_LoadingModel);
             var language = Settings.Source.WhisperCode;
@@ -215,6 +243,7 @@ public sealed class SubtitleController : IDisposable
             sessionStart ??= captureStart;
 
             IsRunning = true;
+            if (Settings.RecordAudio) StartRecording();
             startedRecognitionKey = RecognitionKey;
             ticker.Start();
             UpdateListeningStatus();
@@ -309,9 +338,9 @@ public sealed class SubtitleController : IDisposable
     {
         IAudioSource s = p.Kind switch
         {
-            SourceKind.TestFile => new FileSource(TestAudioFile!),
-            SourceKind.Microphone => new WasapiSource(loopback: false, noiseReduction: p.NoiseReduction),
-            _ => new WasapiSource(loopback: true),
+            SourceKind.TestFile => new FileSource(TestAudioFile!, p.Recording),
+            SourceKind.Microphone => new WasapiSource(loopback: false, noiseReduction: p.NoiseReduction, recording: p.Recording),
+            _ => new WasapiSource(loopback: true, recording: p.Recording),
         };
         s.Samples += samples => OnSamples(gen, p, samples);
         s.Failed += e => dispatcher.BeginInvoke(() =>
@@ -551,6 +580,7 @@ public sealed class SubtitleController : IDisposable
         try
         {
             foreach (var p in pipelines) await StopAudio(p);
+            FinishRecording();
             if (recognizer is { } rec)
             {
                 // 等最后几段识别完，再把分句器里剩下的内容送去翻译。
@@ -607,6 +637,7 @@ public sealed class SubtitleController : IDisposable
 
     private async Task CleanupRecognition()
     {
+        FinishRecording();
         foreach (var p in pipelines)
         {
             ResetAudioWait(p);
@@ -627,6 +658,100 @@ public sealed class SubtitleController : IDisposable
         generation++;
     }
 
+    // MARK: - 录音
+
+    /// <summary>录音按钮（与 macOS 相同）：字幕运行中也可以随时打开或关掉；没在运行时只改设置，下次开始时录音。</summary>
+    public void ToggleRecording()
+    {
+        // 运行中按实际是否在录切换：录音出错停下了（按钮已经不是红的）时，点一下是重新开始录，不是关掉开关。
+        bool record = !RecordButtonOn;
+        Settings.RecordAudio = record;
+        settingsService.Commit(SettingsChange.None);
+        if (IsRunning)
+        {
+            if (record) StartRecording();
+            else FinishRecording();
+        }
+        RaiseChanged();
+    }
+
+    /// <summary>录音按钮、托盘菜单的对勾：运行中按实际是否在录（录音出错会停下）；没在运行时是“下次开始时录音”的开关。</summary>
+    public bool RecordButtonOn => IsRunning ? IsRecording : Settings.RecordAudio;
+
+    /// <summary>
+    /// 每个音源一个录音文件，和字幕记录放在一起、名字对应：“2026-10-22 13.35 录音.m4a”；“两者”时后面带音源（与 macOS 相同）。
+    /// </summary>
+    private void StartRecording()
+    {
+        if (store is not { } transcript) return;
+        foreach (var p in pipelines)
+        {
+            if (p.Recording.Active) continue;
+            var suffix = p.Label is null ? null : Strings.IsChinese ? $"（{p.Label}）" : $" ({p.Label})";
+            var path = RecordingFiles.PathFor(transcript.FilePath, Strings.Transcript_Name, Strings.Recording_Name, suffix, File.Exists);
+            var recorder = new AudioRecorder(path);
+            recorder.Failed += (reason, noEncoder) => dispatcher.BeginInvoke(() => OnRecordingFailed(p, recorder, reason, noEncoder));
+            p.Recording.Set(recorder);
+        }
+        IsRecording = pipelines.Any(p => p.Recording.Active);
+    }
+
+    /// <summary>
+    /// 录不了：这一路不再录，字幕照常，录音按钮按实际是否在录显示。确认这台电脑没有 AAC 编码器时把录音开关关掉
+    /// （所有音源都录不了），免得每次开始都再提示一遍；“两者”时两路都会报告，只提示一次。
+    /// </summary>
+    private void OnRecordingFailed(SourcePipeline p, AudioRecorder recorder, string reason, bool noEncoder)
+    {
+        p.Recording.Clear(recorder);
+        if (noEncoder)
+        {
+            bool first = Settings.RecordAudio;
+            if (first)
+            {
+                Settings.RecordAudio = false;
+                settingsService.Commit(SettingsChange.None);
+            }
+            FinishRecording();
+            if (first) ShowAlert(reason);
+        }
+        else
+        {
+            ShowAlert(Strings.Format(Strings.Error_RecordingFailed, reason));
+        }
+        IsRecording = pipelines.Any(x => x.Recording.Active);
+        RaiseChanged();
+    }
+
+    /// <summary>关闭录音文件：在后台等它写完（m4a 要写完才能播放），不卡界面。退出程序前等它们写完（<see cref="WaitForRecordings"/>）。</summary>
+    private void FinishRecording()
+    {
+        IsRecording = false;
+        foreach (var p in pipelines)
+        {
+            if (p.Recording.Set(null) is not { } recorder) continue;
+            var task = Task.Run(() =>
+            {
+                recorder.Finish();
+                if (File.Exists(recorder.FilePath)) AppLog.Info($"recording saved: {Path.GetFileName(recorder.FilePath)}");
+            });
+            lock (finishingRecordings) finishingRecordings.Add(task);
+            _ = task.ContinueWith(t =>
+            {
+                lock (finishingRecordings) finishingRecordings.Remove(t);
+            }, TaskScheduler.Default);
+        }
+    }
+
+    /// <summary>还没写完的录音文件：退出程序时等一会儿，否则 m4a 没写完、放不出来。</summary>
+    private readonly List<Task> finishingRecordings = [];
+
+    private Task WaitForRecordings(TimeSpan timeout)
+    {
+        Task[] pending;
+        lock (finishingRecordings) pending = [.. finishingRecordings];
+        return pending.Length == 0 ? Task.CompletedTask : Task.WhenAny(Task.WhenAll(pending), Task.Delay(timeout));
+    }
+
     /// <summary>结束当前记录文件，下次开始时新建一个。</summary>
     public async Task NewSession()
     {
@@ -639,7 +764,6 @@ public sealed class SubtitleController : IDisposable
         }
         await FlushPendingTranslations(TimeSpan.FromSeconds(10));
         Book.Clear();
-        persisted.Clear();
         store = null;
         sessionStart = null;
         ResetSession();
@@ -653,6 +777,7 @@ public sealed class SubtitleController : IDisposable
     {
         await Stop(recognitionTimeout: TimeSpan.FromSeconds(3), busyTimeout: TimeSpan.FromSeconds(3));
         await FlushPendingTranslations(TimeSpan.FromSeconds(3));
+        await WaitForRecordings(TimeSpan.FromSeconds(5));
     }
 
     /// <summary>
@@ -661,11 +786,11 @@ public sealed class SubtitleController : IDisposable
     private async Task FlushPendingTranslations(TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
-        while ((workerRunning || Book.Backlog > 0) && DateTime.UtcNow < deadline) await Task.Delay(100);
-        foreach (var line in Book.Lines.Where(l => l.State is LineState.Waiting or LineState.Translating).ToList())
+        while ((activeTranslations > 0 || Book.Backlog > 0) && DateTime.UtcNow < deadline) await Task.Delay(100);
+        foreach (var line in Book.TakeRemaining())
         {
-            if (!persisted.Add(line.Id)) continue;
-            store?.Append(TranscriptFormat.Entry(line.Time, line.SourceLabel, line.Source, "", line.OriginalSource));
+            var translation = line.State is LineState.Done or LineState.Failed ? line.Translation : "";
+            store?.Append(TranscriptFormat.Entry(line.Time, line.SourceLabel, line.Source, translation, line.OriginalSource));
         }
     }
 
@@ -696,31 +821,53 @@ public sealed class SubtitleController : IDisposable
         }
         else if (IsRunning)
         {
-            PrepareSession();
+            PrepareTranslator();
             UpdateListeningStatus();
         }
         RaiseChanged();
     }
 
-    // MARK: - 翻译会话
-
-    private void PrepareSession()
+    /// <summary>混元翻译下载好了：正在运行的字幕换成混元翻译（下载前先用的是 Google 翻译）。删掉时同样重新准备。</summary>
+    private void OnLocalModelInstalledChanged()
     {
-        // 例如重新开始时识别状态恢复为“清晰”，旧会话却是按“纠正”的提示词建的：换掉。
-        // 旧会话等正在翻译的句子完成后再关，新会话紧接着建好，中间不留没有翻译器的空档。
-        if (session is not null && sessionCorrecting != Correcting)
+        if (Settings.TranslationModel.Kind == ModelKind.LocalModel) OnSettingsChanged(SettingsChange.Translation);
+    }
+
+    // MARK: - 翻译器
+
+    /// <summary>
+    /// 准备翻译器（与 macOS 的 prepareTranslators 相同）。大模型：按当前是否识别困难建带或不带“按发音纠正”的会话。
+    /// Google 翻译、混元翻译：建好基础翻译器；识别困难（并且打开了“自动纠正口音”）时临时换成 Claude Sonnet 的纠正会话，清楚了换回来。
+    /// 旧会话等正在翻译的句子完成后再关，新的紧接着建好，中间不留没有翻译器的空档。
+    /// </summary>
+    private void PrepareTranslator()
+    {
+        if (!Settings.TranslationModel.IsLanguageModel)
         {
-            RetireLater(session);
-            session = null;
+            if (basicTranslator is null)
+            {
+                ClaudeAvailable = ClaudeLocator.Locate(Settings.ClaudePath) is not null;
+                basicTranslator = CreateBasicTranslator();
+                basicTranslator.WarmUp();
+                // 刚从大模型换成 Google 翻译、混元翻译，设置还没应用（ResetSession 要等 0.8 秒）时，下一句就会走到这里：
+                // 原来的大模型会话不能直接丢掉，否则没人关它，claude 进程一直留着。
+                if (translator is not null) RetireLater(translator);
+                translator = basicTranslator;
+                AppLog.Info($"translator: {basicTranslator.Name}");
+            }
+            PrepareCorrection();
+            return;
         }
-        if (session is not null || brokenMessage is not null) return;
+        // 例如重新开始时识别状态恢复为“清晰”，旧会话却是按“纠正”的提示词建的：换掉。
+        if (translator is not null && sessionCorrecting != Correcting)
+        {
+            RetireLater(translator);
+            translator = null;
+        }
+        if (translator is not null || brokenMessage is not null) return;
         try
         {
-            session = TranslationEngines.Create(Settings.TranslationModel, Settings, secrets,
-                Prompts.TranslatorSystemPrompt(Settings.Source, Settings.Target, Correcting));
-            sessionCorrecting = Correcting;
-            session.WarmUp();
-            AppLog.Info($"translator: {session.Name}");
+            translator = CreateSession(Settings.TranslationModel);
         }
         catch (ChatProviderException e)
         {
@@ -730,15 +877,83 @@ public sealed class SubtitleController : IDisposable
         }
     }
 
-    /// <summary>换翻译会话；旧会话等正在翻译的句子完成后再关。</summary>
-    private void ResetSession()
+    /// <summary>Google 翻译、混元翻译：识别困难时换成带纠正的 Claude 会话，清楚了换回基础翻译器（它一直留着，不关）。</summary>
+    private void PrepareCorrection()
     {
-        RetireLater(session);
-        session = null;
-        brokenMessage = null;
+        bool correcting = Correcting;
+        bool usingCorrection = translator is not null && !ReferenceEquals(translator, basicTranslator);
+        if (correcting == usingCorrection) return;
+        if (!correcting)
+        {
+            RetireLater(translator);
+            translator = basicTranslator;
+            return;
+        }
+        try
+        {
+            translator = CreateSession(CorrectionModel!);
+        }
+        catch (ChatProviderException e)
+        {
+            correctionBroken = true;
+            translator = basicTranslator;
+            AppLog.Error("translator: correction unavailable", e);
+        }
     }
 
-    private void RetireLater(IChatSession? old)
+    /// <summary>大模型翻译会话；提示词里带不带“按发音纠正”看当前是否识别困难。</summary>
+    private ChatTranslator CreateSession(ModelChoice model)
+    {
+        var session = TranslationEngines.Create(model, Settings, secrets,
+            Prompts.TranslatorSystemPrompt(Settings.Source, Settings.Target, Correcting));
+        sessionCorrecting = Correcting;
+        session.WarmUp();
+        AppLog.Info($"translator: {session.Name}{(sessionCorrecting ? " (correcting)" : "")}");
+        return new ChatTranslator(session);
+    }
+
+    /// <summary>Google 翻译或混元翻译。混元翻译还没下载时这次先用 Google 翻译，并打开“模型服务”里的下载按钮（与 macOS 相同）。</summary>
+    private ITranslator CreateBasicTranslator()
+    {
+        if (Settings.TranslationModel.Kind == ModelKind.LocalModel)
+        {
+            if (LocalModelFiles.IsInstalled) return new LocalTranslator(Settings.Source, Settings.Target, () => Settings.UseGpu);
+            ShowAlert(Strings.Info_LocalModelMissing);
+            settingsService.RequestSetup(LocalModelFiles.ServiceId);
+        }
+        return new GoogleTranslator(Settings.Source, Settings.Target);
+    }
+
+    /// <summary>换翻译器；旧的等正在翻译的句子完成后再关。</summary>
+    private void ResetSession()
+    {
+        RetireLater(translator);
+        if (!ReferenceEquals(basicTranslator, translator)) RetireLater(basicTranslator);
+        translator = null;
+        basicTranslator = null;
+        brokenMessage = null;
+        correctionBroken = false;
+        localModelFellBack = false;
+    }
+
+    /// <summary>
+    /// 混元翻译启动不了（文件被删、被安全软件拦截、加载超时）：这次改用 Google 翻译，免得每句都等它启动、每句都失败
+    /// （与 macOS 的 fallBackFromLocalModel 相同）。改设置或重新开始时再试混元翻译。
+    /// </summary>
+    private bool FallBackFromLocalModel()
+    {
+        if (basicTranslator is not LocalTranslator local) return false;
+        var google = new GoogleTranslator(Settings.Source, Settings.Target);
+        google.WarmUp();
+        if (ReferenceEquals(translator, local)) translator = google;
+        RetireLater(local);
+        basicTranslator = google;
+        localModelFellBack = true;
+        AppLog.Info("translator: local model unavailable, using Google Translate");
+        return true;
+    }
+
+    private void RetireLater(ITranslator? old)
     {
         if (old is null) return;
         lock (retired) retired.Add(old);
@@ -848,8 +1063,8 @@ public sealed class SubtitleController : IDisposable
         AppLog.Info($"recognition {(RecognitionDifficult ? "difficult" : "clear")} (avg confidence {quality.AverageConfidence:F2})");
         // 没打开自动纠正时只在状态条上提示，不换翻译会话。
         if (!Settings.AutoCorrect || brokenMessage is not null) return;
-        // 换一个带/不带“按发音纠正”的翻译会话（PrepareSession 发现提示词不一致会自动换）。
-        PrepareSession();
+        // 换一个带/不带“按发音纠正”的翻译会话；Google 翻译、混元翻译换成或换回 Claude 的纠正会话（PrepareTranslator 会自动换）。
+        PrepareTranslator();
         UpdateListeningStatus();
     }
 
@@ -893,20 +1108,31 @@ public sealed class SubtitleController : IDisposable
         RaiseChanged();
     }
 
-    private async void RunWorker()
+    /// <summary>
+    /// Google 翻译、混元翻译每句独立翻译，同时翻两句，后一句不用等前一句（ICT 2026-10-22 实测排队要多等 1 秒多）；
+    /// 不多于两句，免得一下子发太多请求被 Google 限流（混元的 llama-server 也只开了两个槽位）。
+    /// 大模型会话带着上下文，要按顺序一句一句来（与 macOS 的 runWorker 相同）。
+    /// </summary>
+    private void RunWorker()
     {
-        if (workerRunning) return;
-        workerRunning = true;
+        int limit = basicTranslator is not null && ReferenceEquals(translator, basicTranslator) ? 2 : 1;
+        while (activeTranslations < limit && Book.DequeueMerged() is { } line)
+        {
+            activeTranslations++;
+            _ = TranslateThenContinue(line);
+        }
+    }
+
+    private async Task TranslateThenContinue(SubtitleLine line)
+    {
         try
         {
-            while (Book.DequeueMerged() is { } line)
-            {
-                await TranslateLine(line);
-            }
+            await TranslateLine(line);
         }
         finally
         {
-            workerRunning = false;
+            activeTranslations--;
+            RunWorker();
         }
     }
 
@@ -923,8 +1149,8 @@ public sealed class SubtitleController : IDisposable
             Finish(id, "", null);
             return;
         }
-        PrepareSession();
-        if (session is not { } current)
+        PrepareTranslator();
+        if (translator is not { } primary)
         {
             if (brokenMessage is not null) ShowAlert(brokenMessage);
             Fail(id);
@@ -933,7 +1159,7 @@ public sealed class SubtitleController : IDisposable
         bool cjk = Settings.Target.IsCJK;
         try
         {
-            var raw = await current.RequestAsync(Prompts.TranslationMessage(text, context), text, partial =>
+            var raw = await primary.TranslateAsync(text, context, partial =>
             {
                 var visible = TranslationOutput.VisibleTranslation(partial, cjk);
                 dispatcher.BeginInvoke(() =>
@@ -943,20 +1169,45 @@ public sealed class SubtitleController : IDisposable
             }, CancellationToken.None);
             var output = TranslationOutput.Split(raw, text, cjk);
             Finish(id, output.Translation, output.CorrectedSource);
+            return;
         }
         catch (Exception e)
         {
             var message = TranslationEngines.Describe(e);
             AppLog.Error("translate failed", e);
-            if (e is ChatProviderException { IsPersistent: true })
+            // 换成 Google 翻译后，下面用它翻这一句。同时在翻的另一句也会失败：已经换过、提示过了，不再提示一遍
+            // （否则后一条提示盖掉前一条，用户看不到“这次先用 Google 翻译”）。
+            bool alreadyTold = false;
+            if (e is LocalModelUnavailableException)
             {
-                brokenMessage = message;
-                RetireLater(session);
-                session = null;
+                if (FallBackFromLocalModel()) message = Strings.Format(Strings.Info_LocalModelFallback, message);
+                else alreadyTold = localModelFellBack;
             }
-            if (e is not OperationCanceledException) ShowAlert(message);
-            Fail(id);
+            if (e is ChatProviderException { IsPersistent: true } && ReferenceEquals(primary, translator))
+            {
+                // 纠正用的 Claude 不能用：这次不再纠正，换回基础翻译器；所选的大模型不能用：设置改变或重新开始前不再请求。
+                if (basicTranslator is not null) correctionBroken = true;
+                else brokenMessage = message;
+                RetireLater(primary);
+                translator = basicTranslator;
+            }
+            if (e is not OperationCanceledException && !alreadyTold) ShowAlert(message);
         }
+        // 纠正用的 Claude 出错时，这一句先用原来的 Google 翻译、混元翻译翻；混元翻译启动不了、刚换成 Google 翻译时用 Google 翻译翻
+        // （Windows 没有 Apple 本地翻译兜底，其他情况就算失败）。
+        if (basicTranslator is { } basic && !ReferenceEquals(basic, primary))
+        {
+            try
+            {
+                Finish(id, await basic.TranslateAsync(text, context, null, CancellationToken.None), null);
+                return;
+            }
+            catch (Exception e)
+            {
+                AppLog.Error("basic translate failed", e);
+            }
+        }
+        Fail(id);
     }
 
     private void Finish(Guid id, string translation, string? correctedSource)
@@ -964,20 +1215,23 @@ public sealed class SubtitleController : IDisposable
         var line = Book.Finish(id, translation, null, correctedSource, Settings.KeepOriginalText, DateTime.UtcNow);
         if (line is null) return;
         if (AppLog.DebugLatency) LogLatency(line);
-        Persist(line);
+        Persist();
         RaiseChanged();
     }
 
     private void Fail(Guid id)
     {
-        if (Book.Fail(id, DateTime.UtcNow) is { } line) Persist(line);
+        if (Book.Fail(id, DateTime.UtcNow) is not null) Persist();
         RaiseChanged();
     }
 
-    private void Persist(SubtitleLine line)
+    /// <summary>按字幕顺序写进记录：前面还有句子没翻完时先不写（见 <see cref="SubtitleBook.TakePersistable"/>）。</summary>
+    private void Persist()
     {
-        if (!persisted.Add(line.Id)) return;
-        store?.Append(TranscriptFormat.Entry(line.Time, line.SourceLabel, line.Source, line.Translation, line.OriginalSource));
+        foreach (var line in Book.TakePersistable())
+        {
+            store?.Append(TranscriptFormat.Entry(line.Time, line.SourceLabel, line.Source, line.Translation, line.OriginalSource));
+        }
     }
 
     private static void LogLatency(SubtitleLine l)
@@ -995,7 +1249,8 @@ public sealed class SubtitleController : IDisposable
     public string SubtitleFileContents(SubtitleFileFormat format) =>
         Book.SubtitleFile(format, Settings.DisplayMode, sessionStart);
 
-    public void ExportSubtitles(SubtitleFileFormat format)
+    /// <param name="owner">对话框的所有者窗口（字幕记录窗口）；没有时由 <see cref="SystemDialogs"/> 临时建一个。</param>
+    public void ExportSubtitles(SubtitleFileFormat format, System.Windows.Window? owner = null)
     {
         var content = SubtitleFileContents(format);
         var ext = format == SubtitleFileFormat.Srt ? "srt" : "vtt";
@@ -1007,7 +1262,7 @@ public sealed class SubtitleController : IDisposable
             DefaultExt = ext,
             AddExtension = true,
         };
-        if (SystemDialogs.Show(dialog) != true) return;
+        if (SystemDialogs.Show(dialog, owner) != true) return;
         try
         {
             // SRT 带 BOM：Windows 上不少播放器靠它识别 UTF-8 中文。
@@ -1094,6 +1349,9 @@ public sealed class SubtitleController : IDisposable
     public void Dispose()
     {
         ticker.Stop();
+        // 没经过“退出”就结束时（例如注销）也把录音文件写完。
+        FinishRecording();
+        WaitForRecordings(TimeSpan.FromSeconds(3)).Wait();
         Assistant.Shutdown();
         notesSession?.Dispose();
         notesSession = null;
@@ -1102,15 +1360,20 @@ public sealed class SubtitleController : IDisposable
             p.DeviceWatcher?.Dispose();
             p.Source?.Dispose();
         }
-        session?.Dispose();
-        session = null;
-        List<IChatSession> old;
+        LocalModelStore.Shared.InstalledChanged -= OnLocalModelInstalledChanged;
+        translator?.Dispose();
+        if (!ReferenceEquals(basicTranslator, translator)) basicTranslator?.Dispose();
+        translator = null;
+        basicTranslator = null;
+        List<ITranslator> old;
         lock (retired)
         {
             old = [.. retired];
             retired.Clear();
         }
-        foreach (var s in old) s.Dispose();
+        foreach (var t in old) t.Dispose();
+        // 保险：还有翻译器没关时（例如正在启动），llama-server 也不留下。
+        LocalModelServer.Shared.Stop();
         if (recognizer is { } rec)
         {
             recognizer = null;

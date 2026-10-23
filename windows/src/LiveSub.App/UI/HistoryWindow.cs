@@ -14,16 +14,21 @@ namespace LiveSub.App.UI;
 
 /// <summary>
 /// “字幕记录”窗口（与 macOS 版 HistoryView 相同）：本次记录的全部字幕，每句显示时间（和标签、附注）、原文、
-/// 纠正前的识别原文、译文，文字可以选中复制。下方是状态、“在资源管理器中显示记录”和“生成笔记”。
-/// 停在底部时跟着新字幕滚动，往上翻看时不打扰。搜索留到以后的版本。
+/// 纠正前的识别原文、译文，文字可以选中复制。下方是状态、“在资源管理器中显示记录”、“导出字幕”、“开始新的记录”和“生成笔记”
+/// （快捷按钮里去掉“⋯”菜单后，记录相关的操作都在这里，与 macOS 相同）。
+/// 停在底部时跟着新字幕滚动，往上翻看时不打扰。搜索留到以后的版本。外观跟着设置变；用 LiveSub 时显示在字幕上面。
 /// </summary>
 public sealed class HistoryWindow : Window
 {
     private static readonly SolidColorBrush NoteOrange = Freeze(new SolidColorBrush(Color.FromRgb(0xE0, 0x7A, 0x00)));
-    private static readonly SolidColorBrush Hairline = Freeze(new SolidColorBrush(Color.FromArgb(0x1F, 0, 0, 0)));
+    /// <summary>分隔线：灰色半透明，浅色、深色外观下都看得出来。</summary>
+    private static readonly SolidColorBrush Hairline = Freeze(new SolidColorBrush(Color.FromArgb(0x40, 0x80, 0x80, 0x80)));
+    /// <summary>次要文字（时间、标签、识别原文）用半透明的前景色，跟着外观变。</summary>
+    private const double Secondary = 0.6;
 
     private readonly SubtitleController controller;
     private readonly SettingsService settingsService;
+    private readonly AppShell shell;
     private readonly ListBox list = new()
     {
         BorderThickness = new Thickness(0),
@@ -34,27 +39,35 @@ public sealed class HistoryWindow : Window
     private readonly TextBlock status = new()
     {
         FontSize = 11,
-        Foreground = SystemColors.GrayTextBrush,
+        Opacity = Secondary,
         TextTrimming = TextTrimming.CharacterEllipsis,
         VerticalAlignment = VerticalAlignment.Center,
     };
     private readonly Button reveal = BarButton(Strings.History_ShowInExplorer);
+    private readonly Button export = BarButton(Strings.Menu_Export + " \u25BE");
+    private readonly Button newSession = BarButton(Strings.Menu_NewSession);
     private readonly Button notes = BarButton(Strings.Menu_GenerateNotes);
     private readonly DispatcherTimer refreshTimer = new() { Interval = TimeSpan.FromSeconds(0.5) };
     private ScrollViewer? scroller;
     /// <summary>停在最新一句：有新字幕时跟着滚到底；往上翻看时为 false，不打扰。</summary>
     private bool following = true;
 
-    public HistoryWindow(SubtitleController controller, SettingsService settingsService)
+    public HistoryWindow(SubtitleController controller, SettingsService settingsService, AppShell shell)
     {
         this.controller = controller;
         this.settingsService = settingsService;
+        this.shell = shell;
         Title = $"{Strings.AppName} · {Strings.History_Title}";
-        Width = 640;
+        Width = 720;
         Height = 560;
-        MinWidth = 520;
+        MinWidth = 600;
         MinHeight = 420;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        Appearance.Theme(this);
+        // 内容窗口：保留最小化和最大化（与 macOS 相同）。
+        WindowLevels.Raise(this, closeButtonOnly: false);
+        // 小屏、高缩放时不超出屏幕（标题栏不能在屏幕外）。
+        ScreenFit.Apply(this);
 
         // 行只放文字，不要列表的选中底色；列表很长时只创建看得见的行，按像素滚动。
         var row = new FrameworkElementFactory(typeof(RowView));
@@ -80,9 +93,19 @@ public sealed class HistoryWindow : Window
         };
         list.Loaded += (_, _) => Scroller();
 
-        reveal.Click += (_, _) =>
+        // 有本次的记录文件就在资源管理器里选中它，否则打开记录文件夹。
+        reveal.Click += (_, _) => shell.OpenTranscriptFolder();
+        export.Click += (_, _) =>
         {
-            if (controller.TranscriptPath is { } p) AppShell.RevealInExplorer(p);
+            var menu = new ContextMenu { PlacementTarget = export, Placement = System.Windows.Controls.Primitives.PlacementMode.Top };
+            menu.Items.Add(PopupMenus.Item("SRT…", () => shell.Export(SubtitleFileFormat.Srt, this)));
+            menu.Items.Add(PopupMenus.Item("WebVTT…", () => shell.Export(SubtitleFileFormat.Vtt, this)));
+            menu.IsOpen = true;
+        };
+        newSession.Click += (_, _) =>
+        {
+            shell.NewSession();
+            RefreshBar();
         };
         notes.Click += (_, _) =>
         {
@@ -91,6 +114,8 @@ public sealed class HistoryWindow : Window
         };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 0, 0, 0) };
         buttons.Children.Add(reveal);
+        buttons.Children.Add(export);
+        buttons.Children.Add(newSession);
         buttons.Children.Add(notes);
         var bar = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(buttons, Dock.Right);
@@ -164,7 +189,9 @@ public sealed class HistoryWindow : Window
     {
         status.Text = controller.Status;
         status.ToolTip = controller.Status;
-        reveal.Visibility = controller.TranscriptPath is { } p && File.Exists(p) ? Visibility.Visible : Visibility.Collapsed;
+        bool hasLines = controller.Book.Lines.Count > 0;
+        export.IsEnabled = hasLines;
+        newSession.IsEnabled = hasLines;
         bool generating = controller.IsGeneratingNotes;
         ((TextBlock)notes.Content).Text = generating ? Strings.History_Generating : Strings.Menu_GenerateNotes;
         notes.IsEnabled = !generating && controller.Book.Lines.Count > 0;
@@ -246,8 +273,8 @@ public sealed class HistoryWindow : Window
     /// <summary>列表里的一行。列表回收行时换 DataContext，这里跟着更新。</summary>
     private sealed class RowView : Border
     {
-        private readonly TextBlock time = Caption(SystemColors.GrayTextBrush);
-        private readonly TextBlock label = Caption(SystemColors.GrayTextBrush);
+        private readonly TextBlock time = Caption(null);
+        private readonly TextBlock label = Caption(null);
         private readonly TextBlock note = Caption(NoteOrange);
         private readonly TextBox source = Selectable(13);
         private readonly TextBox original = Selectable(11);
@@ -259,7 +286,7 @@ public sealed class HistoryWindow : Window
             BorderBrush = Hairline;
             BorderThickness = new Thickness(0, 0, 0, 1);
             Typography.SetNumeralAlignment(time, FontNumeralAlignment.Tabular);
-            original.Foreground = SystemColors.GrayTextBrush;
+            original.Opacity = Secondary;
             // 文本框的文字左边有约 2 像素的内边距，标题行对齐它。
             var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(2, 0, 0, 2) };
             header.Children.Add(time);
@@ -274,8 +301,16 @@ public sealed class HistoryWindow : Window
             DataContextChanged += (_, _) => Update(DataContext as Row);
         }
 
-        private static TextBlock Caption(Brush brush) => new() { FontSize = 11, Foreground = brush, Margin = new Thickness(0, 0, 6, 0) };
+        /// <param name="brush">null 时用半透明的前景色（跟着外观变）。</param>
+        private static TextBlock Caption(Brush? brush)
+        {
+            var caption = new TextBlock { FontSize = 11, Margin = new Thickness(0, 0, 6, 0) };
+            if (brush is null) caption.Opacity = Secondary;
+            else caption.Foreground = brush;
+            return caption;
+        }
 
+        /// <summary>只读文本框（可以选中复制）。最小高度清零：Windows 11 风格的主题给文本框设了 32 的最小高度。</summary>
         private static TextBox Selectable(double size) => new()
         {
             IsReadOnly = true,
@@ -283,9 +318,25 @@ public sealed class HistoryWindow : Window
             BorderThickness = new Thickness(0),
             Background = Brushes.Transparent,
             Padding = new Thickness(0),
+            MinHeight = 0,
+            MinWidth = 0,
             TextWrapping = TextWrapping.Wrap,
             FontSize = size,
+            Template = PlainTextTemplate,
         };
+
+        /// <summary>
+        /// 只有文字区域（PART_ContentHost）的最简模板：Fluent 主题的文本框模板在鼠标悬停、点击时画输入框的边框和底色，
+        /// 还会改内边距，只读的字幕行看起来像输入框，行高也跟着跳。所有行共用一个模板。
+        /// </summary>
+        private static readonly ControlTemplate PlainTextTemplate = MakePlainTextTemplate();
+
+        private static ControlTemplate MakePlainTextTemplate()
+        {
+            var template = new ControlTemplate(typeof(TextBox)) { VisualTree = new FrameworkElementFactory(typeof(Decorator), "PART_ContentHost") };
+            template.Seal();
+            return template;
+        }
 
         private void Update(Row? row)
         {
@@ -300,7 +351,7 @@ public sealed class HistoryWindow : Window
             Show(translation, row.Translation);
             translation.FontFamily = row.TargetFont;
             translation.FontWeight = row.Waiting ? FontWeights.Normal : FontWeights.Medium;
-            translation.Foreground = row.Waiting ? SystemColors.GrayTextBrush : SystemColors.ControlTextBrush;
+            translation.Opacity = row.Waiting ? Secondary : 1;
         }
 
         private static void Show(TextBlock block, string? text)

@@ -118,6 +118,30 @@ public class SegmenterTests
         Assert.Equal(["and then"], s.FlushAll());
         Assert.Empty(s.FlushAll());
     }
+
+    [Fact]
+    public void DefaultMaxUnitsMatchesMacOS()
+    {
+        // 2026-10-22 macOS 从 32 降到 24：一条字幕不要太长。
+        Assert.Equal(24, new Segmenter.Config().MaxUnits);
+    }
+
+    [Fact]
+    public void FlushAllSplitsLongTextAtClauseBoundaries()
+    {
+        // 与 macOS 的 flushAll 相同：太长时同样在从句边界切成几条，字幕不会一条占满整个窗口。
+        // 平时送入确认结果时就切好了，这里先用较大的上限攒下一长段，再换成小的上限送出。
+        var s = new Segmenter(new Segmenter.Config(4, 40, 1.5));
+        Assert.Empty(s.AddFinal("we take the matrix and we subtract lambda times the identity, and then we compute the determinant and set it to zero and", T0));
+        s.Settings = new Segmenter.Config(4, 12, 1.5);
+        var output = s.FlushAll();
+        Assert.True(output.Count >= 2);
+        Assert.Equal("we take the matrix and we subtract lambda times the identity,", output[0]);
+        Assert.All(output, o => Assert.True(Segmenter.Units(o) <= 12));
+        Assert.Equal("we take the matrix and we subtract lambda times the identity, and then we compute the determinant and set it to zero and",
+                     string.Join(" ", output));
+        Assert.Empty(s.Pending);
+    }
 }
 
 public class ClaudeStreamTests

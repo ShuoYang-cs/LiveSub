@@ -13,16 +13,34 @@ public enum ChatApiFormat { OpenAI, Anthropic }
 /// 常用服务的模板：填好接口格式和地址，用户只需要填密钥、选模型（与 macOS 的 ChatEndpointPreset 相同）。
 /// 模型名只是示例，以服务商当前文档或“获取列表”为准。
 /// </summary>
+/// <param name="BuiltInId">默认列出的服务的固定 Id（存密钥、判断用户删没删过用，和 macOS 相同）；其他模板没有。</param>
 public sealed record ChatEndpointPreset(string Id, string Name, string ChineseName, ChatApiFormat Format, string BaseUrl,
-                                        IReadOnlyList<string> ExampleModels)
+                                        IReadOnlyList<string> ExampleModels, string? BuiltInId = null)
 {
+    /// <summary>
+    /// 默认就列在“云端模型”里的服务（2026-10-22 macOS 用户要求）：用户只需要填自己的 API 密钥。
+    /// 模型选的是各家快、不思考的那个（实时字幕要快），2026-10-22 按各家官方文档核对；以后可以在“模型服务”里点“获取列表”换。
+    /// </summary>
+    public static readonly IReadOnlyList<ChatEndpointPreset> BuiltIn =
+    [
+        new("openai", "OpenAI", "OpenAI", ChatApiFormat.OpenAI, "https://api.openai.com/v1", ["gpt-5.4-mini"],
+            "B0000001-0000-4000-8000-000000000001"),
+        new("dashscope", "Qwen", "通义千问", ChatApiFormat.OpenAI, "https://dashscope.aliyuncs.com/compatible-mode/v1", ["qwen-flash"],
+            "B0000001-0000-4000-8000-000000000002"),
+        new("deepseek", "DeepSeek", "DeepSeek", ChatApiFormat.OpenAI, "https://api.deepseek.com", ["deepseek-flash"],
+            "B0000001-0000-4000-8000-000000000003"),
+        new("kimi", "Kimi", "Kimi", ChatApiFormat.OpenAI, "https://api.moonshot.cn/v1", ["kimi-k2.6"],
+            "B0000001-0000-4000-8000-000000000004"),
+        new("grok", "Grok", "Grok", ChatApiFormat.OpenAI, "https://api.x.ai/v1", ["grok-4.20-0309-non-reasoning"],
+            "B0000001-0000-4000-8000-000000000005"),
+    ];
+
+    /// <summary>“添加模型服务”菜单里的模板：默认列出的服务在前（删掉后可以从这里加回来）。</summary>
     public static readonly IReadOnlyList<ChatEndpointPreset> All =
     [
+        .. BuiltIn,
         new("anthropic", "Anthropic", "Anthropic", ChatApiFormat.Anthropic, "https://api.anthropic.com",
             [AnthropicModelPolicy.Haiku, AnthropicModelPolicy.Sonnet]),
-        new("openai", "OpenAI", "OpenAI", ChatApiFormat.OpenAI, "https://api.openai.com/v1", []),
-        new("deepseek", "DeepSeek", "DeepSeek", ChatApiFormat.OpenAI, "https://api.deepseek.com/v1", ["deepseek-chat"]),
-        new("dashscope", "Qwen", "通义千问", ChatApiFormat.OpenAI, "https://dashscope.aliyuncs.com/compatible-mode/v1", []),
         new("gemini", "Gemini", "Gemini", ChatApiFormat.OpenAI, "https://generativelanguage.googleapis.com/v1beta/openai", []),
         new("openrouter", "OpenRouter", "OpenRouter", ChatApiFormat.OpenAI, "https://openrouter.ai/api/v1", []),
         new("ollama", "Ollama", "Ollama", ChatApiFormat.OpenAI, "http://localhost:11434/v1", []),

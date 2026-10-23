@@ -127,7 +127,7 @@ public sealed class ClaudeCodeSession : IChatSession
         this.systemPrompt = systemPrompt;
         this.maxTurns = maxTurns;
         this.timeout = timeout ?? ClaudeCli.Timeout;
-        Name = "Claude " + char.ToUpperInvariant(model[0]) + model[1..];
+        Name = "Claude · " + ModelCatalog.ClaudeModelName(model);
     }
 
     /// <summary>提前启动进程，第一句翻译就不用等进程启动。</summary>
@@ -149,8 +149,9 @@ public sealed class ClaudeCodeSession : IChatSession
         });
     }
 
+    /// <param name="attachments">AI 助手的图片和文件：和 Anthropic API 一样的 content 块（<see cref="ClaudeStream.UserMessageLine"/>）。</param>
     public Task<string> RequestAsync(string newSessionMessage, string ongoingMessage, Action<string>? onPartial,
-                                     CancellationToken cancellationToken)
+                                     CancellationToken cancellationToken, IReadOnlyList<ChatAttachment>? attachments = null)
     {
         var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (gate)
@@ -171,8 +172,12 @@ public sealed class ClaudeCodeSession : IChatSession
                 var p = new Pending { Id = id, Completion = completion, OnPartial = onPartial };
                 pending = p;
                 turnsInSession += 1;
-                if (AppLog.DebugLatency) AppLog.Info($"[claude #{id} →] {message}");
-                var bytes = Encoding.UTF8.GetBytes(ClaudeStream.UserMessageLine(message));
+                if (AppLog.DebugLatency)
+                {
+                    var names = string.Join(", ", (attachments ?? []).Select(a => a.Name));
+                    AppLog.Info($"[claude #{id} →] {message}{(names.Length == 0 ? "" : $" [附件 {names}]")}");
+                }
+                var bytes = Encoding.UTF8.GetBytes(ClaudeStream.UserMessageLine(message, attachments));
                 stdin!.Write(bytes);
                 stdin.Flush();
                 p.Timeout = new Timer(_ => OnTimeout(id), null, timeout, System.Threading.Timeout.InfiniteTimeSpan);

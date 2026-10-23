@@ -16,6 +16,8 @@ public static class AssistantPrompt
 
         The transcript comes from speech recognition: expect sound-alike words, broken sentences and missing punctuation. Infer what the speaker actually said.
 
+        The user may attach images (screenshots, slides, photos) or files to a question. Read them together with the transcript; the speaker is often talking about the attached slide or document. Text taken from an attached file appears between [附件：<file name>] and [附件结束：<file name>].
+
         When answering:
         - Answer in {target.PromptName}. Be short and direct (usually 2–6 sentences or a short list): the user is reading while still listening.
         - Most questions are about the last few minutes. Connect the answer to what the speaker just said and the examples used; keep key {source.PromptName} terms in parentheses.
@@ -176,12 +178,14 @@ public enum AssistantRole { User, Assistant }
 public sealed record AssistantSavedFile(string Name, string? Path = null, string? Error = null);
 
 /// <summary>面板里的一条消息。<see cref="Failed"/> 的回答显示为橙色的错误说明。</summary>
-public sealed class AssistantMessage(AssistantRole role, string text, bool failed = false)
+public sealed class AssistantMessage(AssistantRole role, string text, bool failed = false, IReadOnlyList<Chat.AttachmentLabel>? attachments = null)
 {
     public Guid Id { get; } = Guid.NewGuid();
     public AssistantRole Role { get; } = role;
-    /// <summary>显示的文字：回答里要保存成文件的部分不显示，只显示文件名。</summary>
+    /// <summary>显示的文字：回答里要保存成文件的部分不显示，只显示文件名。只带了附件的提问没有文字。</summary>
     public string Text { get; internal set; } = text;
+    /// <summary>提问带的附件（只显示名字）。</summary>
+    public IReadOnlyList<Chat.AttachmentLabel> Attachments { get; } = attachments ?? [];
     public bool Failed { get; internal set; } = failed;
     /// <summary>模型的原始回答（流式输出只会变长）。</summary>
     public string Raw { get; internal set; } = "";
@@ -231,7 +235,10 @@ public sealed class AssistantConversation(DateTime start)
     /// 开始回答一个问题：加上提问和空的回答，返回要发给模型的消息。正在回答上一个问题时返回 null。
     /// </summary>
     /// <param name="speaking">正在说、还没确认的文字。</param>
-    public AssistantQuestion? Begin(string question, IEnumerable<SubtitleLine> lines, string speaking)
+    /// <param name="attachments">提问带的附件（面板上显示名字）。</param>
+    /// <param name="prompt">发给模型的问题；为 null 时就是 <paramref name="question"/>（只带了附件、没写问题时由调用方替用户问一句）。</param>
+    public AssistantQuestion? Begin(string question, IEnumerable<SubtitleLine> lines, string speaking,
+                                    IReadOnlyList<Chat.AttachmentLabel>? attachments = null, string? prompt = null)
     {
         if (IsAnswering) return null;
         var current = lines.Where(l => l.Time >= Start).ToList();
@@ -241,13 +248,14 @@ public sealed class AssistantConversation(DateTime start)
         var all = settled.Select(l => new AssistantPrompt.Line(l.Time, l.Source)).ToList();
         var fresh = settled.Where(l => !sent.Contains(l.Id)).Select(l => new AssistantPrompt.Line(l.Time, l.Source)).ToList();
 
-        messages.Add(new AssistantMessage(AssistantRole.User, question));
+        messages.Add(new AssistantMessage(AssistantRole.User, question, attachments: attachments));
         var answer = new AssistantMessage(AssistantRole.Assistant, "");
         messages.Add(answer);
         answering = answer.Id;
+        var asked = prompt ?? question;
         return new AssistantQuestion(conversation, answer.Id,
-            AssistantPrompt.Message(all, speakingNow, question),
-            AssistantPrompt.Message(fresh, speakingNow, question),
+            AssistantPrompt.Message(all, speakingNow, asked),
+            AssistantPrompt.Message(fresh, speakingNow, asked),
             settled.Select(l => l.Id).ToList());
     }
 
@@ -309,9 +317,9 @@ public sealed class AssistantConversation(DateTime start)
     }
 
     /// <summary>还没发出去就失败了（例如找不到模型服务）：显示提问和错误说明。</summary>
-    public void AddFailure(string question, string message)
+    public void AddFailure(string question, string message, IReadOnlyList<Chat.AttachmentLabel>? attachments = null)
     {
-        messages.Add(new AssistantMessage(AssistantRole.User, question));
+        messages.Add(new AssistantMessage(AssistantRole.User, question, attachments: attachments));
         messages.Add(new AssistantMessage(AssistantRole.Assistant, message, failed: true));
     }
 

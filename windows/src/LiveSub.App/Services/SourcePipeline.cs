@@ -35,6 +35,8 @@ internal sealed class SourcePipeline(int index, SourceKind kind, string? label, 
 
     public IAudioSource? Source;
     public DefaultDeviceWatcher? DeviceWatcher;
+    /// <summary>录音：打开时把这一路的声音存进文件（与 macOS 相同；“两者”时每路一个文件）。采集重新打开时接着用它。</summary>
+    public readonly RecorderSlot Recording = new();
 
     /// <summary>采集线程和界面线程都会用分段器，由它保护。</summary>
     public readonly object ChunkerGate = new();

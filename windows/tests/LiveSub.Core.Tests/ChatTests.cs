@@ -96,8 +96,25 @@ public class RequestBodyTests
     [Fact]
     public void OpenAIBody()
     {
-        var body = RequestBodies.OpenAIChat("deepseek-chat", "SYS", Turns);
-        Assert.Equal("""{"model":"deepseek-chat","messages":[{"role":"system","content":"SYS"},{"role":"user","content":"Hello."},{"role":"assistant","content":"你好。"},{"role":"user","content":"Bye."}],"stream":true}""", body);
+        var body = RequestBodies.OpenAIChat("gpt-5.4-mini", "SYS", Turns);
+        Assert.Equal("""{"model":"gpt-5.4-mini","messages":[{"role":"system","content":"SYS"},{"role":"user","content":"Hello."},{"role":"assistant","content":"你好。"},{"role":"user","content":"Bye."}],"stream":true}""", body);
+    }
+
+    [Fact]
+    public void ThinkingIsTurnedOffOnlyWhereSupported()
+    {
+        // 与 macOS 的 ChatAPITests.thinkingIsTurnedOffOnlyWhereSupported 相同。
+        static JsonElement Body(string model) => JsonDocument.Parse(RequestBodies.OpenAIChat(model, "S", [new(ChatRole.User, "hi")])).RootElement;
+        Assert.Equal("disabled", Body("deepseek-flash").GetProperty("thinking").GetProperty("type").GetString());
+        Assert.Equal("disabled", Body("kimi-k2.6").GetProperty("thinking").GetProperty("type").GetString());
+        Assert.False(Body("qwen-flash").GetProperty("enable_thinking").GetBoolean());
+        Assert.False(Body("qwen-flash").TryGetProperty("thinking", out _));
+        // OpenAI、Grok 收到不认识的参数会报错，不能带；kimi-k3 不能关思考。
+        foreach (var model in new[] { "gpt-5.4-mini", "grok-4.20-0309-non-reasoning", "kimi-k3" })
+        {
+            Assert.False(Body(model).TryGetProperty("thinking", out _));
+            Assert.False(Body(model).TryGetProperty("enable_thinking", out _));
+        }
     }
 
     [Fact]
@@ -156,16 +173,39 @@ public class RequestBodyTests
     {
         var all = ChatEndpointPreset.All;
         Assert.Equal(all.Count, all.Select(p => p.Id).Distinct().Count());
-        Assert.Equal(["Anthropic", "OpenAI", "DeepSeek", "Qwen", "Gemini", "OpenRouter", "Ollama", "LM Studio"], all.Select(p => p.Name));
-        var anthropic = all[0];
+        // 添加菜单里也有默认列出的服务，而且不重复。
+        Assert.Equal(all.Count, all.Select(p => p.Name).Distinct().Count());
+        Assert.Equal(["OpenAI", "Qwen", "DeepSeek", "Kimi", "Grok", "Anthropic", "Gemini", "OpenRouter", "Ollama", "LM Studio"],
+                     all.Select(p => p.Name));
+        var anthropic = all.Single(p => p.Id == "anthropic");
         Assert.Equal(ChatApiFormat.Anthropic, anthropic.Format);
         Assert.Equal("https://api.anthropic.com", anthropic.BaseUrl);
         Assert.Equal(["claude-haiku-5-5", "claude-sonnet-5-5"], anthropic.ExampleModels);
-        Assert.All(all.Skip(1), p => Assert.Equal(ChatApiFormat.OpenAI, p.Format));
+        Assert.All(all.Where(p => p != anthropic), p => Assert.Equal(ChatApiFormat.OpenAI, p.Format));
         Assert.Equal("通义千问", all.Single(p => p.Id == "dashscope").ChineseName);
-        Assert.Equal(["deepseek-chat"], all.Single(p => p.Id == "deepseek").ExampleModels);
+        Assert.Equal(["deepseek-flash"], all.Single(p => p.Id == "deepseek").ExampleModels);
+        Assert.Equal("https://api.deepseek.com", all.Single(p => p.Id == "deepseek").BaseUrl);
         Assert.False(all.Single(p => p.Id == "ollama").RequiresKey);
         Assert.Equal("http://localhost:1234/v1", all.Single(p => p.Id == "lmstudio").BaseUrl);
+    }
+
+    [Fact]
+    public void BuiltInServicesHaveStableIdsAndModels()
+    {
+        // 与 macOS 的 ChatAPITests.builtInServicesHaveStableIDsAndModels 相同，Id 也和 macOS 一样。
+        var presets = ChatEndpointPreset.BuiltIn;
+        Assert.Equal(["OpenAI", "通义千问", "DeepSeek", "Kimi", "Grok"], presets.Select(p => p.ChineseName));
+        Assert.Equal(Enumerable.Range(1, 5).Select(i => $"B0000001-0000-4000-8000-00000000000{i}"), presets.Select(p => p.BuiltInId));
+        Assert.All(presets, p => Assert.True(Guid.TryParse(p.BuiltInId, out _)));
+        Assert.All(presets, p =>
+        {
+            Assert.True(p.RequiresKey);
+            Assert.NotEmpty(p.ExampleModels);
+            Assert.Equal(ChatApiFormat.OpenAI, p.Format);
+        });
+        Assert.Equal(["gpt-5.4-mini", "qwen-flash", "deepseek-flash", "kimi-k2.6", "grok-4.20-0309-non-reasoning"],
+                     presets.Select(p => p.ExampleModels[0]));
+        Assert.All(ChatEndpointPreset.All.Except(presets), p => Assert.Null(p.BuiltInId));
     }
 
     [Fact]

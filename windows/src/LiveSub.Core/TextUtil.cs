@@ -53,4 +53,16 @@ public static class TextUtil
             or UnicodeCategory.DecimalDigitNumber or UnicodeCategory.LetterNumber or UnicodeCategory.OtherNumber => true,
         _ => false,
     };
+
+    /// <summary>
+    /// 文件大小，按十进制单位（和 macOS 的 ByteCountFormatter、资源管理器以外的大多数下载界面一样）：
+    /// 不到 1 MB 写 KB，不到 1 GB 写整数 MB，再大写一位小数的 GB（“37 MB”“1.2 GB”）。
+    /// </summary>
+    public static string FileSize(long bytes, IFormatProvider? provider = null)
+    {
+        provider ??= CultureInfo.CurrentCulture;
+        if (bytes >= 1_000_000_000) return string.Format(provider, "{0:0.0} GB", bytes / 1e9);
+        if (bytes >= 1_000_000) return string.Format(provider, "{0:0} MB", bytes / 1e6);
+        return string.Format(provider, "{0:0} KB", Math.Max(0, bytes) / 1e3);
+    }
 }
