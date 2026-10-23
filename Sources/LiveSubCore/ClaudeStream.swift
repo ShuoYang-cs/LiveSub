@@ -51,12 +51,13 @@ public enum ClaudeStream {
     }
 
     /// 一条 stream-json 输入消息（一行 JSON）。
-    public static func userMessageLine(_ text: String) -> String {
+    /// 附件（图片、PDF）和 Anthropic API 的 content 块格式相同（2026-10-22 用 Claude Code 实测能读）。
+    public static func userMessageLine(_ text: String, attachments: [ChatAttachment] = []) -> String {
         let payload: [String: Any] = [
             "type": "user",
             "message": [
                 "role": "user",
-                "content": [["type": "text", "text": text]],
+                "content": ChatContent.anthropicBlocks(text: text, attachments: attachments),
             ],
         ]
         let data = try! JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])

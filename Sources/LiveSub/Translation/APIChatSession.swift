@@ -4,10 +4,18 @@ import LiveSubCore
 /// 一问一答式的大模型会话：翻译、AI 助手、笔记共用。Claude Code 命令行和 HTTP 接口都实现它。
 protocol ChatSession: Translator {
     /// 会话是新开的（第一次，或轮数用完换了新会话）时发 `newSessionMessage`，否则发 `ongoingMessage`。
-    func request(newSessionMessage: String, ongoingMessage: String,
+    /// `attachments`：随这次提问发送的图片和文件（AI 助手用）。
+    func request(newSessionMessage: String, ongoingMessage: String, attachments: [ChatAttachment],
                  onPartial: @escaping @Sendable (String) -> Void) async throws -> String
     /// 提前准备好，第一次提问不用等。
     func warmUp()
+}
+
+extension ChatSession {
+    func request(newSessionMessage: String, ongoingMessage: String,
+                 onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
+        try await request(newSessionMessage: newSessionMessage, ongoingMessage: ongoingMessage, attachments: [], onPartial: onPartial)
+    }
 }
 
 extension ClaudeTranslator: ChatSession {}
@@ -48,7 +56,7 @@ final class APIChatSession: ChatSession, @unchecked Sendable {
                           ongoingMessage: text, onPartial: onPartial)
     }
 
-    func request(newSessionMessage: String, ongoingMessage: String,
+    func request(newSessionMessage: String, ongoingMessage: String, attachments: [ChatAttachment],
                  onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
         let messages: [ChatMessage] = lock.withLock {
             if let keep = config.historyTurns, history.count > keep * 2 {
@@ -57,7 +65,7 @@ final class APIChatSession: ChatSession, @unchecked Sendable {
                 history = []
             }
             let text = history.isEmpty ? newSessionMessage : ongoingMessage
-            return history + [ChatMessage(role: .user, content: text)]
+            return history + [ChatMessage(role: .user, content: text, attachments: attachments)]
         }
         let task = Task { try await self.stream(messages, onPartial: onPartial) }
         lock.withLock { current = task }

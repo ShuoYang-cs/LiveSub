@@ -26,7 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         overlay = OverlayWindowController(controller: controller, settings: settings, actions: OverlayActions(
             toggleRunning: { [weak self] in self?.controller.toggle() },
             lock: { [weak self] in self?.setClickThrough(true) },
-            showHistory: { [weak self] in self?.showHistory() },
             showSettings: { [weak self] in self?.showSettings() },
             minimize: { [weak self] in self?.hideSubtitles() },
             toggleAssistant: { [weak self] in self?.toggleAssistant() },
@@ -39,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showSubtitles()
         MainThreadWatchdog.shared.start()
 
+        setUpEditMenu()
         setUpStatusItem()
         // ⌃⌥L：显示/收起字幕。
         showHotKey = GlobalHotKey(keyCode: kVK_ANSI_L, modifiers: controlKey | optionKey) { [weak self] in
@@ -48,6 +48,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ProcessInfo.processInfo.environment["LIVESUB_AUTOSTART"] == "1" {
             controller.toggle()
         }
+    }
+
+    /// 菜单栏程序不显示菜单栏，但 ⌘C、⌘V、⌘A、⌘Z 要靠主菜单里的“编辑”菜单才会送到输入框；
+    /// 没有它时，AI 助手、设置、模型服务里的输入框只能右键粘贴（2026-10-22 用测试程序确认过）。
+    private func setUpEditMenu() {
+        let edit = NSMenu(title: L("编辑"))
+        edit.addItem(withTitle: L("撤销"), action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: L("重做"), action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: L("剪切"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: L("拷贝"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: L("粘贴"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: L("全选"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let main = NSMenu()
+        // 第一项是应用程序菜单，“编辑”放在第二项。
+        main.addItem(NSMenuItem())
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        main.addItem(editItem)
+        NSApp.mainMenu = main
     }
 
     /// 应用已经在运行时再次打开它（Spotlight、Finder 双击）：把字幕叫出来。
@@ -110,6 +130,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let status = NSMenuItem(title: controller.status, action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
+        // 字幕锁定时点不到字幕下方提示里的按钮，菜单里也放一个。
+        if controller.systemAudioBlocked {
+            menu.addItem(item("打开系统录音设置", #selector(openSystemAudioSettings)))
+        }
         menu.addItem(.separator())
 
         menu.addItem(item(controller.isRunning ? "停止字幕" : "开始字幕", #selector(toggleRunning), key: "s"))
@@ -288,6 +312,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func generateNotes() { controller.generateNotes() }
     @objc private func newSession() { controller.newSession() }
 
+    @objc private func openSystemAudioSettings() { SystemAudioCapture.openPrivacySettings() }
+
     @objc private func openTranscriptFolder() {
         if let url = controller.transcriptURL {
             NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -303,7 +329,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let view = SettingsView(settings: settings,
                                     onTranslationSettingsChanged: { [weak self] in self?.controller.settingsChanged() },
                                     onAppearanceChanged: { [weak self] in self?.overlay.applyClickThrough() },
-                                    onManageModels: { [weak self] in self?.showModelServices() })
+                                    onManageModels: { [weak self] in self?.showModelServices() },
+                                    onShowHistory: { [weak self] in self?.showHistory() })
             settingsWindow = makeWindow(title: L("LiveSub 设置"), view: view)
         }
         present(settingsWindow!)

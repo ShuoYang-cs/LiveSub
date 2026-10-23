@@ -1,12 +1,14 @@
-import Foundation
+import AppKit
 import LiveSubCore
 import Observation
+import UniformTypeIdentifiers
 
 /// AI 助手对话（通过本机 Claude Code）。
 ///
 /// - 每次开始字幕时新开一个对话；
 /// - 提问时把上次提问以来新增的字幕（和正在说的半句）放在问题前面一起发，Claude 手上一直有完整的字幕记录；
 /// - 会话中途重启（进程退出）时，自动把本次对话以来的全部字幕重新带上。
+/// - 提问可以带图片和文件（拖进面板、粘贴、点回形针选择）。
 @MainActor @Observable
 final class AssistantSession {
     struct Message: Identifiable, Equatable {
@@ -15,6 +17,8 @@ final class AssistantSession {
         let role: Role
         /// 显示的文字：回答里要保存成文件的部分不显示，只显示文件名。
         var text: String
+        /// 提问带的附件（只显示名字）。
+        var attachments: [AttachmentLabel] = []
         var failed = false
         /// 模型的原始回答（流式输出只会变长）。
         var raw = ""
@@ -22,6 +26,22 @@ final class AssistantSession {
         var writingFile = false
         var files: [SavedFile] = []
     }
+
+    /// 附件在界面上显示的样子：名字和是不是图片（决定图标）。
+    struct AttachmentLabel: Equatable {
+        var name: String
+        var isImage: Bool
+    }
+
+    /// 输入框上方等着随下一个问题发送的附件。
+    struct PendingAttachment: Identifiable, Equatable {
+        let id = UUID()
+        let content: ChatAttachment
+        var label: AttachmentLabel { AttachmentLabel(name: content.name, isImage: content.isImage) }
+    }
+
+    /// 一次提问最多带这么多个附件。
+    static let maxAttachments = 10
 
     /// 替用户保存的文件：成功时有位置，失败时有原因。
     struct SavedFile: Equatable {
@@ -34,6 +54,11 @@ final class AssistantSession {
     private(set) var isAnswering = false
     /// 输入框里的文字。
     var draft = ""
+    private(set) var attachments: [PendingAttachment] = []
+    /// 还在读取的附件个数：读完之前不能发送。
+    private(set) var loadingAttachments = 0
+    /// 附件读取失败等提示，显示在输入框上方；下次添加或发送时清掉。
+    private(set) var attachmentNotice: String?
 
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private var session: ChatSession?
@@ -56,6 +81,8 @@ final class AssistantSession {
         session?.shutdown()
         session = nil
         messages = []
+        attachments = []
+        attachmentNotice = nil
         sentIDs = []
         isAnswering = false
         generation += 1
@@ -68,21 +95,114 @@ final class AssistantSession {
         _ = try? makeSessionIfNeeded()
     }
 
+    /// 能不能发送：有文字或附件，附件都读完了，而且不在回答中。
+    var canSend: Bool {
+        !isAnswering && loadingAttachments == 0
+            && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+    }
+
     func send() {
-        let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         // 正在回答时按回车：问题留在输入框里，不清掉。
-        guard !question.isEmpty, !isAnswering else { return }
+        guard canSend else { return }
+        let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         draft = ""
         ask(question)
     }
 
+    // MARK: - 附件
+
+    func addFiles(_ urls: [URL]) {
+        load(urls.map { url in { try AttachmentLoader.load(url) } })
+    }
+
+    func addImageData(_ data: Data, name: String) {
+        load([{ try AttachmentLoader.image(data, name: name) }])
+    }
+
+    /// ⌘V：剪贴板里是文件或图片时作为附件，返回 true；是文字时返回 false，照常粘贴进输入框。
+    func paste(from pasteboard: NSPasteboard) -> Bool {
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           !urls.isEmpty {
+            addFiles(urls)
+            return true
+        }
+        // 从网页、文档里复制的文字有时也附带一张图片：有文字时按文字粘贴。
+        guard pasteboard.string(forType: .string) == nil,
+              let data = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) else { return false }
+        addImageData(data, name: L("粘贴的图片"))
+        return true
+    }
+
+    /// 拖进面板的文件或图片（比如从网页拖来的图）。
+    func drop(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                accepted = true
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in self.addFiles([url]) }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                accepted = true
+                let name = provider.suggestedName ?? L("图片")
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data else { return }
+                    Task { @MainActor in self.addImageData(data, name: name) }
+                }
+            }
+        }
+        return accepted
+    }
+
+    func removeAttachment(_ id: UUID) {
+        attachments.removeAll { $0.id == id }
+        attachmentNotice = nil
+    }
+
+    /// 在后台读取，读完按顺序加到输入框上方；超过上限的、读不了的给出提示。
+    private func load(_ loaders: [@Sendable () throws -> ChatAttachment]) {
+        attachmentNotice = nil
+        loadingAttachments += loaders.count
+        let gen = generation
+        Task {
+            let results = await Task.detached(priority: .userInitiated) {
+                loaders.map { loader -> (ChatAttachment?, String?) in
+                    do { return (try loader(), nil) } catch { return (nil, error.localizedDescription) }
+                }
+            }.value
+            loadingAttachments -= loaders.count
+            guard gen == generation else { return }
+            var notices: [String] = []
+            for (content, error) in results {
+                if let error { notices.append(error); continue }
+                guard let content else { continue }
+                guard attachments.count < Self.maxAttachments else {
+                    notices.append(L("一次最多带 %d 个附件。", Self.maxAttachments))
+                    break
+                }
+                attachments.append(PendingAttachment(content: content))
+            }
+            attachmentNotice = notices.isEmpty ? nil : notices.joined(separator: "\n")
+            appLog.notice("assistant: \(results.count) attachments loaded, \(notices.count) problems")
+        }
+    }
+
+    // MARK: - 提问
+
     func ask(_ question: String) {
-        guard !isAnswering else { return }
+        guard !isAnswering, loadingAttachments == 0 else { return }
+        let files = attachments.map(\.content)
+        let labels = attachments.map(\.label)
+        attachments = []
+        attachmentNotice = nil
+        // 只放了附件、没写问题：替用户问一句。
+        let prompt = question.isEmpty ? L("请看附件。") : question
         let session: ChatSession
         do {
             session = try makeSessionIfNeeded()
         } catch {
-            messages.append(Message(role: .user, text: question))
+            messages.append(Message(role: .user, text: question, attachments: labels))
             messages.append(Message(role: .assistant, text: error.localizedDescription, failed: true))
             return
         }
@@ -94,10 +214,10 @@ final class AssistantSession {
         let speakingNow = (pending + [speaking]).filter { !$0.isEmpty }.joined(separator: " ")
         let all = settled.map { AssistantPrompt.Line(time: $0.time, text: $0.source) }
         let new = settled.filter { !sentIDs.contains($0.id) }.map { AssistantPrompt.Line(time: $0.time, text: $0.source) }
-        let fresh = AssistantPrompt.message(newLines: all, speaking: speakingNow, question: question)
-        let ongoing = AssistantPrompt.message(newLines: new, speaking: speakingNow, question: question)
+        let fresh = AssistantPrompt.message(newLines: all, speaking: speakingNow, question: prompt)
+        let ongoing = AssistantPrompt.message(newLines: new, speaking: speakingNow, question: prompt)
 
-        messages.append(Message(role: .user, text: question))
+        messages.append(Message(role: .user, text: question, attachments: labels))
         let answer = Message(role: .assistant, text: "")
         messages.append(answer)
         isAnswering = true
@@ -106,7 +226,8 @@ final class AssistantSession {
         let gen = generation
         Task {
             do {
-                let reply = try await session.request(newSessionMessage: fresh, ongoingMessage: ongoing) { [weak self] partial in
+                let reply = try await session.request(newSessionMessage: fresh, ongoingMessage: ongoing,
+                                                      attachments: files) { [weak self] partial in
                     Task { @MainActor in self?.update(answerID, partial) }
                 }
                 guard gen == generation else { return }
@@ -216,8 +337,12 @@ final class AssistantSession {
         conversationStart = date
     }
 
-    /// 仅用于 `--render-assistant` 自检：填入示例问答。
-    func debugLoad(_ pairs: [(question: String, answer: String)]) {
+    /// 仅用于 `--render-assistant` 自检：填入示例问答；`attachments` 给第一个问题和输入框上方都放上示例附件。
+    func debugLoad(_ pairs: [(question: String, answer: String)], attachments: [ChatAttachment] = []) {
         messages = pairs.flatMap { [Message(role: .user, text: $0.question), Message(role: .assistant, text: $0.answer)] }
+        guard !attachments.isEmpty, !messages.isEmpty else { return }
+        self.attachments = attachments.map { PendingAttachment(content: $0) }
+        messages[0].attachments = self.attachments.map(\.label)
+        attachmentNotice = L("暂不支持这种文件：%@。可以存成 PDF 或图片再添加。", "slides.key")
     }
 }

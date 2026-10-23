@@ -5,6 +5,12 @@ protocol AudioCapture: AnyObject {
     var label: String { get }
     func start(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws
     func stop()
+    /// 权限把声音挡住了（系统录音没权限时只送来静音，不报错）。
+    var blockedSuspected: Bool { get }
+}
+
+extension AudioCapture {
+    var blockedSuspected: Bool { false }
 }
 
 /// 把非 Sendable 的采集对象交给后台任务启动（采集对象自己负责线程安全）。

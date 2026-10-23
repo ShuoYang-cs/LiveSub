@@ -3,8 +3,11 @@ import LiveSubCore
 import SwiftUI
 
 /// AI 助手面板：第一次打开时放在字幕旁边，按住标题栏可以单独拖到别处，可以打字提问。
-/// 不激活应用（不把焦点从正在用的 App 抢走），只有点输入框时才成为 key 窗口。
+/// 显示面板、点按钮、拖动都不激活应用（不把焦点从正在用的 App 抢走）；只有点输入框时才成为 key 窗口，这时激活本应用。
 final class AssistantPanel: NSPanel {
+    /// 为了输入而激活本应用、还没激活完。
+    private var activatingForInput = false
+
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 380, height: 420),
                    styleMask: [.borderless, .nonactivatingPanel],
@@ -18,6 +21,40 @@ final class AssistantPanel: NSPanel {
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = true
         isReleasedWhenClosed = false
+        // 激活时系统可能把键盘交给本应用上次用过的窗口（例如设置），这里交回给面板。
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.activatingForInput else { return }
+                self.activatingForInput = false
+                if self.isVisible && !self.isKeyWindow { self.makeKey() }
+            }
+        }
+    }
+
+    /// 不激活的面板成为 key 窗口时，原来那个程序不知道自己失去了键盘，它的输入框还在闪光标，
+    /// 两边同时闪，看不出字会打到哪里。所以点输入框时激活本应用，原来的程序就停止闪烁。
+    /// 判断要不要激活不能看 `NSApp.isActive`：不激活的面板成为 key 窗口时它已经是 true，
+    /// 系统的前台程序却还是原来那个（2026-10-22 真实窗口里用日志确认过），所以看系统的前台程序。
+    override func becomeKey() {
+        super.becomeKey()
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        activatingForInput = true
+        NSApp.activate()
+        // 激活完成的通知不一定会来（见上），过一会儿就不再把键盘交回面板，免得之后抢走设置窗口的键盘。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.activatingForInput = false }
+        appLog.notice("assistant panel: activating for input")
+    }
+
+    /// ⌘V 时先问它：剪贴板里是图片或文件就作为附件（返回 true），是文字就照常粘贴进输入框。
+    var onPaste: ((NSPasteboard) -> Bool)?
+
+    // 按键先经过 key 窗口，再到主菜单的“编辑 › 粘贴”，所以在这里能抢先处理附件。
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "v", onPaste?(.general) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     override var canBecomeKey: Bool { true }
@@ -40,6 +77,7 @@ final class AssistantWindowController {
         self.overlay = overlay
         let hosting = NSHostingView(rootView: AssistantView(assistant: assistant, settings: settings, onClose: onClose))
         hosting.sizingOptions = []
+        panel.onPaste = { [weak assistant] pasteboard in assistant?.paste(from: pasteboard) ?? false }
         panel.contentView = ResizeHandleView.container(
             around: hosting, size: panel.frame.size,
             onResize: { [weak self] frame, edges in self?.userResized(to: frame, edges: edges) })
@@ -120,10 +158,20 @@ struct WindowDragArea: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
+/// 鼠标是否停在某个控件上（命令行工具链不能用 @State）。
+@MainActor @Observable
+final class HoverState {
+    var isHovering = false
+}
+
 struct AssistantView: View {
     @Bindable var assistant: AssistantSession
     @Bindable var settings: AppSettings
     let onClose: () -> Void
+    /// 截图自检（--render-assistant --hover）时从外面传入。
+    var modelMenuHover = HoverState()
+    /// 有文件拖到面板上方。
+    var dropTarget = HoverState()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -131,13 +179,23 @@ struct AssistantView: View {
             Divider().overlay(Color.white.opacity(0.12))
             messagesView
             quickQuestions
+            attachmentsBar
             inputBar
         }
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.black.opacity(max(settings.backgroundOpacity, 0.8)))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.blue, lineWidth: 2)
+                .opacity(dropTarget.isHovering ? 1 : 0)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // 文件、截图、网页上的图片拖进面板任何地方都可以。
+        .onDrop(of: [.fileURL, .image], isTargeted: Binding(get: { dropTarget.isHovering }, set: { dropTarget.isHovering = $0 })) {
+            assistant.drop($0)
+        }
         .environment(\.colorScheme, .dark)
     }
 
@@ -150,6 +208,20 @@ struct AssistantView: View {
             }
             .allowsHitTesting(false)
             Spacer()
+            modelMenu
+            iconButton("square.and.pencil", "新对话") { assistant.newConversation() }
+            iconButton("xmark", "收起") { onClose() }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(WindowDragArea())
+    }
+
+    /// 系统的弹出菜单由 AppKit 绘制，改不了悬停样式；自己画标签，鼠标移上去时变蓝。
+    private var modelMenu: some View {
+        Menu {
+            // 用 Picker 让系统画对勾：自己用“按钮 + checkmark 图标”时，菜单宽度不算对勾，
+            // 带对勾的那项会被截断（2026-10-22 真实窗口里“Claude Sonnet”显示成“Claud…onnet”）。
             Picker("模型", selection: $settings.assistantModel) {
                 ForEach(settings.modelGroups(includeApple: false)) { group in
                     Section(group.title) {
@@ -159,17 +231,31 @@ struct AssistantView: View {
                     }
                 }
             }
+            .pickerStyle(.inline)
             .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            .controlSize(.small)
-            .help("回答使用的模型")
-            iconButton("square.and.pencil", "新对话") { assistant.newConversation() }
-            iconButton("xmark", "收起") { onClose() }
+        } label: {
+            HStack(spacing: 3) {
+                Text(settings.displayName(settings.assistantModel))
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+            }
+            .font(.system(size: 12))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(WindowDragArea())
+        // 和字幕上的“⋯”菜单一样：按钮样式才保留自己设的颜色。
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(modelMenuHover.isHovering ? Color.blue : Color.white.opacity(0.85))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color.white.opacity(modelMenuHover.isHovering ? 0.12 : 0)))
+        .contentShape(Capsule())
+        .onHover { modelMenuHover.isHovering = $0 }
+        // 菜单打开期间收不到鼠标移出，关掉菜单时复原，免得一直是蓝色。
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
+            modelMenuHover.isHovering = false
+        }
+        .help("回答使用的模型")
     }
 
     private var messagesView: some View {
@@ -198,16 +284,24 @@ struct AssistantView: View {
     private func bubble(_ message: AssistantSession.Message) -> some View {
         switch message.role {
         case .user:
-            HStack {
-                Spacer(minLength: 40)
-                Text(message.text)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.blue.opacity(0.75)))
-                    .textSelection(.enabled)
+            VStack(alignment: .trailing, spacing: 4) {
+                if !message.text.isEmpty {
+                    HStack {
+                        Spacer(minLength: 40)
+                        Text(message.text)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.blue.opacity(0.75)))
+                            .textSelection(.enabled)
+                    }
+                }
+                ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
+                    attachmentLabel(attachment).foregroundStyle(.white.opacity(0.7))
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         case .assistant:
             VStack(alignment: .leading, spacing: 6) {
                 if message.text.isEmpty && !message.writingFile && message.files.isEmpty {
@@ -265,7 +359,7 @@ struct AssistantView: View {
                             .background(Capsule().fill(Color.white.opacity(0.1)))
                     }
                     .buttonStyle(.plain)
-                    .disabled(assistant.isAnswering)
+                    .disabled(assistant.isAnswering || assistant.loadingAttachments > 0)
                 }
             }
             .padding(.horizontal, 10)
@@ -274,8 +368,64 @@ struct AssistantView: View {
         .padding(.vertical, 6)
     }
 
+    /// 等着随下一个问题发送的附件，每个可以点 × 去掉；读不了的文件在这里提示。
+    @ViewBuilder
+    private var attachmentsBar: some View {
+        if !assistant.attachments.isEmpty || assistant.loadingAttachments > 0 || assistant.attachmentNotice != nil {
+            VStack(alignment: .leading, spacing: 4) {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach(assistant.attachments) { attachment in
+                            HStack(spacing: 4) {
+                                attachmentLabel(attachment.label)
+                                Button { assistant.removeAttachment(attachment.id) } label: {
+                                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("去掉")
+                            }
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.white.opacity(0.1)))
+                        }
+                        if assistant.loadingAttachments > 0 { ProgressView().controlSize(.small) }
+                    }
+                }
+                .scrollIndicators(.never)
+                if let notice = assistant.attachmentNotice {
+                    Text(notice).font(.system(size: 11.5)).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
+        }
+    }
+
+    private func attachmentLabel(_ attachment: AssistantSession.AttachmentLabel) -> some View {
+        Label(attachment.name, systemImage: attachment.isImage ? "photo" : "doc.text")
+            .font(.system(size: 11.5))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(maxWidth: 180, alignment: .leading)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.message = L("选择要发给 AI 助手的图片或文件")
+        FilePanel.present(panel) { [assistant] url in
+            guard url != nil else { return }  // 取消
+            assistant.addFiles(panel.urls)
+        }
+    }
+
     private var inputBar: some View {
         HStack(spacing: 6) {
+            iconButton("paperclip", "添加图片或文件", chooseFiles)
             TextField("输入问题", text: $assistant.draft)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
@@ -296,9 +446,7 @@ struct AssistantView: View {
         .padding(.bottom, 10)
     }
 
-    private var canSend: Bool {
-        !assistant.isAnswering && !assistant.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    private var canSend: Bool { assistant.canSend }
 
     private func iconButton(_ symbol: String, _ help: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {

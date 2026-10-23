@@ -6,7 +6,6 @@ import SwiftUI
 struct OverlayActions {
     var toggleRunning: () -> Void
     var lock: () -> Void
-    var showHistory: () -> Void
     var showSettings: () -> Void
     var minimize: () -> Void
     var toggleAssistant: () -> Void
@@ -190,6 +189,7 @@ struct OverlayView: View {
             // “正在说”放在下面固定高度的一小块里，它的变化不会把上面的字幕往上推。
             scrollingLines
             liveFooter
+            if controller.systemAudioBlocked { systemAudioNotice }
             if showStatus { statusBar }
         }
         .frame(height: height)
@@ -218,6 +218,38 @@ struct OverlayView: View {
         .onGeometryChange(for: CGSize.self) { $0.size } action: { onSize($0) }
     }
 
+    /// 写明在听哪里的声音：新用户默认听的是系统声音，对着麦克风说话不会出字幕。
+    private var listeningText: String {
+        switch settings.audioSource {
+        case .system: L("正在听系统声音…")
+        case .microphone: L("正在听麦克风…")
+        case .both: L("正在听麦克风和系统声音…")
+        }
+    }
+
+    /// 系统录音权限被拒绝时的提示，不受“显示状态条”影响。
+    private var systemAudioNotice: some View {
+        HStack(spacing: 10) {
+            Text("没有系统录音权限，收不到电脑播放的声音。请在“系统设置 › 隐私与安全性 › 屏幕与系统录音”中允许“实时翻译助手”，打开后字幕会自动继续。")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button { SystemAudioCapture.openPrivacySettings() } label: {
+                Text("打开系统设置")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(.white.opacity(0.18)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 6)
+    }
+
     // MARK: - 状态条
 
     /// 一小行：有没有收到声音、识别是否清晰、翻译引擎、积压、最近的错误。
@@ -230,7 +262,7 @@ struct OverlayView: View {
             Text(controller.correcting ? L("识别较难 · 已自动纠正")
                  : controller.recognitionDifficult ? L("识别较难") : L("识别清晰"))
                 .help(controller.correcting ? L("识别置信度较低，已自动按发音纠正识别错误。")
-                      : controller.recognitionDifficult ? L("识别置信度较低。可以在设置 › 更多中打开“自动纠正口音”。")
+                      : controller.recognitionDifficult ? L("识别置信度较低。可以在设置中打开“自动纠正口音”。")
                       : L("识别置信度正常。"))
             separator
             modelMenu
@@ -268,22 +300,21 @@ struct OverlayView: View {
     /// 状态条上的翻译模型：点开可以直接切换到其他模型。
     private var modelMenu: some View {
         Menu {
-            ForEach(settings.modelGroups(includeApple: true)) { group in
-                Section(group.title) {
-                    ForEach(group.choices, id: \.self) { choice in
-                        Button {
-                            settings.translationModel = choice
-                            actions.modelChanged()
-                        } label: {
-                            if choice == settings.translationModel {
-                                Label(settings.displayName(choice), systemImage: "checkmark")
-                            } else {
-                                Text(settings.displayName(choice))
-                            }
+            // 用 Picker 让系统画对勾：自己用“按钮 + checkmark 图标”时，菜单宽度不算对勾，带对勾的那项会被截断。
+            Picker("翻译模型", selection: Binding(get: { settings.translationModel }, set: {
+                settings.translationModel = $0
+                actions.modelChanged()
+            })) {
+                ForEach(settings.modelGroups(includeApple: true)) { group in
+                    Section(group.title) {
+                        ForEach(group.choices, id: \.self) { choice in
+                            Text(settings.displayName(choice)).tag(choice)
                         }
                     }
                 }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
             Divider()
             Button("管理模型服务…", action: actions.manageModels)
         } label: {
@@ -398,7 +429,7 @@ struct OverlayView: View {
     }
 
     private var placeholder: some View {
-        Text(controller.isRunning ? L("正在聆听…") : L("LiveSub 已就绪 · %@", controller.status))
+        Text(controller.isRunning ? listeningText : L("LiveSub 已就绪 · %@", controller.status))
             .font(.system(size: settings.sourceFontSize))
             .foregroundStyle(.white.opacity(0.7))
     }
@@ -487,8 +518,6 @@ struct OverlayView: View {
             } label: {
                 Label("显示", systemImage: "character.bubble")
             }
-            // 往回看最近几句：在字幕上往上滚动即可，不另设菜单项，免得和“字幕记录”混淆。
-            Button(action: actions.showHistory) { Label("字幕记录…", systemImage: "list.bullet.rectangle") }
             Button(action: actions.toggleAssistant) {
                 Label(settings.assistantVisible ? "隐藏 AI 助手" : "显示 AI 助手", systemImage: "sparkles")
             }

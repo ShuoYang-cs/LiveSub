@@ -53,7 +53,7 @@ final class ClaudeTranslator: Translator, @unchecked Sendable {
 
     /// 通用的一问一答。会话是新开的（第一次，或进程重启、轮数用完换了新进程）时发 `newSessionMessage`，
     /// 否则发 `ongoingMessage`——新会话里 Claude 看不到之前的对话，需要把上下文补上。
-    func request(newSessionMessage: String, ongoingMessage: String,
+    func request(newSessionMessage: String, ongoingMessage: String, attachments: [ChatAttachment],
                  onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
@@ -70,9 +70,10 @@ final class ClaudeTranslator: Translator, @unchecked Sendable {
                     self.pending = Pending(id: id, onPartial: onPartial, continuation: continuation)
                     self.turnsInSession += 1
                     if ProcessInfo.processInfo.environment["LIVESUB_DEBUG_CLAUDE"] != nil {
-                        FileHandle.standardError.write(Data("[claude #\(id) →] \(message)\n".utf8))
+                        let names = attachments.map(\.name).joined(separator: ", ")
+                        FileHandle.standardError.write(Data("[claude #\(id) →] \(message)\(names.isEmpty ? "" : " [附件 \(names)]")\n".utf8))
                     }
-                    try self.stdin?.write(contentsOf: Data(ClaudeStream.userMessageLine(message).utf8))
+                    try self.stdin?.write(contentsOf: Data(ClaudeStream.userMessageLine(message, attachments: attachments).utf8))
                     self.queue.asyncAfter(deadline: .now() + self.config.timeout) {
                         guard self.pending?.id == id else { return }
                         self.finish(.failure(TranslatorError.timeout))
@@ -185,6 +186,8 @@ final class ClaudeTranslator: Translator, @unchecked Sendable {
                         .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? ""
                     if ProcessInfo.processInfo.environment["LIVESUB_DEBUG_CLAUDE"] != nil {
                         FileHandle.standardError.write(Data("[claude #\(pending?.id ?? -1) ←] result=\(text.debugDescription) partial=\((pending?.partial ?? "").debugDescription)\n".utf8))
+                        // 原始的 result 事件：里面有这一轮的 token 用量（usage）和折算费用，查用量时用。
+                        FileHandle.standardError.write(Data("[claude #\(pending?.id ?? -1) usage] \(line)\n".utf8))
                     }
                     finish(.success(best.trimmingCharacters(in: .whitespacesAndNewlines)))
                 }

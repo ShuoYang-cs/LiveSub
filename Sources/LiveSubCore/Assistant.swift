@@ -9,6 +9,8 @@ public enum AssistantPrompt {
 
         The transcript comes from speech recognition: expect sound-alike words, broken sentences and missing punctuation. Infer what the speaker actually said.
 
+        The user may attach images (screenshots, slides, photos) or files to a question. Read them together with the transcript; the speaker is often talking about the attached slide or document. Text taken from an attached file appears between [附件：<file name>] and [附件结束：<file name>].
+
         When answering:
         - Answer in \(target.promptName). Be short and direct (usually 2–6 sentences or a short list): the user is reading while still listening.
         - Most questions are about the last few minutes. Connect the answer to what the speaker just said and the examples used; keep key \(source.promptName) terms in parentheses.

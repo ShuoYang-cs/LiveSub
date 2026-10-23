@@ -216,6 +216,8 @@ final class AnalyzerEngine: SpeechEngine, @unchecked Sendable {
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: localeID)) else {
             throw TranscriptionError.unsupportedLocale(localeID)
         }
+        var reportingOptions = reportingOptions
+        if ProcessInfo.processInfo.environment["LIVESUB_NO_FAST_RESULTS"] != nil { reportingOptions.remove(.fastResults) }
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [],
                                             reportingOptions: reportingOptions, attributeOptions: attributeOptions)
         if await AssetInventory.status(forModules: [transcriber]) != .installed,

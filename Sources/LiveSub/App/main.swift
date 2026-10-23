@@ -28,7 +28,8 @@ func runTranscribeFile(_ path: String) async {
                 print("\(stamp()) ~ \(text)")
             case .final(let result):
                 let conf = result.confidences.isEmpty ? 0 : result.confidences.reduce(0, +) / Double(result.confidences.count)
-                print("\(stamp()) = \(result.text)  [conf \(String(format: "%.2f", conf))]")
+                let audioEnd = result.end.map { String(format: " end %.2f", $0) } ?? ""
+                print("\(stamp()) = \(result.text)  [conf \(String(format: "%.2f", conf))\(audioEnd)]")
                 for s in await segmenter.add(result.text) { print("\(stamp()) >>> SEGMENT: \(s)") }
             case .filtered(let text):
                 print("\(stamp()) x FILTERED: \(text)")
@@ -36,7 +37,7 @@ func runTranscribeFile(_ path: String) async {
         })
         let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
         let format = file.processingFormat
-        print("[file] \(file.length) frames @ \(format.sampleRate) Hz, \(format.channelCount) ch")
+        print("\(stamp()) [file] \(file.length) frames @ \(format.sampleRate) Hz, \(format.channelCount) ch")
         if arguments.contains("--realtime") {
             let capture = FileCapture(url: URL(fileURLWithPath: path))
             try capture.start { engine.append($0) }
@@ -135,7 +136,7 @@ if let out = option("--render-window") {
         controller.loadPreview()
         let overlay = OverlayWindowController(
             controller: controller, settings: AppSettings.shared,
-            actions: OverlayActions(toggleRunning: {}, lock: {}, showHistory: {}, showSettings: {}, minimize: {}, toggleAssistant: {}, modelChanged: {}, manageModels: {}))
+            actions: OverlayActions(toggleRunning: {}, lock: {}, showSettings: {}, minimize: {}, toggleAssistant: {}, modelChanged: {}, manageModels: {}))
         overlay.state.isHovering = arguments.contains("--hover")
         overlay.panel.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         overlay.show()
@@ -157,7 +158,7 @@ if arguments.contains("--stress-overlay") {
         let controller = SubtitleController(settings: AppSettings.shared)
         let overlay = OverlayWindowController(
             controller: controller, settings: AppSettings.shared,
-            actions: OverlayActions(toggleRunning: {}, lock: {}, showHistory: {}, showSettings: {}, minimize: {}, toggleAssistant: {}, modelChanged: {}, manageModels: {}))
+            actions: OverlayActions(toggleRunning: {}, lock: {}, showSettings: {}, minimize: {}, toggleAssistant: {}, modelChanged: {}, manageModels: {}))
         overlay.panel.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         overlay.show()
         var maxGap = 0.0, last = Date(), n = 0, ticks = 0
@@ -218,7 +219,7 @@ if arguments.contains("--test-watchdog") {
     dispatchMain()
 }
 
-// AI 助手端到端自检（真的调用 Claude）：--assistant-test <字幕记录.md> [--ask "问题"]
+// AI 助手端到端自检（真的调用 Claude）：--assistant-test <字幕记录.md> [--ask "问题"] [--attach 文件]...（可以多个附件）
 // 先只给前一半字幕问一次，再给全部字幕问一次（验证“新会话带全部字幕 / 之后只带新增字幕”）。
 if let path = option("--assistant-test") {
     MainActor.assumeIsolated {
@@ -251,6 +252,14 @@ if let path = option("--assistant-test") {
         if let question = option("--ask") {
             // 自定义问题（例如让它把总结存成文件），带上全部字幕。
             visible = entries
+            let files = arguments.indices.filter { arguments[$0] == "--attach" && $0 + 1 < arguments.count }
+                .map { URL(fileURLWithPath: arguments[$0 + 1]) }
+            if !files.isEmpty {
+                assistant.addFiles(files)
+                while assistant.loadingAttachments > 0 { RunLoop.main.run(until: Date().addingTimeInterval(0.1)) }
+                for a in assistant.attachments { print("[attach] \(a.content.name) \(a.content)".prefix(160)) }
+                if let notice = assistant.attachmentNotice { print("[notice] \(notice)") }
+            }
             ask(question)
             for file in assistant.messages.last?.files ?? [] {
                 print("[file] \(file.url?.path ?? "-") \(file.error ?? "")")
@@ -267,17 +276,22 @@ if let path = option("--assistant-test") {
     exit(0)
 }
 
-// AI 助手面板离屏截图：--render-assistant out.png
+// AI 助手面板离屏截图：--render-assistant out.png [--hover]（模型菜单画成鼠标停在上面的样子）[--attachments]（放上示例附件）
 if let out = option("--render-assistant") {
     MainActor.assumeIsolated {
         let assistant = AssistantSession(settings: AppSettings.shared)
         assistant.debugLoad([
             ("在讲哪个算法？", "在讲用动态规划（**bottom-up**）求**最长公共子序列**（LCS）：用二维表 `c[i][j]` 填 X=53142、Y=23145，先把第 0 行和第 0 列初始化为 0。"),
             ("最后几分钟讲到哪一步了？", "开始填非基础格子了：两个末尾字符不相等时取 `max(c[i-1][j], c[i][j-1])`。"),
-        ])
+        ], attachments: arguments.contains("--attachments")
+            ? [.image(name: "截屏 2026-10-22 下午3.12.04.png", mediaType: "image/png", data: Data()),
+               .pdf(name: "Lecture 12 - Dynamic Programming.pdf", data: Data(), text: "")] : [])
         let window = NSWindow(contentRect: NSRect(x: -20000, y: -20000, width: 380, height: 420), styleMask: [.borderless],
                               backing: .buffered, defer: false)
-        window.contentView = NSHostingView(rootView: AssistantView(assistant: assistant, settings: AppSettings.shared, onClose: {}))
+        let hover = HoverState()
+        hover.isHovering = arguments.contains("--hover")
+        window.contentView = NSHostingView(rootView: AssistantView(assistant: assistant, settings: AppSettings.shared, onClose: {},
+                                                                   modelMenuHover: hover))
         window.orderFrontRegardless()
         RunLoop.main.run(until: Date().addingTimeInterval(1.5))
         guard let view = window.contentView,
@@ -313,13 +327,11 @@ if let path = option("--export-test"), let i = arguments.firstIndex(of: "--expor
     dispatchMain()
 }
 
-// 设置窗口离屏截图：--render-settings out.png [--more]（展开“更多”） [--height 1100]
+// 设置窗口离屏截图：--render-settings out.png [--height 1100]
 if let out = option("--render-settings") {
     MainActor.assumeIsolated {
-        let state = SettingsViewState()
-        state.showMore = arguments.contains("--more")
         let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(
-            settings: AppSettings.shared, state: state, onTranslationSettingsChanged: {}, onAppearanceChanged: {}, onManageModels: {})))
+            settings: AppSettings.shared, onTranslationSettingsChanged: {}, onAppearanceChanged: {}, onManageModels: {}, onShowHistory: {})))
         if let height = option("--height").flatMap(Double.init) { window.setContentSize(NSSize(width: 480, height: height)) }
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderFrontRegardless()

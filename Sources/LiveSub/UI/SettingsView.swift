@@ -2,18 +2,12 @@ import AppKit
 import LiveSubCore
 import SwiftUI
 
-/// 设置窗口的界面状态（命令行工具链不能用 @State）。
-@MainActor @Observable
-final class SettingsViewState {
-    var showMore = false
-}
-
 struct SettingsView: View {
     @Bindable var settings: AppSettings
-    var state = SettingsViewState()
     let onTranslationSettingsChanged: () -> Void
     let onAppearanceChanged: () -> Void
     let onManageModels: () -> Void
+    let onShowHistory: () -> Void
 
     var body: some View {
         Form {
@@ -56,9 +50,20 @@ struct SettingsView: View {
                         Button("管理…", action: onManageModels)
                     }
                 }
+                // 只有用到 Claude Code 时才需要；一般能自动找到。
+                if usesClaudeCode {
+                    TextField("Claude 路径", text: $settings.claudePath, prompt: Text("自动查找"))
+                }
                 if !settings.sourceLanguage.hasPrefix("zh") {
                     Toggle("过滤中文说话声", isOn: $settings.filterChinese)
                         .help("识别并忽略中文说话声，例如周围的交谈。")
+                }
+                Toggle("自动纠正口音", isOn: $settings.autoCorrect)
+                    .help("讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Apple 本地翻译时不可用。")
+                if settings.autoCorrect {
+                    Toggle("纠正时保留识别原文", isOn: $settings.keepOriginalText)
+                        .help("纠正修改了原文时，在字幕记录中同时保留识别器原来的文字。")
+                        .padding(.leading, 14)
                 }
             }
 
@@ -81,50 +86,39 @@ struct SettingsView: View {
                         }
                     }
                 }
+                Toggle("显示状态条", isOn: $settings.showStatusBar)
+                    .help("在字幕底部显示音频输入、识别与翻译状态。")
+                Toggle("锁定字幕", isOn: $settings.clickThrough)
+                    .onChange(of: settings.clickThrough) { onAppearanceChanged() }
             }
 
-            // “更多”用普通的分组行（和上面两组一样的行高和分隔线），点标题展开或收起。
-            Section {
-                if state.showMore {
-                    Toggle("显示状态条", isOn: $settings.showStatusBar)
-                        .help("在字幕底部显示音频输入、识别与翻译状态。")
-                    Toggle("自动纠正口音", isOn: $settings.autoCorrect)
-                        .help("讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Apple 本地翻译时不可用。")
-                    if settings.autoCorrect {
-                        Toggle("纠正时保留识别原文", isOn: $settings.keepOriginalText)
-                            .help("纠正修改了原文时，在字幕记录中同时保留识别器原来的文字。")
-                            .padding(.leading, 14)
+            Section("记录") {
+                LabeledContent("字幕记录") {
+                    HStack {
+                        Text("本次的原文和译文").foregroundStyle(.secondary)
+                        Button("查看…", action: onShowHistory)
                     }
-                    Toggle("锁定字幕", isOn: $settings.clickThrough)
-                        .onChange(of: settings.clickThrough) { onAppearanceChanged() }
-                    LabeledContent("记录文件夹") {
-                        HStack {
-                            Text((settings.transcriptFolder as NSString).abbreviatingWithTildeInPath)
-                                .lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
-                            Button("更改…", action: chooseFolder)
-                        }
-                    }
-                    TextField("Claude 路径", text: $settings.claudePath, prompt: Text("自动查找"))
                 }
-            } header: {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { state.showMore.toggle() }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .rotationEffect(.degrees(state.showMore ? 90 : 0))
-                        Text("更多")
+                LabeledContent("记录文件夹") {
+                    HStack {
+                        Text((settings.transcriptFolder as NSString).abbreviatingWithTildeInPath)
+                            .lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary)
+                        Button("更改…", action: chooseFolder)
                     }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
             }
         }
         .formStyle(.grouped)
+        .modifier(WindowBackgroundDrag())
         .frame(width: 480)
         .frame(minHeight: 600)
         .onChange(of: translationKey) { onTranslationSettingsChanged() }
+    }
+
+    private var usesClaudeCode: Bool {
+        [settings.translationModel, settings.assistantModel].contains {
+            if case .claudeCode = $0 { true } else { false }
+        }
     }
 
     /// 一个滑块同时调译文和原文字号（原文约为译文的 0.62 倍）。
@@ -159,6 +153,18 @@ struct SettingsView: View {
         panel.directoryURL = URL(fileURLWithPath: (settings.transcriptFolder as NSString).expandingTildeInPath)
         FilePanel.present(panel) { [settings] url in
             if let url { settings.transcriptFolder = url.path }
+        }
+    }
+}
+
+/// 按住空白处或文字也能拖动窗口，不只是标题栏（macOS 15 起；更早的系统只能拖标题栏）。
+/// 按钮、开关等控件先处理自己的点击，不会被当成拖动。
+struct WindowBackgroundDrag: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.gesture(WindowDragGesture())
+        } else {
+            content
         }
     }
 }

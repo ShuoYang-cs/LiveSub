@@ -69,6 +69,8 @@ final class SubtitleController {
     /// 状态条：最近的输入音量（0…1）、多久没有声音、翻译积压句数、识别是否困难、最近的错误。
     private(set) var inputLevel: Float = 0
     private(set) var silentFor: TimeInterval = 0
+    /// 系统录音权限被拒绝了：收到的只有静音（字幕下方提示去系统设置里打开）。
+    private(set) var systemAudioBlocked = false
     private(set) var backlog = 0
     private(set) var recognitionDifficult = false
     private(set) var alert: String?
@@ -217,6 +219,7 @@ final class SubtitleController {
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
         activity = nil
         isRunning = false
+        systemAudioBlocked = false
         ticker?.invalidate()
         ticker = nil
         let current = pipelines
@@ -383,6 +386,11 @@ final class SubtitleController {
 
     private func tick() {
         updateInputStatus()
+        let blocked = pipelines.contains { $0.capture.blockedSuspected }
+        if blocked != systemAudioBlocked {
+            systemAudioBlocked = blocked
+            appLog.notice("system audio: permission \(blocked ? "denied" : "allowed", privacy: .public)")
+        }
         if alert != nil, Date().timeIntervalSince(alertAt) > 10 { alert = nil }
         for p in pipelines {
             // 声音停了（1.2 秒没收到音频）但还有没确认的半句：让识别器立即确认，好送去翻译。

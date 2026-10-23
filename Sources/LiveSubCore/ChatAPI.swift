@@ -12,9 +12,12 @@ public struct ChatMessage: Equatable, Sendable {
     public enum Role: String, Sendable { case user, assistant }
     public var role: Role
     public var content: String
-    public init(role: Role, content: String) {
+    /// 随这条消息发送的图片和文件（只有 AI 助手的提问会带）。
+    public var attachments: [ChatAttachment]
+    public init(role: Role, content: String, attachments: [ChatAttachment] = []) {
         self.role = role
         self.content = content
+        self.attachments = attachments
     }
 }
 
@@ -58,16 +61,25 @@ public enum ChatAPI {
     /// 流式对话请求的 JSON。
     public static func requestBody(format: ChatAPIFormat, model: String, system: String,
                                    messages: [ChatMessage], maxTokens: Int = 4096) -> Data {
-        let turns = messages.map { ["role": $0.role.rawValue, "content": $0.content] }
         var body: [String: Any]
         switch format {
         case .openAI:
+            let turns = messages.map { message -> [String: Any] in
+                let content: Any = message.attachments.isEmpty
+                    ? message.content : ChatContent.openAIContent(text: message.content, attachments: message.attachments)
+                return ["role": message.role.rawValue, "content": content]
+            }
             body = [
                 "model": model,
                 "messages": [["role": "system", "content": system]] + turns,
                 "stream": true,
             ]
         case .anthropic:
+            let turns = messages.map { message -> [String: Any] in
+                let content: Any = message.attachments.isEmpty
+                    ? message.content : ChatContent.anthropicBlocks(text: message.content, attachments: message.attachments)
+                return ["role": message.role.rawValue, "content": content]
+            }
             body = [
                 "model": model,
                 "max_tokens": maxTokens,
