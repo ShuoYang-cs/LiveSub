@@ -19,7 +19,7 @@
   - 发现、没改：设置窗口和“模型服务”窗口会被系统自动合成一个窗口的两个标签页（用户的系统设置可能是“总是用标签页”），要不要禁止合并等用户决定。
   - Windows 版还没有附件功能，也没有跟着改设置和菜单。
 - Windows 版 0.1 在 `windows/`，用 C#、WPF 写成，能编译，Core 测试 176 个通过。用户在 Windows 上跑过麦克风权限的测试；2026-10-21 和 macOS 对齐的大批改动只编译过，还没在 Windows 上运行。
-- 代码在 GitHub 仓库 `ShuoYang-cs/LiveSub`（2026-10-20 第一次提交；2026-10-22 用户要求改为公开，提交作者邮箱和 CLAUDE.md、HANDOFF.md 都照常公开）。macOS 版 2026-10-22 的改动（提交 `dcb8fa2`）和安装说明、打包脚本（`728fc51`）已在 main；Windows 版和本文件还没提交。Windows 电脑上要 clone 到 `G:\LiveSub`；两边的项目都关联为 `livesub`，用于 Agent Sync 跨电脑同步对话。
+- 代码在 GitHub 仓库 `ShuoYang-cs/LiveSub`（2026-10-20 第一次提交；2026-10-22 用户要求改为公开，提交作者邮箱和 CLAUDE.md、HANDOFF.md 都照常公开）。2026-10-22 下午全部提交并推送到 main（`6a3ae4e`）：Windows 版对齐 macOS（`987dedc`）、macOS 附件和设置等改动（`189ff51`）、合并 Haotian 的 HTZHU 分支。已删除合并过的 `mac-2026-10-22` 分支；HTZHU 是 Haotian 的分支，留着没删。main 加了规则集“Protect main”：禁止删除和强制推送，改动要走 PR，仓库管理员（用户）可以绕过，照样直接推送。Windows 电脑上要 clone 到 `G:\LiveSub`；两边的项目都关联为 `livesub`，用于 Agent Sync 跨电脑同步对话。
 
 ## 待办
 
