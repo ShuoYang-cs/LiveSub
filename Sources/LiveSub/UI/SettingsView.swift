@@ -111,10 +111,6 @@ struct SettingsView: View {
                         Button("管理…", action: onManageModels)
                     }
                 }
-                if !settings.sourceLanguage.hasPrefix("zh") {
-                    Toggle("过滤周围的中文交谈", isOn: $settings.filterChinese)
-                        .help("周围有人用中文聊天时，这些话不会出现在字幕里，只保留讲话语言的内容。")
-                }
                 Toggle("自动纠正口音", isOn: $settings.autoCorrect)
                     .help("讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Google 翻译或 Apple 本地翻译时，纠正期间临时改用 Claude Sonnet，需要本机已登录 Claude Code。")
                 if settings.autoCorrect {
@@ -137,9 +133,6 @@ struct SettingsView: View {
                 slider("字号", value: fontSize, range: 14...56, text: "\(Int(settings.translationFontSize)) pt")
                 slider("背景", value: $settings.backgroundOpacity, range: 0...1,
                        text: "\(Int((settings.backgroundOpacity * 100).rounded()))%")
-                if !settings.fixedOverlayHeight {
-                    Stepper(L("显示最近 %d 句", settings.visibleLines), value: $settings.visibleLines, in: 1...6)
-                }
                 LabeledContent("大小") {
                     Button("恢复默认", action: onResetOverlay)
                         .help("拖动字幕边框可以调整大小。点这里让字幕恢复默认大小，移回屏幕右上角；AI 助手回到字幕旁边。")
@@ -228,7 +221,7 @@ struct SettingsView: View {
     private var translationKey: String {
         [settings.sourceLanguage, settings.targetLanguage, settings.audioSource.rawValue,
          settings.displayName(settings.translationModel), settings.claudePath,
-         String(settings.filterChinese), String(settings.micNoiseReduction),
+         String(settings.micNoiseReduction),
          String(settings.autoCorrect)].joined(separator: "\u{1}")
     }
 

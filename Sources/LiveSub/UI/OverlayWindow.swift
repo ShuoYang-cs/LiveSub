@@ -307,8 +307,10 @@ final class OverlayWindowController {
             around: hosting, size: panel.frame.size,
             onResize: { [weak self] frame, edges in self?.userResized(to: frame, edges: edges) },
             onDoubleClick: { [weak self] edges in
-                // 双击上/下边框：恢复按“显示最近 N 句”算的高度。
-                if !edges.isDisjoint(with: [.top, .bottom]) { self?.settings.overlayHeight = 0 }
+                // 双击上/下边框：恢复默认高度（宽度、底边不动）。
+                if !edges.isDisjoint(with: [.top, .bottom]) {
+                    self?.settings.overlayHeight = AppSettings.defaultOverlaySize.height
+                }
             })
     }
 
@@ -316,7 +318,7 @@ final class OverlayWindowController {
     private func userResized(to proposed: NSRect, edges: ResizeHandleView.Edges) {
         var frame = proposed
         if edges.isDisjoint(with: [.top, .bottom]) {
-            // 只拖左右时高度不变（仍按“显示最近 N 句”算）。
+            // 只拖左右时高度不变。
             frame.origin.y = panel.frame.origin.y
             frame.size.height = panel.frame.height
         }

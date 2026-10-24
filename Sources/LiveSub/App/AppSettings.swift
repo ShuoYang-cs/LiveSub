@@ -168,8 +168,6 @@ final class AppSettings {
         }
     }
     static let claudeModels = ["haiku", "sonnet", "opus"]
-    /// 并行跑一个中文识别器，过滤掉旁边的中文说话声（讲话语言不是中文时才有效）。
-    var filterChinese: Bool { didSet { save("filterChinese", filterChinese) } }
     /// 麦克风降噪（系统语音处理：降噪、回声消除、自动增益）。
     var micNoiseReduction: Bool { didSet { save("micNoiseReduction", micNoiseReduction) } }
     /// 字幕底部的运行状态条（有没有声音、识别是否清晰、翻译积压）。
@@ -243,7 +241,6 @@ final class AppSettings {
         } else {
             claudeTranslationModel = d.string(forKey: "claudeTranslationModel") ?? "haiku"
         }
-        filterChinese = d.object(forKey: "filterChinese") as? Bool ?? true
         if case .claudeCode(let m) = assistant, d.string(forKey: "claudeAssistantModel") == nil {
             claudeAssistantModel = m
         } else {
@@ -277,10 +274,6 @@ final class AppSettings {
     var target: LanguageOption { LanguageOption.target(targetLanguage) }
     /// 字幕语言是中文/日文/韩文（用来清理 Claude 偶尔混进译文的英文自言自语）。
     var targetIsCJK: Bool { ["zh", "ja", "ko"].contains { target.translationCode.hasPrefix($0) } }
-    var fixedOverlayHeight: Bool {
-        get { overlayHeight > 0 }
-        set { overlayHeight = newValue ? 260 : 0 }
-    }
     /// 字幕窗口的默认大小：面积是屏幕的 1/16，宽高比 3:1（和 ICT 一样）。
     static var defaultOverlaySize: (width: Double, height: Double) {
         let screen = (NSScreen.main ?? NSScreen.screens.first)?.frame.size ?? NSSize(width: 1470, height: 956)
@@ -294,8 +287,9 @@ final class AppSettings {
         overlayHeight = size.height
     }
 
-    /// 用来识别“旁边有人说中文”的哨兵识别语言；不需要过滤时为 nil。
-    var guardLocale: String? { filterChinese && !sourceLanguage.hasPrefix("zh") ? "zh-CN" : nil }
+    /// 用来识别“旁边有人说中文”的哨兵识别语言：并行跑一个中文识别器，过滤掉旁边的中文说话声。
+    /// 自动开启，讲话语言是中文时不需要，为 nil。
+    var guardLocale: String? { !sourceLanguage.hasPrefix("zh") ? "zh-CN" : nil }
 
     private func save(_ key: String, _ value: Any) {
         defaults.set(value, forKey: key)

@@ -194,7 +194,7 @@ struct OverlayView: View {
 
     private var mode: DisplayMode { settings.displayMode }
 
-    /// 窗口高度：用户拖动上下边框设定的高度，没拖过时按“显示最近 N 句”算。
+    /// 窗口高度：用户拖动上下边框设定的高度，没设过的旧设置（overlayHeight 为 0）按存下的“显示最近 N 句”算。
     /// 只随设置变化，不随字幕内容变化：字幕生成时窗口不会忽高忽低，旁边的 AI 助手也不受影响。
     /// 状态条算在高度以内（否则拖动上下边框时窗口会越拖越高）。
     private var height: CGFloat { settings.overlayHeight > 0 ? settings.overlayHeight : autoHeight }
