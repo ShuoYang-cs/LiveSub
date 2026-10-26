@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.appearance = settings.appearance.nsAppearance
         BackgroundCursor.enable()
         Task { await LocalServiceDetector.run(settings: settings) }
+        UpdateManager.shared.start()
         // 提前读好终端里的登录环境变量，第一次翻译时不用等。
         DispatchQueue.global(qos: .utility).async { _ = ClaudeCLI.shellEnvironment() }
         overlay = OverlayWindowController(controller: controller, settings: settings, actions: OverlayActions(

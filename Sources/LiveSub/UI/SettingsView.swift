@@ -144,6 +144,22 @@ struct SettingsView: View {
                     .onChange(of: settings.clickThrough) { onAppearanceChanged() }
             }
 
+            Section("更新") {
+                Toggle("自动检查更新", isOn: Bindable(UpdateManager.shared).autoCheck)
+                LabeledContent(L("当前版本 %@", UpdateManager.currentVersion)) {
+                    HStack {
+                        let updates = UpdateManager.shared
+                        if case .available(let release) = updates.phase {
+                            Text(L("有新版本 %@", release.version)).foregroundStyle(.secondary)
+                            Button("更新", action: updates.install)
+                        } else {
+                            Text(updates.statusText).foregroundStyle(.secondary)
+                            Button("检查更新", action: updates.checkNow).disabled(updates.checking)
+                        }
+                    }
+                }
+            }
+
             Section("记录") {
                 LabeledContent("字幕记录") {
                     Button("查看…", action: onShowHistory)

@@ -413,6 +413,11 @@ if let path = option("--transcribe-file") {
     dispatchMain()
 }
 
+// 更新：下载好的新版以这个参数启动，等旧进程退出后把自己装到位（见 UpdateManager）。
+if let i = arguments.firstIndex(of: "--apply-update"), i + 2 < arguments.count, let pid = Int32(arguments[i + 2]) {
+    exit(UpdateApplier.apply(target: URL(fileURLWithPath: arguments[i + 1]), waitFor: pid))
+}
+
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     let delegate = AppDelegate()

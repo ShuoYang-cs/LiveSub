@@ -546,8 +546,9 @@ struct OverlayView: View {
             .font(.system(size: 11))
             .lineLimit(1)
             .padding(.horizontal, 18)
+            updateBanner
             // 第一次使用：基础翻译够用，更准的翻译、AI 助手和纠正口音要换模型。
-            if !settings.hasStartedOnce, controller.alert == nil, !settings.translationModel.isLanguageModel {
+            if !settings.hasStartedOnce, controller.alert == nil, UpdateManager.shared.phase == .idle, !settings.translationModel.isLanguageModel {
                 Text("现在用基础翻译，开箱即用。想要更准的翻译、AI 助手和自动纠正口音，到设置里选 Claude 或自己的模型。")
                     .font(.system(size: 11))
                     .foregroundStyle(palette.fg.opacity(0.65))
@@ -563,6 +564,52 @@ struct OverlayView: View {
                 .fill(palette.bg.opacity(controller.lines.isEmpty ? 0 : 0.5))
                 .allowsHitTesting(false)
         }
+    }
+
+    /// 有新版本时开始按钮下面的一行：更新 / 稍后 / 跳过此版本。
+    @ViewBuilder
+    private var updateBanner: some View {
+        let updates = UpdateManager.shared
+        switch updates.phase {
+        case .idle:
+            EmptyView()
+        case .available(let release):
+            HStack(spacing: 8) {
+                Text(L("有新版本 %@", release.version)).font(.system(size: 11, weight: .semibold))
+                bannerButton("更新", prominent: true) { updates.install() }
+                bannerButton("稍后") { updates.later() }
+                bannerButton("跳过此版本") { updates.skip() }
+            }
+            .foregroundStyle(palette.fg)
+            .padding(.horizontal, 18)
+        case .downloading(let fraction):
+            HStack(spacing: 8) {
+                ProgressView(value: fraction).frame(width: 120)
+                Text(L("正在下载新版本… %d%%", Int(fraction * 100))).font(.system(size: 11))
+            }
+            .foregroundStyle(palette.fg.opacity(0.8))
+        case .installing:
+            Text("正在安装，完成后会自动重新打开…").font(.system(size: 11)).foregroundStyle(palette.fg.opacity(0.8))
+        case .failed(let message):
+            HStack(spacing: 8) {
+                Text(message).font(.system(size: 11)).foregroundStyle(.orange).lineLimit(3)
+                bannerButton("好") { updates.dismissFailure() }
+            }
+            .padding(.horizontal, 18)
+        }
+    }
+
+    private func bannerButton(_ title: String, prominent: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(L(title))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(prominent ? palette.bg : palette.fg)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(prominent ? palette.fg : palette.fg.opacity(0.18)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
