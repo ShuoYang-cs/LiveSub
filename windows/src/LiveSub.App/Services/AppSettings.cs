@@ -93,6 +93,12 @@ public sealed class AppSettings
     /// 空表示设置文件里没有这一项：设置文件已经存在的老用户记为 true，全新安装记为 false（见 Load）。
     /// </summary>
     public bool? HasStartedOnce { get; set; }
+    /// <summary>自动检查更新（默认开）。</summary>
+    public bool AutoCheckUpdates { get; set; } = true;
+    /// <summary>用户选了“跳过此版本”的版本号。</summary>
+    public string SkippedVersion { get; set; } = "";
+    public DateTime? LastUpdateSuccess { get; set; }
+    public DateTime? LastUpdateAttempt { get; set; }
     /// <summary>已经替用户加进模型服务的本机服务地址（Ollama、LM Studio）：用户删掉后不再自动加回来。</summary>
     public List<string> OfferedLocalServices { get; set; } = [];
     /// <summary>本次启动时检测到的：本机装了 Claude Code、正在运行的本机服务地址。不保存。</summary>

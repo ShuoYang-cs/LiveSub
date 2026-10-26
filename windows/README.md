@@ -54,6 +54,8 @@ dotnet publish src/LiveSub.App -c Release -r win-x64 --self-contained -p:LiveSub
 
 程序没有代码签名，第一次运行时 SmartScreen 可能提示“未知发布者”，选择“仍要运行”。
 
+**更新**：从 0.1.1 起 LiveSub 会自己检查新版本（每天一次，设置 › 更新里可以关或手动检查）。有新版时开始按钮下面出现“有新版本 x.y.z”，点“更新”会自动下载并替换安装目录里的文件后重新打开（带 Vulkan 的版本更新到带 Vulkan 的）；也可以选“稍后”或“跳过此版本”。必须解压到自己能写的文件夹里，在压缩包里直接运行的不能自动更新。发布新版本（维护者）：改 `src/LiveSub.App/LiveSub.App.csproj` 里的 `Version`，发布的标签必须是 `windows-<版本号>`，附件名 `LiveSub-<版本号>-Windows-x64.zip` 和 `…-Windows-x64-vulkan.zip`。
+
 开发时在 macOS 上也能构建（`EnableWindowsTargeting`），但不能运行界面。
 
 ### 首次使用
@@ -452,6 +454,9 @@ dotnet publish src/LiveSub.App -c Release -r win-x64 --self-contained -p:LiveSub
 81. 混元翻译启动失败：先关掉 LiveSub，把 `%LOCALAPPDATA%\LiveSub\LocalModel\llama-b11829\llama-server.exe` 改名备份，再把 `C:\Windows\System32\whoami.exe` 复制过去并改名成 `llama-server.exe`（启动就退出）。选混元翻译开始字幕：字幕上提示一次“混元翻译启动失败：… 这次先用 Google 翻译。”，这一句和之后的字幕用 Google 翻译，不会每句都等几秒再失败；日志里只有一次 `local model server starting`，有 `translator: local model unavailable, using Google Translate`。一分钟内点混元翻译一栏的“测试”：马上重新启动一次（不等一分钟），仍然提示启动失败。把原来的 `llama-server.exe` 换回来，点“测试”马上能用；停止再开始字幕后重新用混元翻译。
 82. 首次启动提示：删除 `%APPDATA%\LiveSub\settings.json` 后启动，开始按钮下面有一行“现在用基础翻译……”；点开始后停止，再回到开始界面不再显示；换成 Claude 或自己的模型时也不显示。已有设置文件的老用户不显示。
 83. 本机模型检测：装了 Claude Code 时，字幕状态条或设置里的模型菜单里 Claude 一项后面有“已检测到”（当前选中的那项不标）；启动 Ollama 或 LM Studio（至少一个模型）后重启 LiveSub，“本地模型”里出现这一项并标“已检测到”；在“模型服务”里删掉它，重启后不再自动加回来。
+84. 检查更新（需要 GitHub 上有比当前新的 `windows-` 发布）：设置 › 更新里点“检查更新”显示“有新版本 x.y.z”，开始按钮下面出现“更新 / 稍后 / 跳过此版本”；点“稍后”下次启动再出现；点“跳过此版本”后重启不再出现，设置里手动检查仍会提示。
+85. 自动更新：把当前版本的文件夹复制一份，改出一个更低版本（或用 `LIVESUB_TEST_AUTOUPDATE=1` 和 `LIVESUB_TEST_UPDATE_ZIP=本地新版zip` 启动），点“更新”：显示下载进度，程序退出后自动重新打开成新版，设置里“当前版本”变了，不弹 SmartScreen；`%LOCALAPPDATA%\LiveSub\logs\update.log` 有 `installed, launching`；安装目录里没有留下 `.old` 文件。
+86. 更新失败时：把安装目录设成只读或在压缩包里直接运行，点“更新”：提示原因并打开下载页，原来的程序不受影响。
 
 
 ---
@@ -705,6 +710,9 @@ Record pass / fail and what you saw. The log is at `%LOCALAPPDATA%\LiveSub\logs\
 81. Hunyuan Translate fails to start: quit LiveSub, rename `%LOCALAPPDATA%\LiveSub\LocalModel\llama-b11829\llama-server.exe` as a backup, and copy `C:\Windows\System32\whoami.exe` there as `llama-server.exe` (it exits at once). Choose Hunyuan Translate and Start: the overlay shows “Hunyuan Translate failed to start: … Google Translate is used for now.” once, and this and later lines use Google Translate instead of waiting and failing on every line; the log has a single `local model server starting` and `translator: local model unavailable, using Google Translate`. Within a minute, Test in the Hunyuan section retries immediately (no one-minute wait) and still reports the failure. Restore the original `llama-server.exe`: Test works right away, and Stop then Start uses Hunyuan Translate again.
 82. First-run hint: delete `%APPDATA%\LiveSub\settings.json` and launch: a line “Using basic translation, ready to go…” appears under the Start button; after Start and Stop it is gone; it is also hidden when Claude or your own model is selected, and for users who already have a settings file.
 83. Local model detection: with Claude Code installed, the model menu shows “· detected” after the Claude entry (not on the selected one); start Ollama or LM Studio (with at least one model) and restart LiveSub: it appears under Local models marked “detected”; delete it in Model services and it is not added back after a restart.
+84. Update check (needs a newer `windows-` release on GitHub): Settings › Updates › Check for Updates shows “New version x.y.z”, and the Start screen shows Update / Later / Skip This Version; Later shows it again at the next launch; Skip This Version hides it after a restart, while a manual check still offers it.
+85. Automatic update: copy the current folder and make it report a lower version (or launch with `LIVESUB_TEST_AUTOUPDATE=1` and `LIVESUB_TEST_UPDATE_ZIP=<local newer zip>`) and click Update: download progress is shown, the app exits and reopens as the new version, “Current version” changes, no SmartScreen prompt; `%LOCALAPPDATA%\LiveSub\logs\update.log` has `installed, launching`; no `.old` files are left in the install folder.
+86. Update failure: make the install folder read-only or run straight from the zip, click Update: a reason is shown and the download page opens; the existing app is unaffected.
 
 ### Project layout
 

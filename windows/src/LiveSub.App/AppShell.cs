@@ -17,8 +17,12 @@ namespace LiveSub.App;
 public static class Program
 {
     [STAThread]
-    public static int Main()
+    public static int Main(string[] args)
     {
+        // 更新：下载好的新版以这个参数启动，等旧进程退出后把文件拷进安装目录（见 UpdateService）。
+        if (args.Length >= 3 && args[0] == "--apply-update" && int.TryParse(args[2], out var oldPid))
+            return UpdateApplier.Apply(args[1], oldPid);
+
         // LIVESUB_UI_LANGUAGE=en 或 zh-Hans 可以不改系统语言就切换界面语言（测试用）。
         var uiLanguage = Environment.GetEnvironmentVariable("LIVESUB_UI_LANGUAGE");
         var culture = CultureInfo.CurrentUICulture;
@@ -112,6 +116,7 @@ public sealed class AppShell : IDisposable
     public SecretStore Secrets { get; }
     public SettingsService Settings { get; }
     public SubtitleController Controller { get; }
+    public UpdateService Updates { get; }
 
     /// <summary>音源的选项（设置和托盘菜单共用）：托盘菜单用完整的名字，设置里的分段按钮用简短的名字（与 macOS 相同）。</summary>
     public static readonly IReadOnlyList<(AudioSourceMode Mode, string Title, string ShortTitle)> AudioSources =
@@ -131,6 +136,7 @@ public sealed class AppShell : IDisposable
         Secrets = new SecretStore();
         Settings = new SettingsService(Secrets);
         Controller = new SubtitleController(Settings, Secrets, app.Dispatcher);
+        Updates = new UpdateService(Settings, app.Dispatcher);
     }
 
     public void Start()
@@ -171,6 +177,7 @@ public sealed class AppShell : IDisposable
 
         overlay.ShowNoActivate();
         _ = DetectLocalServices();
+        Updates.Start();
         if (Environment.GetEnvironmentVariable("LIVESUB_AUTOSTART") == "1") ToggleRunning();
     }
 

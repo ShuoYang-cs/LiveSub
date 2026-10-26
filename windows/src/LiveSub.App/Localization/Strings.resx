@@ -288,4 +288,25 @@
   <data name="Attachment_PdfTextUnavailable" xml:space="preserve"><value>(Couldn't extract the text of this PDF.)</value></data>
   <data name="Menu_Detected" xml:space="preserve"><value>{0} · detected</value></data>
   <data name="Overlay_FirstRunHint" xml:space="preserve"><value>Using basic translation, ready to go. For more accurate translation, the AI assistant and automatic accent correction, pick Claude or your own model in Settings.</value></data>
+  <data name="Update_Checking" xml:space="preserve"><value>Checking…</value></data>
+  <data name="Update_Unreachable" xml:space="preserve"><value>Can't reach GitHub. Please try again later.</value></data>
+  <data name="Update_UpToDate" xml:space="preserve"><value>You're up to date</value></data>
+  <data name="Update_NoAsset" xml:space="preserve"><value>This release has no installable file.</value></data>
+  <data name="Update_Failed" xml:space="preserve"><value>Update failed: {0}</value></data>
+  <data name="Update_OpenedPage" xml:space="preserve"><value>{0} The download page has been opened; please install manually.</value></data>
+  <data name="Update_PendingFailed" xml:space="preserve"><value>The last update to {0} did not succeed; you are still on {1}. See %LOCALAPPDATA%\LiveSub\logs\update.log, or install manually from the download page.</value></data>
+  <data name="Update_RunningFromTemp" xml:space="preserve"><value>LiveSub is running from a temporary folder (probably straight from the zip). Unzip it to a folder of your own first.</value></data>
+  <data name="Update_NotWritable" xml:space="preserve"><value>“{0}” is not writable. Move the whole folder somewhere you own (Documents, say).</value></data>
+  <data name="Update_NoExe" xml:space="preserve"><value>The download does not contain LiveSub.exe.</value></data>
+  <data name="Update_Available" xml:space="preserve"><value>New version {0}</value></data>
+  <data name="Update_Install" xml:space="preserve"><value>Update</value></data>
+  <data name="Update_Later" xml:space="preserve"><value>Later</value></data>
+  <data name="Update_Skip" xml:space="preserve"><value>Skip This Version</value></data>
+  <data name="Update_Ok" xml:space="preserve"><value>OK</value></data>
+  <data name="Update_Downloading" xml:space="preserve"><value>Downloading the new version… {0}%</value></data>
+  <data name="Update_Installing" xml:space="preserve"><value>Installing; LiveSub will reopen when done…</value></data>
+  <data name="Section_Update" xml:space="preserve"><value>Updates</value></data>
+  <data name="Label_AutoUpdate" xml:space="preserve"><value>Check for updates automatically</value></data>
+  <data name="Label_CurrentVersion" xml:space="preserve"><value>Current version {0}</value></data>
+  <data name="Button_CheckUpdate" xml:space="preserve"><value>Check for Updates</value></data>
 </root>

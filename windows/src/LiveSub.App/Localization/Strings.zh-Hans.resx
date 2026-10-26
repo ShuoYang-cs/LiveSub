@@ -288,4 +288,25 @@
   <data name="Attachment_PdfTextUnavailable" xml:space="preserve"><value>（没能读出这个 PDF 里的文字。）</value></data>
   <data name="Menu_Detected" xml:space="preserve"><value>{0} · 已检测到</value></data>
   <data name="Overlay_FirstRunHint" xml:space="preserve"><value>现在用基础翻译，开箱即用。想要更准的翻译、AI 助手和自动纠正口音，到设置里选 Claude 或自己的模型。</value></data>
+  <data name="Update_Checking" xml:space="preserve"><value>正在检查…</value></data>
+  <data name="Update_Unreachable" xml:space="preserve"><value>无法连接 GitHub，请稍后再试。</value></data>
+  <data name="Update_UpToDate" xml:space="preserve"><value>已是最新版本</value></data>
+  <data name="Update_NoAsset" xml:space="preserve"><value>这一版没有可以直接安装的文件。</value></data>
+  <data name="Update_Failed" xml:space="preserve"><value>更新失败：{0}</value></data>
+  <data name="Update_OpenedPage" xml:space="preserve"><value>{0} 已为你打开下载页，请手动下载安装。</value></data>
+  <data name="Update_PendingFailed" xml:space="preserve"><value>上次更新到 {0} 没有成功，现在还是 {1}。日志在 %LOCALAPPDATA%\LiveSub\logs\update.log，可以到下载页手动安装。</value></data>
+  <data name="Update_RunningFromTemp" xml:space="preserve"><value>LiveSub 正在临时文件夹里运行（可能是直接在压缩包里打开的），请先把它解压到自己的文件夹。</value></data>
+  <data name="Update_NotWritable" xml:space="preserve"><value>“{0}”没有写入权限。请把整个文件夹挪到自己的目录下（比如“文档”）。</value></data>
+  <data name="Update_NoExe" xml:space="preserve"><value>下载的文件里没有 LiveSub.exe。</value></data>
+  <data name="Update_Available" xml:space="preserve"><value>有新版本 {0}</value></data>
+  <data name="Update_Install" xml:space="preserve"><value>更新</value></data>
+  <data name="Update_Later" xml:space="preserve"><value>稍后</value></data>
+  <data name="Update_Skip" xml:space="preserve"><value>跳过此版本</value></data>
+  <data name="Update_Ok" xml:space="preserve"><value>好</value></data>
+  <data name="Update_Downloading" xml:space="preserve"><value>正在下载新版本… {0}%</value></data>
+  <data name="Update_Installing" xml:space="preserve"><value>正在安装，完成后会自动重新打开…</value></data>
+  <data name="Section_Update" xml:space="preserve"><value>更新</value></data>
+  <data name="Label_AutoUpdate" xml:space="preserve"><value>自动检查更新</value></data>
+  <data name="Label_CurrentVersion" xml:space="preserve"><value>当前版本 {0}</value></data>
+  <data name="Button_CheckUpdate" xml:space="preserve"><value>检查更新</value></data>
 </root>

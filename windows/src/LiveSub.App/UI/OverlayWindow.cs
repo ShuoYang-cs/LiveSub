@@ -139,6 +139,15 @@ public sealed class OverlayWindow : Window
         Margin = new Thickness(24, 4, 24, 0),
         IsHitTestVisible = false,
     };
+    /// <summary>有新版本时开始按钮下面的一行：更新 / 稍后 / 跳过此版本。</summary>
+    private readonly StackPanel updateBar = new()
+    {
+        Orientation = Orientation.Horizontal,
+        HorizontalAlignment = HorizontalAlignment.Center,
+        Margin = new Thickness(18, 6, 18, 0),
+        Visibility = Visibility.Collapsed,
+    };
+    private string updateSignature = "";
     private string startSignature = "";
     /// <summary>锁定后鼠标移到字幕上时右上角的锁，点一下解锁。第一次用到时才创建。</summary>
     private LockBadgeWindow? lockBadge;
@@ -822,8 +831,87 @@ public sealed class OverlayWindow : Window
         center.Children.Add(startDetails);
         startHint.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg60);
         center.Children.Add(startHint);
+        center.Children.Add(updateBar);
+        UpdateService.Shared.Changed += RequestRender;
         startLayer.Children.Add(startDim);
         startLayer.Children.Add(center);
+    }
+
+    private void UpdateUpdateBar()
+    {
+        var updates = UpdateService.Shared;
+        var signature = updates.Phase switch
+        {
+            UpdatePhase.Available => "available" + updates.Release?.Version,
+            UpdatePhase.Downloading => "downloading" + (int)(updates.Progress * 100),
+            UpdatePhase.Failed => "failed" + updates.Message,
+            var other => other.ToString(),
+        };
+        if (signature == updateSignature) return;
+        updateSignature = signature;
+        updateBar.Children.Clear();
+        updateBar.Visibility = updates.Phase == UpdatePhase.Idle ? Visibility.Collapsed : Visibility.Visible;
+        TextBlock Label(string text, bool orange = false)
+        {
+            var t = new TextBlock { Text = text, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 340 };
+            if (orange) t.Foreground = Orange;
+            else t.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg);
+            return t;
+        }
+        Button Pill(string text, Action action, bool prominent = false)
+        {
+            var label = new TextBlock { Text = text, FontSize = 11, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+            var button = new Button
+            {
+                Content = label,
+                Padding = new Thickness(9, 3, 9, 3),
+                Margin = new Thickness(8, 0, 0, 0),
+                BorderThickness = new Thickness(0),
+                Focusable = false,
+                Cursor = Cursors.Hand,
+                Template = new ControlTemplate(typeof(Button))
+                {
+                    VisualTree = FactoryPill(),
+                },
+            };
+            button.SetResourceReference(BackgroundProperty, prominent ? OverlayPalette.Fg : OverlayPalette.Fg20);
+            button.SetResourceReference(ForegroundProperty, prominent ? OverlayPalette.Bg : OverlayPalette.Fg);
+            button.Click += (_, _) => action();
+            return button;
+        }
+        switch (updates.Phase)
+        {
+            case UpdatePhase.Available:
+                var l = Label(Strings.Format(Strings.Update_Available, updates.Release?.Version));
+                l.FontWeight = FontWeights.SemiBold;
+                updateBar.Children.Add(l);
+                updateBar.Children.Add(Pill(Strings.Update_Install, updates.Install, prominent: true));
+                updateBar.Children.Add(Pill(Strings.Update_Later, updates.Later));
+                updateBar.Children.Add(Pill(Strings.Update_Skip, updates.Skip));
+                break;
+            case UpdatePhase.Downloading:
+                updateBar.Children.Add(Label(Strings.Format(Strings.Update_Downloading, (int)(updates.Progress * 100))));
+                break;
+            case UpdatePhase.Installing:
+                updateBar.Children.Add(Label(Strings.Update_Installing));
+                break;
+            case UpdatePhase.Failed:
+                updateBar.Children.Add(Label(updates.Message, orange: true));
+                updateBar.Children.Add(Pill(Strings.Update_Ok, updates.DismissFailure));
+                break;
+        }
+    }
+
+    private static FrameworkElementFactory FactoryPill()
+    {
+        var pill = new FrameworkElementFactory(typeof(Border));
+        pill.SetValue(Border.CornerRadiusProperty, new CornerRadius(12));
+        pill.SetBinding(Border.BackgroundProperty, new Binding(nameof(Background)) { RelativeSource = RelativeSource.TemplatedParent });
+        pill.SetBinding(Border.PaddingProperty, new Binding(nameof(Padding)) { RelativeSource = RelativeSource.TemplatedParent });
+        var presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+        presenter.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        pill.AppendChild(presenter);
+        return pill;
     }
 
     /// <param name="hasLines">已经有字幕：压暗它们，开始按钮更醒目。</param>
@@ -842,8 +930,9 @@ public sealed class OverlayWindow : Window
             : controller.Alert is { } alert ? (alert, true)
             : ($"{S.AudioSource.Title()} · {src} → {dst}", false);
         startDetails.Text = details;
+        UpdateUpdateBar();
         startHint.Text = Strings.Overlay_FirstRunHint;
-        startHint.Visibility = S.HasStartedOnce != true && !starting && controller.Alert is null && !S.TranslationModel.IsLanguageModel
+        startHint.Visibility = S.HasStartedOnce != true && UpdateService.Shared.Phase == UpdatePhase.Idle && !starting && controller.Alert is null && !S.TranslationModel.IsLanguageModel
             ? Visibility.Visible : Visibility.Collapsed;
         if (error) startDetails.Foreground = Orange;
         else startDetails.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg60);

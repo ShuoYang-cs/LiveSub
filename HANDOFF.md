@@ -197,3 +197,5 @@
 - 不提交代码，除非用户明确要求；测试生成的记录文件和测试用 API 密钥用完要删除。
 
 - 2026-10-23 用户决定：macOS 设置里去掉“过滤周围的中文交谈”开关，讲话语言不是中文时一律开启（`AppSettings.guardLocale`）。Windows 版用户决定保留开关、默认关闭，只在中文界面里出现（见顶部 Windows 一节）。
+
+- 2026-10-26 应用内更新（用户要求，参照 neu-helper 的 `updater.py`）：启动时和每小时看一眼是不是该检查（每天一次，失败 30 分钟后重试）；有新版时开始界面出现“更新 / 稍后 / 跳过此版本”，设置里有“更新”一栏（自动检查开关、手动检查）。点更新：下载 zip 到缓存、`ditto`（Windows 用 ZipFile）解压，启动新版的程序 `--apply-update <装在哪> <旧进程pid>` 后本进程退出，新进程等旧进程退出再换文件；macOS 整包替换并把旧的留作 `.old`，Windows 逐文件拷、exe 最后、失败回滚。macOS 在 `UpdateManager.swift`、`UpdateApplier.swift`，Windows 在 `Services/UpdateService.cs`、`UpdateApplier.cs`，共用逻辑（版本比较、解析发布、检查间隔）在 `LiveSubCore/Updates.swift`、`LiveSub.Core/Updates.cs`，都有单元测试。macOS 已实测（0.1.0 → 0.1.3：换文件、签名有效、自动重开、旧版本清理），用 `LIVESUB_TEST_AUTOUPDATE=1` 加 `LIVESUB_TEST_UPDATE_ZIP=本地zip` 可以不碰 GitHub 测；新版必须带这段代码，所以 0.1.2 及更早的不能自动更新到有这个功能的版本。Windows 只编译和跑了单元测试，没实机运行，测试清单第 84–86 项待测。发版要点：tag 必须是 `macos-<版本>` / `windows-<版本>`，且和 Info.plist / csproj 的版本一致，否则会永远提示有新版或永远不提示。macOS 的新版签名必须和现在的一致（核对 designated requirement），否则拒绝自动更新、打开下载页。

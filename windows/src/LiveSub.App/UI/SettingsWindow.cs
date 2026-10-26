@@ -58,15 +58,18 @@ public sealed class SettingsWindow : Window
 
         BuildTranslation();
         BuildOverlay();
+        BuildUpdates();
         BuildRecords();
         BuildRecognition();
         Refresh();
         loading = false;
 
         settings.Changed += OnSettingsChanged;
+        shell.Updates.Changed += OnUpdatesChanged;
         Closed += (_, _) =>
         {
             settings.Changed -= OnSettingsChanged;
+            shell.Updates.Changed -= OnUpdatesChanged;
             downloadCancel?.Cancel();
         };
     }
@@ -230,6 +233,30 @@ public sealed class SettingsWindow : Window
             i => { S.HotKey = keys[i]; Commit(SettingsChange.Appearance); });
         hotKey.ToolTip = Strings.Tip_HotKey;
         Row(Strings.Label_HotKey, hotKey, Strings.Tip_HotKey);
+    }
+
+    // MARK: - 更新
+
+    private void OnUpdatesChanged() => Dispatcher.BeginInvoke(Refresh);
+
+    /// <summary>自动检查更新的开关、当前版本，以及“检查更新”（有新版本时是“更新”）。</summary>
+    private void BuildUpdates()
+    {
+        var updates = shell.Updates;
+        Section(Strings.Section_Update);
+        Row(Strings.Label_AutoUpdate, Check(() => S.AutoCheckUpdates, v => { S.AutoCheckUpdates = v; Commit(SettingsChange.None); }, null));
+        var status = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, Opacity = 0.7 };
+        var check = SmallButton(Strings.Button_CheckUpdate, updates.CheckNow);
+        var install = SmallButton(Strings.Update_Install, updates.Install);
+        Row(Strings.Format(Strings.Label_CurrentVersion, UpdateService.CurrentVersion), WithButtons(status, check, install));
+        refreshers.Add(() =>
+        {
+            bool available = updates.Phase == UpdatePhase.Available && updates.Release is not null;
+            status.Text = available ? Strings.Format(Strings.Update_Available, updates.Release!.Version) : updates.StatusText;
+            install.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+            check.Visibility = available ? Visibility.Collapsed : Visibility.Visible;
+            check.IsEnabled = !updates.Checking;
+        });
     }
 
     // MARK: - 记录
