@@ -450,6 +450,8 @@ dotnet publish src/LiveSub.App -c Release -r win-x64 --self-contained -p:LiveSub
 **审查后的修复（新，2026-10-23）**
 
 81. 混元翻译启动失败：先关掉 LiveSub，把 `%LOCALAPPDATA%\LiveSub\LocalModel\llama-b11829\llama-server.exe` 改名备份，再把 `C:\Windows\System32\whoami.exe` 复制过去并改名成 `llama-server.exe`（启动就退出）。选混元翻译开始字幕：字幕上提示一次“混元翻译启动失败：… 这次先用 Google 翻译。”，这一句和之后的字幕用 Google 翻译，不会每句都等几秒再失败；日志里只有一次 `local model server starting`，有 `translator: local model unavailable, using Google Translate`。一分钟内点混元翻译一栏的“测试”：马上重新启动一次（不等一分钟），仍然提示启动失败。把原来的 `llama-server.exe` 换回来，点“测试”马上能用；停止再开始字幕后重新用混元翻译。
+82. 首次启动提示：删除 `%APPDATA%\LiveSub\settings.json` 后启动，开始按钮下面有一行“现在用基础翻译……”；点开始后停止，再回到开始界面不再显示；换成 Claude 或自己的模型时也不显示。已有设置文件的老用户不显示。
+83. 本机模型检测：装了 Claude Code 时，字幕状态条或设置里的模型菜单里 Claude 一项后面有“已检测到”（当前选中的那项不标）；启动 Ollama 或 LM Studio（至少一个模型）后重启 LiveSub，“本地模型”里出现这一项并标“已检测到”；在“模型服务”里删掉它，重启后不再自动加回来。
 
 
 ---
@@ -701,6 +703,8 @@ Record pass / fail and what you saw. The log is at `%LOCALAPPDATA%\LiveSub\logs\
 **Fixes after review (new, 2026-10-23)**
 
 81. Hunyuan Translate fails to start: quit LiveSub, rename `%LOCALAPPDATA%\LiveSub\LocalModel\llama-b11829\llama-server.exe` as a backup, and copy `C:\Windows\System32\whoami.exe` there as `llama-server.exe` (it exits at once). Choose Hunyuan Translate and Start: the overlay shows “Hunyuan Translate failed to start: … Google Translate is used for now.” once, and this and later lines use Google Translate instead of waiting and failing on every line; the log has a single `local model server starting` and `translator: local model unavailable, using Google Translate`. Within a minute, Test in the Hunyuan section retries immediately (no one-minute wait) and still reports the failure. Restore the original `llama-server.exe`: Test works right away, and Stop then Start uses Hunyuan Translate again.
+82. First-run hint: delete `%APPDATA%\LiveSub\settings.json` and launch: a line “Using basic translation, ready to go…” appears under the Start button; after Start and Stop it is gone; it is also hidden when Claude or your own model is selected, and for users who already have a settings file.
+83. Local model detection: with Claude Code installed, the model menu shows “· detected” after the Claude entry (not on the selected one); start Ollama or LM Studio (with at least one model) and restart LiveSub: it appears under Local models marked “detected”; delete it in Model services and it is not added back after a restart.
 
 ### Project layout
 

@@ -286,4 +286,6 @@
   <data name="File_DiskFull" xml:space="preserve"><value>Not enough disk space.</value></data>
   <data name="Local_ConnectionLost" xml:space="preserve"><value>Couldn't reach the local translation service.</value></data>
   <data name="Attachment_PdfTextUnavailable" xml:space="preserve"><value>(Couldn't extract the text of this PDF.)</value></data>
+  <data name="Menu_Detected" xml:space="preserve"><value>{0} · detected</value></data>
+  <data name="Overlay_FirstRunHint" xml:space="preserve"><value>Using basic translation, ready to go. For more accurate translation, the AI assistant and automatic accent correction, pick Claude or your own model in Settings.</value></data>
 </root>

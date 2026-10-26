@@ -129,6 +129,16 @@ public sealed class OverlayWindow : Window
         Margin = new Thickness(18, 8, 18, 0),
         IsHitTestVisible = false,
     };
+    /// <summary>第一次使用时开始按钮下面的提示（基础翻译够用，更准的翻译、AI 助手和纠正口音要换模型）。</summary>
+    private readonly TextBlock startHint = new()
+    {
+        FontSize = 11,
+        TextWrapping = TextWrapping.Wrap,
+        TextAlignment = TextAlignment.Center,
+        HorizontalAlignment = HorizontalAlignment.Center,
+        Margin = new Thickness(24, 4, 24, 0),
+        IsHitTestVisible = false,
+    };
     private string startSignature = "";
     /// <summary>锁定后鼠标移到字幕上时右上角的锁，点一下解锁。第一次用到时才创建。</summary>
     private LockBadgeWindow? lockBadge;
@@ -810,6 +820,8 @@ public sealed class OverlayWindow : Window
         var center = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Center };
         center.Children.Add(button);
         center.Children.Add(startDetails);
+        startHint.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg60);
+        center.Children.Add(startHint);
         startLayer.Children.Add(startDim);
         startLayer.Children.Add(center);
     }
@@ -830,6 +842,9 @@ public sealed class OverlayWindow : Window
             : controller.Alert is { } alert ? (alert, true)
             : ($"{S.AudioSource.Title()} · {src} → {dst}", false);
         startDetails.Text = details;
+        startHint.Text = Strings.Overlay_FirstRunHint;
+        startHint.Visibility = S.HasStartedOnce != true && !starting && controller.Alert is null && !S.TranslationModel.IsLanguageModel
+            ? Visibility.Visible : Visibility.Collapsed;
         if (error) startDetails.Foreground = Orange;
         else startDetails.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg60);
         var signature = starting ? "starting" : "start";

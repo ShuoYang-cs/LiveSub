@@ -286,4 +286,6 @@
   <data name="File_DiskFull" xml:space="preserve"><value>磁盘空间不足。</value></data>
   <data name="Local_ConnectionLost" xml:space="preserve"><value>连不上本机的翻译服务。</value></data>
   <data name="Attachment_PdfTextUnavailable" xml:space="preserve"><value>（没能读出这个 PDF 里的文字。）</value></data>
+  <data name="Menu_Detected" xml:space="preserve"><value>{0} · 已检测到</value></data>
+  <data name="Overlay_FirstRunHint" xml:space="preserve"><value>现在用基础翻译，开箱即用。想要更准的翻译、AI 助手和自动纠正口音，到设置里选 Claude 或自己的模型。</value></data>
 </root>

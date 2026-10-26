@@ -154,6 +154,15 @@ public class RequestBodyTests
     }
 
     [Fact]
+    public void ParseModelIdsSkipsEmbeddingModels()
+    {
+        var json = """{"object":"list","data":[{"id":"qwen3:4b"},{"id":"nomic-embed-text"},{"id":"llama3.2"}]}""";
+        Assert.Equal(["qwen3:4b", "llama3.2"], ChatEndpoints.ParseModelIds(json));
+        Assert.Empty(ChatEndpoints.ParseModelIds("nope"));
+        Assert.Empty(ChatEndpoints.ParseModelIds("[]"));
+    }
+
+    [Fact]
     public void LocalServersAreRecognized()
     {
         Assert.True(ChatEndpoints.IsLocal("http://localhost:11434/v1"));

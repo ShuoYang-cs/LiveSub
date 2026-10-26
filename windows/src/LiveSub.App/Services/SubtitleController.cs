@@ -198,6 +198,11 @@ public sealed class SubtitleController : IDisposable
         var cancel = new CancellationTokenSource();
         startCancel = cancel;
         int gen = ++generation;
+        if (Settings.HasStartedOnce != true)
+        {
+            Settings.HasStartedOnce = true;
+            settingsService.Commit(SettingsChange.None);
+        }
         SetStatus(Strings.Status_Preparing);
         AppLog.Info($"start: source={Settings.AudioSource} noiseReduction={Settings.MicNoiseReduction} lang={Settings.SourceLanguage} model={Settings.DisplayName(Settings.TranslationModel)} whisper={Settings.WhisperModel} autoCorrect={Settings.AutoCorrect}");
         try

@@ -53,6 +53,8 @@ public static class Strings
     public static string Group_Cloud => Get(nameof(Group_Cloud));
     public static string Group_Local => Get(nameof(Group_Local));
     public static string Status_NotStarted => Get(nameof(Status_NotStarted));
+    public static string Menu_Detected => Get(nameof(Menu_Detected));
+    public static string Overlay_FirstRunHint => Get(nameof(Overlay_FirstRunHint));
     public static string Status_Preparing => Get(nameof(Status_Preparing));
     public static string Status_DownloadingModel => Get(nameof(Status_DownloadingModel));
     public static string Status_LoadingModel => Get(nameof(Status_LoadingModel));

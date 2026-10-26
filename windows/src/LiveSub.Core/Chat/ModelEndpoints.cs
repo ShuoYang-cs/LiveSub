@@ -71,6 +71,28 @@ public static class ChatEndpoints
         return b.Length == 4 && (b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168));
     }
 
+    /// <summary>从 /models 的回复里取模型名（OpenAI 兼容格式，Ollama、LM Studio 也是）；跳过只做向量化的模型。</summary>
+    public static List<string> ParseModelIds(string json)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("data", out var data)
+                || data.ValueKind != System.Text.Json.JsonValueKind.Array) return [];
+            var ids = new List<string>();
+            foreach (var item in data.EnumerateArray())
+            {
+                if (item.ValueKind == System.Text.Json.JsonValueKind.Object
+                    && item.TryGetProperty("id", out var id) && id.ValueKind == System.Text.Json.JsonValueKind.String
+                    && id.GetString() is { Length: > 0 } name && !name.Contains("embed", StringComparison.OrdinalIgnoreCase))
+                    ids.Add(name);
+            }
+            return ids;
+        }
+        catch (System.Text.Json.JsonException) { return []; }
+    }
+
     /// <summary>接口地址是不是完整的 http(s) 地址（新加的“自定义服务”只有 https://，还不能用）。</summary>
     public static bool IsValidBaseUrl(string url) =>
         Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)

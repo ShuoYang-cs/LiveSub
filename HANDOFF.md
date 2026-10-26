@@ -76,6 +76,8 @@
 
 ### 1. Windows 版实机测试（用户自己测）
 
+- **2026-10-26 用户说 Windows 实机测试已经做完**，不再有待测项；下面清单保留作参考。Windows 发布 Release 还没做。
+
 - 用户在自己的 Windows 电脑上按 [windows/README.md](windows/README.md) 的“测试清单”逐项测试，共 81 项（第 56–68 项是 2026-10-23 新加的翻译和模型，第 14、17、18、20、44、46、48、55 项随之改过；第 69–80 项是同一天新加的界面、录音和 AI 助手附件，第 1、5、22、26、28、33、36、44、45、47、48、49、50、55 项随之改过；审查后的修复又改了第 15、20、34、36、55、57、61、63、64、69、72、75–78 项，新加第 81 项）。日志在 `%LOCALAPPDATA%\LiveSub\logs\livesub.log`。
 - 下次对话要做的：根据用户反馈的结果修复。写 Windows 版的子代理的上下文已经没有了，开始前先读 `windows/README.md` 和 `windows/src/` 的代码。
 - **和 macOS 对齐**（2026-10-21，用户要求设置、组件、功能和界面尽量一致，界面风格可以不同）。分四步做完，每步编译、跑测试，最后三个子代理分块审查，确认的问题都修了：
@@ -114,6 +116,8 @@
 - 模型选择：`Sources/LiveSub/App/AppSettings.swift` 里的 `ModelChoice` 和 `modelGroups`
 
 待做：
+
+（2026-10-26 已改成更轻的做法并在两个平台做完：不做向导；第一次启动时开始按钮下面一行提示；启动时检测 Claude Code、Ollama、LM Studio，模型菜单里标“已检测到”，正在运行的 Ollama、LM Studio 自动加进模型服务（用户删掉后不再加）。macOS 在 `LocalServiceDetector.swift`，Windows 在 `Services/LocalServiceDetector.cs`；Windows 测试清单第 82、83 项待测。下面是原来的想法，保留作参考。）
 
 1. **首次启动引导**：让新用户选翻译档位，并自动检测本机条件：
    - Claude Code：用 `ClaudeCLI.locate`，再判断是否已登录；

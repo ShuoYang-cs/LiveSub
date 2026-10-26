@@ -170,6 +170,7 @@ public sealed class AppShell : IDisposable
         if (Secrets.Unreadable) Controller.ShowAlert(Strings.Error_SecretsUnreadable);
 
         overlay.ShowNoActivate();
+        _ = DetectLocalServices();
         if (Environment.GetEnvironmentVariable("LIVESUB_AUTOSTART") == "1") ToggleRunning();
     }
 
@@ -248,6 +249,19 @@ public sealed class AppShell : IDisposable
     {
         if (!OverlayVisible) overlay?.ShowNoActivate();
         ToggleAssistant();
+    }
+
+    /// <summary>启动时检测本机的 Claude Code、Ollama、LM Studio；新加了服务就保存。</summary>
+    private async Task DetectLocalServices()
+    {
+        try
+        {
+            if (await LocalServiceDetector.RunAsync(Settings.Current)) Settings.Commit(SettingsChange.None);
+        }
+        catch (Exception e)
+        {
+            AppLog.Error("local service detection failed", e);
+        }
     }
 
     public async void ToggleRunning()

@@ -87,7 +87,7 @@ public static class TranslationEngines
                 ModelGroupKind.Local => Strings.Group_Local,
                 _ => Strings.Group_Cloud,
             },
-            g.Choices.Select(c => new ModelMenuItem(c, settings.ServiceName(c), c == selected)).ToList()))
+            g.Choices.Select(c => new ModelMenuItem(c, settings.MenuTitle(c, selected), c == selected)).ToList()))
         .ToList();
 
     /// <summary>给用户看的错误说明。</summary>

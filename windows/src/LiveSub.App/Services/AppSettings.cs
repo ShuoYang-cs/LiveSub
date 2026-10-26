@@ -88,6 +88,42 @@ public sealed class AppSettings
     /// <summary>用户删掉过的默认服务（不再自动补上）。</summary>
     public List<string> DismissedBuiltIns { get; set; } = [];
     public string ClaudePath { get; set; } = "";
+    /// <summary>
+    /// 点过“开始”：第一次启动时开始按钮下面多一行提示，之后不再显示（与 macOS 相同）。
+    /// 空表示设置文件里没有这一项：设置文件已经存在的老用户记为 true，全新安装记为 false（见 Load）。
+    /// </summary>
+    public bool? HasStartedOnce { get; set; }
+    /// <summary>已经替用户加进模型服务的本机服务地址（Ollama、LM Studio）：用户删掉后不再自动加回来。</summary>
+    public List<string> OfferedLocalServices { get; set; } = [];
+    /// <summary>本次启动时检测到的：本机装了 Claude Code、正在运行的本机服务地址。不保存。</summary>
+    [JsonIgnore] public bool DetectedClaude { get; set; }
+    [JsonIgnore] public HashSet<string> RunningLocalServices { get; } = [];
+
+    /// <summary>菜单里的名字：本机检测到可用、又不是当前选中的，后面标“已检测到”。</summary>
+    public string MenuTitle(ModelChoice choice, ModelChoice selected)
+    {
+        var name = ServiceName(choice);
+        if (choice == selected) return name;
+        bool detected = choice.Kind switch
+        {
+            ModelKind.ClaudeCode => DetectedClaude,
+            ModelKind.Endpoint => Endpoint(choice.EndpointId) is { } e && RunningLocalServices.Contains(e.BaseUrl),
+            _ => false,
+        };
+        return detected ? Strings.Format(Strings.Menu_Detected, name) : name;
+    }
+
+    /// <summary>
+    /// 检测到正在运行、还没加过的本机服务（Ollama、LM Studio）：加进模型服务，放在“本地模型”里。
+    /// 用户删掉后不再加回来；用户自己已经加过同一地址的也不加。返回有没有加。
+    /// </summary>
+    public bool AddDetectedLocalService(string name, string baseUrl, List<string> models)
+    {
+        if (models.Count == 0 || OfferedLocalServices.Contains(baseUrl) || Endpoints.Any(e => e.BaseUrl == baseUrl)) return false;
+        OfferedLocalServices.Add(baseUrl);
+        Endpoints.Add(new ModelEndpoint { Name = name, Format = ChatApiFormat.OpenAI, BaseUrl = baseUrl, Models = models });
+        return true;
+    }
 
     public string WhisperModel { get; set; } = Core.Speech.WhisperModel.Default.Id;
     public bool UseGpu { get; set; } = true;
@@ -237,6 +273,7 @@ public sealed class AppSettings
         ModelCatalog.Adopt(AssistantModel, ModelPurpose.Assistant, Endpoints);
         SyncModels();
         ClaudePath ??= "";
+        OfferedLocalServices = (OfferedLocalServices ?? []).Distinct().ToList();
         ModelMirror ??= "";
         if (!Enum.IsDefined(Appearance)) Appearance = AppearanceMode.System;
         if (OverlayWidth <= 0 || double.IsNaN(OverlayWidth)) OverlayWidth = DefaultOverlaySize.Width;
@@ -315,6 +352,7 @@ public sealed class SettingsService
             json = null;
             settings = new AppSettings();
         }
+        settings.HasStartedOnce ??= json is not null;
         if (json is not null && LegacyModelSettings.TryRead(json) is { } legacy)
         {
             if (!Migrate(settings, legacy, secrets)) unmigrated = json;
