@@ -186,6 +186,24 @@ public class LocalTranslationTests
         Assert.Equal(["-m", @"C:\m.gguf", "--host", "127.0.0.1", "--port", "8123", "-c", "4096", "-np", "2", "--jinja", "--no-webui", "-ngl", "99"],
                      LocalTranslationModel.ServerArguments(@"C:\m.gguf", 8123, useGpu: true));
         Assert.Equal("0", LocalTranslationModel.ServerArguments("m", 1, useGpu: false)[^1]);
+        Assert.Equal(["-dev", "Vulkan1"], LocalTranslationModel.ServerArguments("m", 1, useGpu: true, gpuDevice: "Vulkan1")[^2..]);
+        Assert.Equal("0", LocalTranslationModel.ServerArguments("m", 1, useGpu: false, gpuDevice: "Vulkan1")[^1]);
+    }
+
+    [Fact]
+    public void PreferredGpuDevicePicksDiscreteGpu()
+    {
+        // llama-bench --list-devices 在 RTX 3060 笔记本上的输出（核显排在前面的情况也要选对）。
+        const string listing = """
+            load_backend: loaded RPC backend from C:\x\ggml-rpc.dll
+            ggml_vulkan: Found 2 Vulkan devices:
+            ggml_vulkan: 0 = Intel(R) Iris(R) Xe Graphics (Intel Corporation) | uma: 1 | fp16: 1 | bf16: 0 | warp size: 32
+            ggml_vulkan: 1 = NVIDIA GeForce RTX 3060 Laptop GPU (NVIDIA) | uma: 0 | fp16: 1 | bf16: 0 | warp size: 32
+            Available devices:
+            """;
+        Assert.Equal("Vulkan1", LocalTranslationModel.PreferredGpuDevice(listing.Replace("\r\n", "\n")));
+        Assert.Null(LocalTranslationModel.PreferredGpuDevice("ggml_vulkan: 0 = Intel(R) Iris(R) Xe Graphics (Intel Corporation) | uma: 1 | fp16: 1"));
+        Assert.Null(LocalTranslationModel.PreferredGpuDevice("ggml_vulkan: No devices found."));
     }
 
     [Fact]

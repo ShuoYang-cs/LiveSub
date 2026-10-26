@@ -248,8 +248,11 @@ public sealed class AssistantWindow : Window
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
         var hwnd = this.Handle();
-        // 不进 Alt+Tab。不设 WS_EX_NOACTIVATE：点输入框时要能激活窗口打字（见 WndProc）。
-        NativeMethods.SetExStyle(hwnd, NativeMethods.WS_EX_TOOLWINDOW, 0);
+        // 不进 Alt+Tab。没激活时带 WS_EX_NOACTIVATE：只靠 WM_MOUSEACTIVATE 返回 MA_NOACTIVATE 不够，
+        // 按下按钮时前台程序照样失去激活，前台变成空（2026-10-23 Windows 实测）。
+        // 点输入框、对话内容时去掉它再激活（见 WndProc），失去激活后加回来。
+        NativeMethods.SetExStyle(hwnd, NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE, 0);
+        Deactivated += (_, _) => NativeMethods.SetExStyle(this.Handle(), NativeMethods.WS_EX_NOACTIVATE, 0);
         HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
     }
 
@@ -258,7 +261,13 @@ public sealed class AssistantWindow : Window
         if (msg == NativeMethods.WM_MOUSEACTIVATE)
         {
             // 点输入框、对话内容时照常激活（要打字、选中复制）；点标题栏、按钮时不激活，焦点留在用户正在用的程序上。
-            if (WantsActivation()) return IntPtr.Zero;
+            if (WantsActivation())
+            {
+                NativeMethods.SetExStyle(hwnd, 0, NativeMethods.WS_EX_NOACTIVATE);
+                Dispatcher.BeginInvoke(() => Activate());
+                handled = true;
+                return new IntPtr(1); // MA_ACTIVATE
+            }
             handled = true;
             return new IntPtr(NativeMethods.MA_NOACTIVATE);
         }
@@ -329,6 +338,9 @@ public sealed class AssistantWindow : Window
         // 背景透明但要能点到：空白处按住也是拖动。
         var header = new Border { Background = Brushes.Transparent, Padding = new Thickness(12, 6, 10, 6), Child = row };
         header.MouseLeftButtonDown += OnHeaderMouseDown;
+        header.MouseMove += OnHeaderMouseMove;
+        header.MouseLeftButtonUp += (_, _) => EndHeaderDrag();
+        header.LostMouseCapture += (_, _) => EndHeaderDrag();
         return header;
     }
 
@@ -761,23 +773,43 @@ public sealed class AssistantWindow : Window
 
     // MARK: - 拖动
 
-    /// <summary>按住标题栏拖动面板。只有用户拖过才记住位置（程序自己摆放时不记）。</summary>
+    /// <summary>
+    /// 按住标题栏拖动面板。只有用户拖过才记住位置（程序自己摆放时不记）。
+    /// 自己跟着鼠标挪，不用 DragMove：系统的拖动循环会把面板设成本程序的活动窗口（却不是前台窗口），
+    /// 之后点输入框收不到 WM_MOUSEACTIVATE，没法激活打字（2026-10-23 Windows 实测）；也会抢走用户正在用的程序的焦点。
+    /// </summary>
     private void OnHeaderMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ButtonState != MouseButtonState.Pressed) return;
+        if (e.ButtonState != MouseButtonState.Pressed || sender is not UIElement header) return;
         e.Handled = true;
-        double left = Left, top = Top;
-        try
+        headerDrag = (e.GetPosition(this), Left, Top);
+        header.CaptureMouse();
+    }
+
+    private void OnHeaderMouseMove(object sender, MouseEventArgs e)
+    {
+        if (headerDrag is not { } drag) return;
+        if (e.LeftButton != MouseButtonState.Pressed)
         {
-            DragMove();
-        }
-        catch (InvalidOperationException)
-        {
-            // 鼠标已经松开。
+            // 松开鼠标的消息丢了：结束拖动。
+            ((UIElement)sender).ReleaseMouseCapture();
             return;
         }
-        if (Math.Abs(Left - left) > 0.5 || Math.Abs(Top - top) > 0.5) SaveFrame();
+        var p = e.GetPosition(this);
+        Left += p.X - drag.Grab.X;
+        Top += p.Y - drag.Grab.Y;
     }
+
+    private void EndHeaderDrag()
+    {
+        if (headerDrag is not { } drag) return;
+        headerDrag = null;
+        Mouse.Capture(null);
+        if (Math.Abs(Left - drag.Left) > 0.5 || Math.Abs(Top - drag.Top) > 0.5) SaveFrame();
+    }
+
+    /// <summary>正在拖标题栏：按下时鼠标在面板里的位置，和面板原来的位置。</summary>
+    private (Point Grab, double Left, double Top)? headerDrag;
 
     private void SaveFrame()
     {

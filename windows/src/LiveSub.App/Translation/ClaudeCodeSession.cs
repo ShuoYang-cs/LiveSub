@@ -237,7 +237,6 @@ public sealed class ClaudeCodeSession : IChatSession
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            StandardErrorEncoding = Encoding.UTF8,
             WorkingDirectory = ClaudeLocator.WorkingDirectory(),
         };
         foreach (var arg in launch.PrefixArguments) psi.ArgumentList.Add(arg);
@@ -337,17 +336,25 @@ public sealed class ClaudeCodeSession : IChatSession
     {
         try
         {
-            var buffer = new char[4096];
-            var reader = p.StandardError;
+            // 按字节读：claude 写 UTF-8，但路径指错时（例如指到别的程序）错误输出是系统的旧编码（中文 Windows 上是 GBK），
+            // 按 UTF-8 读出来是乱码。留最后一段字节，每次整段重新解码：不是合法的 UTF-8 时按旧编码。
+            var buffer = new byte[4096];
+            var stream = p.StandardError.BaseStream;
+            var bytes = new List<byte>();
             while (true)
             {
-                int n = await reader.ReadAsync(buffer).ConfigureAwait(false);
+                int n = await stream.ReadAsync(buffer).ConfigureAwait(false);
                 if (n == 0) break;
-                lock (gate)
+                bytes.AddRange(buffer.AsSpan(0, n));
+                if (bytes.Count > 2400)
                 {
-                    var text = stderrTail + new string(buffer, 0, n);
-                    stderrTail = text.Length > 600 ? text[^600..] : text;
+                    int cut = bytes.Count - 2400;
+                    // 不从 UTF-8 字符的中间截断。
+                    while (cut < bytes.Count && (bytes[cut] & 0xC0) == 0x80) cut++;
+                    bytes.RemoveRange(0, cut);
                 }
+                var text = AttachmentFiles.DecodeText([.. bytes], AttachmentLoader.LegacyEncoding.Value) ?? "";
+                lock (gate) stderrTail = text.Length > 600 ? text[^600..] : text;
             }
         }
         catch (Exception e) when (e is IOException or ObjectDisposedException or InvalidOperationException)

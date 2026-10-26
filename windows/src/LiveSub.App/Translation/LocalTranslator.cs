@@ -225,7 +225,8 @@ public sealed class LocalModelServer
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
-        foreach (var arg in LocalTranslationModel.ServerArguments(LocalModelFiles.ModelPath, port, gpu)) psi.ArgumentList.Add(arg);
+        string? device = gpu ? await (gpuDevice ??= Task.Run(FindGpuDevice)) : null;
+        foreach (var arg in LocalTranslationModel.ServerArguments(LocalModelFiles.ModelPath, port, gpu, device)) psi.ArgumentList.Add(arg);
 
         var log = OpenLog();
         var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -261,7 +262,7 @@ public sealed class LocalModelServer
             Kill(p);
             throw new OperationCanceledException();
         }
-        AppLog.Info($"local model server starting on port {port} (gpu: {gpu})");
+        AppLog.Info($"local model server starting on port {port} (gpu: {gpu}{(device is null ? "" : $", {device}")})");
 
         var baseUrl = new Uri($"http://127.0.0.1:{port}/");
         var watch = Stopwatch.StartNew();
@@ -391,6 +392,45 @@ public sealed class LocalModelServer
             catch (Exception e) when (e is IOException or ObjectDisposedException)
             {
             }
+        }
+    }
+
+    /// <summary>用哪块显卡：每次运行程序查一次（约 0.2 秒），见 <see cref="LocalTranslationModel.PreferredGpuDevice"/>。</summary>
+    private static Task<string?>? gpuDevice;
+
+    private static string? FindGpuDevice()
+    {
+        var bench = Path.Combine(LocalModelFiles.RuntimeFolder, "llama-bench.exe");
+        if (!File.Exists(bench)) return null;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = bench,
+                WorkingDirectory = LocalModelFiles.RuntimeFolder,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            psi.ArgumentList.Add("--list-devices");
+            using var p = Process.Start(psi)!;
+            ChildProcessJob.Add(p);
+            var stdout = p.StandardOutput.ReadToEndAsync();
+            var stderr = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(10_000))
+            {
+                Kill(p);
+                return null;
+            }
+            var device = LocalTranslationModel.PreferredGpuDevice(stdout.Result + "\n" + stderr.Result);
+            AppLog.Info($"local model gpu device: {device ?? "default"}");
+            return device;
+        }
+        catch (Exception e) when (e is Win32Exception or InvalidOperationException)
+        {
+            AppLog.Error("local model: cannot list GPU devices", e);
+            return null;
         }
     }
 

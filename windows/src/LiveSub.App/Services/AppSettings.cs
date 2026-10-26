@@ -92,6 +92,7 @@ public sealed class AppSettings
     public string WhisperModel { get; set; } = Core.Speech.WhisperModel.Default.Id;
     public bool UseGpu { get; set; } = true;
     public bool LivePreview { get; set; } = true;
+    /// <summary>过滤周围的中文交谈（默认关闭）。只在中文界面里出现，见 <see cref="FilterChineseActive"/>。</summary>
     public bool FilterChinese { get; set; }
     /// <summary>模型下载地址（为空时用 https://huggingface.co）。</summary>
     public string ModelMirror { get; set; } = "";
@@ -123,7 +124,7 @@ public sealed class AppSettings
     public int VisibleLines { get; set; } = 2;
     /// <summary>新用户的字幕大小：面积是屏幕的 1/16，宽高比 3:1（<see cref="OverlayLayout.DefaultSize"/>）。</summary>
     public double OverlayWidth { get; set; } = DefaultOverlaySize.Width;
-    /// <summary>0 = 高度按“显示句数”算；大于 0 = 用户拖上下边框定的高度（新用户是默认大小的高度）。两种情况字幕都在框里滚动，窗口不随内容变。</summary>
+    /// <summary>大于 0 = 用户拖上下边框定的高度（新用户、恢复默认、双击上下边框时是默认大小的高度）；0 = 旧版设置里按句数（<see cref="VisibleLines"/>，设置里已经没有这一项）算的高度。两种情况字幕都在框里滚动，窗口不随内容变。</summary>
     public double OverlayHeight { get; set; } = DefaultOverlaySize.Height;
     /// <summary>字幕左边与底边的位置（与设备无关的像素）；null 表示放在屏幕右上角。</summary>
     public double? OverlayLeft { get; set; }
@@ -150,6 +151,13 @@ public sealed class AppSettings
         AssistantLeft = null;
         AssistantTop = null;
     }
+
+    /// <summary>
+    /// 这一项是给听外语课的中国学生用的：只在中文界面里显示和生效，其他语言的界面里看不到，也不过滤
+    /// （2026-10-23 用户决定：Windows 保留开关，非中文用户看到“过滤中文”会莫名其妙）。讲话语言是中文时没有意义。
+    /// </summary>
+    [JsonIgnore] public bool FilterChineseOffered => Localization.Strings.IsChinese && !SourceLanguage.StartsWith("zh", StringComparison.Ordinal);
+    [JsonIgnore] public bool FilterChineseActive => FilterChinese && FilterChineseOffered;
 
     [JsonIgnore] public LanguageOption Source => LanguageOption.Source(SourceLanguage);
     [JsonIgnore] public LanguageOption Target => LanguageOption.Target(TargetLanguage);

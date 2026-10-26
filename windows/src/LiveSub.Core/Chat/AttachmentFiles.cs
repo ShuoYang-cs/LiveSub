@@ -9,8 +9,6 @@ public static class AttachmentLimits
 {
     /// <summary>图片长边缩到这么多像素：Claude 建议不超过约 1568，幻灯片上的字仍然看得清。</summary>
     public const int MaxImagePixels = 1568;
-    /// <summary>PNG 超过这么大就改存 JPEG（Claude 单张图片上限 5 MB）。</summary>
-    public const int MaxPngBytes = 3_500_000;
     /// <summary>Claude 读 PDF 原文件的上限是 100 页、32 MB；超过时只发提取出的文字。</summary>
     public const int MaxPdfPages = 100;
     public const int MaxPdfBytes = 20_000_000;

@@ -219,7 +219,7 @@ public sealed class SubtitleController : IDisposable
             }
             SetStatus(Strings.Status_LoadingModel);
             var language = Settings.Source.WhisperCode;
-            bool filter = Settings.FilterChinese, gpu = Settings.UseGpu;
+            bool filter = Settings.FilterChineseActive, gpu = Settings.UseGpu;
             var rec = await Task.Run(() => new WhisperRecognizer(modelPath, language, filter, gpu), cancel.Token);
             if (cancel.IsCancellationRequested)
             {
@@ -807,7 +807,7 @@ public sealed class SubtitleController : IDisposable
     }
 
     private string RecognitionKey => string.Join('\u0001', Settings.SourceLanguage, Settings.AudioSource, Settings.MicNoiseReduction,
-        Settings.WhisperModel, Settings.FilterChinese, Settings.UseGpu);
+        Settings.WhisperModel, Settings.FilterChineseActive, Settings.UseGpu);
 
     private async Task ApplySettings(SettingsChange change)
     {

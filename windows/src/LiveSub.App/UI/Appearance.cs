@@ -141,7 +141,12 @@ internal static class Appearance
         // 主题里窗口的样式按类型 Window 找，派生的窗口类（SettingsWindow 等）不会自动套用，明确引用它
         // （找不到时退回系统主题里 Window 的样式，与不设时相同）。
         window.SetResourceReference(FrameworkElement.StyleProperty, typeof(Window));
+        // 主题的窗口背景是透明的，靠系统的 Mica 背景（Windows 11 22H2 起才有）。更早的系统上背景是黑的，
+        // 浅色主题的文字、没勾上的复选框都看不见（Windows 11 21H2 实测），所以改用主题里不透明的背景色。
+        if (!SupportsSystemBackdrop) window.SetResourceReference(System.Windows.Controls.Control.BackgroundProperty, "ApplicationBackgroundBrush");
     }
+
+    private static bool SupportsSystemBackdrop => Environment.OSVersion.Version.Build >= 22621;
 
     private static void ApplyTheme(Window window)
     {

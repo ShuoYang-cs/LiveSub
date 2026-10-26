@@ -951,10 +951,10 @@ public sealed class OverlayWindow : Window
                 e.Handled = true;
                 if (e.ClickCount == 2)
                 {
-                    // 双击上/下边框：恢复按“显示句数”算的高度。
+                    // 双击上/下边框：恢复默认高度（设置里的“显示最近 N 句”2026-10-23 按用户决定去掉了）。
                     if ((edges & (Edges.Top | Edges.Bottom)) != 0)
                     {
-                        S.OverlayHeight = 0;
+                        S.OverlayHeight = AppSettings.DefaultOverlaySize.Height;
                         settingsService.Commit(SettingsChange.Appearance);
                     }
                     return;
@@ -1048,8 +1048,10 @@ public sealed class OverlayWindow : Window
             && bottom > SystemParameters.VirtualScreenTop + 50
             && bottom < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight + 50)
         {
+            // 存下的底边可能是窗口变高之前的（例如双击边框换成按句数算的高度、被推回屏幕内之后没有再存），
+            // 照着放会伸出屏幕上边（2026-10-23 Windows 实测 Top = -307），所以上边不超出虚拟屏幕。
             Left = left;
-            Top = bottom - height;
+            Top = Math.Max(bottom - height, SystemParameters.VirtualScreenTop);
         }
         else
         {

@@ -149,11 +149,11 @@ public sealed class SettingsWindow : Window
         });
         Row(Strings.ModelServices_Title, WithButtons(services, SmallButton(Strings.Button_Manage, shell.ShowModelServices)));
 
-        // 讲话语言是中文时没有意义，不显示。
+        // 只在中文界面、讲话语言不是中文时显示（见 AppSettings.FilterChineseOffered）。
         var filter = Row(Strings.Label_FilterChinese,
             Check(() => S.FilterChinese, v => { S.FilterChinese = v; Commit(SettingsChange.Recognition); }, Strings.Tip_FilterChinese),
             Strings.Tip_FilterChinese);
-        refreshers.Add(() => filter.SetVisible(!S.SourceLanguage.StartsWith("zh", StringComparison.Ordinal)));
+        refreshers.Add(() => filter.SetVisible(S.FilterChineseOffered));
 
         Row(Strings.Label_AutoCorrect, Check(() => S.AutoCorrect, v => { S.AutoCorrect = v; Commit(SettingsChange.Translation); }, Strings.Tip_AutoCorrect),
             Strings.Tip_AutoCorrect);
@@ -214,14 +214,6 @@ public sealed class SettingsWindow : Window
         }));
         Row(Strings.Label_Opacity, SliderWithValue(0, 1, 0.05, () => S.BackgroundOpacity, "0%",
             v => { S.BackgroundOpacity = v; Commit(SettingsChange.Appearance); }));
-
-        // 拖过上下边框（高度固定）时，高度不再按句数算，不显示这一项。
-        var lines = Row("", Stepper(1, 6, () => S.VisibleLines, n => { S.VisibleLines = n; Commit(SettingsChange.Appearance); }));
-        refreshers.Add(() =>
-        {
-            lines.Label.Text = Strings.Format(Strings.Label_VisibleLines, Math.Clamp(S.VisibleLines, 1, 6));
-            lines.SetVisible(S.OverlayHeight <= 0);
-        });
 
         // 只有“恢复默认”按钮：“拖动字幕边框调整”这句说明挪进了按钮的悬停提示（2026-10-22 用户要求）。
         var reset = SmallButton(Strings.Button_ResetSize, shell.ResetOverlay);
@@ -504,30 +496,6 @@ public sealed class SettingsWindow : Window
         dock.Children.Add(label);
         dock.Children.Add(slider);
         return dock;
-    }
-
-    /// <summary>减一、加一两个按钮（相当于 macOS 的 Stepper），数值显示在这一行的标签里。</summary>
-    private FrameworkElement Stepper(int min, int max, Func<int> value, Action<int> onChange)
-    {
-        var minus = SmallButton("−", () =>
-        {
-            if (value() > min) onChange(value() - 1);
-        });
-        var plus = SmallButton("+", () =>
-        {
-            if (value() < max) onChange(value() + 1);
-        });
-        minus.MinWidth = plus.MinWidth = 32;
-        plus.Margin = new Thickness(6, 0, 0, 0);
-        refreshers.Add(() =>
-        {
-            minus.IsEnabled = value() > min;
-            plus.IsEnabled = value() < max;
-        });
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
-        panel.Children.Add(minus);
-        panel.Children.Add(plus);
-        return panel;
     }
 
     internal static Button SmallButton(string text, Action action)

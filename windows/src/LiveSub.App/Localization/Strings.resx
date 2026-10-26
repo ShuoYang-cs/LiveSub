@@ -139,8 +139,6 @@
   <data name="Tip_UseGpu" xml:space="preserve"><value>Use the GPU when a GPU runtime is installed. Takes effect after restart.</value></data>
   <data name="Label_LivePreview" xml:space="preserve"><value>Live Preview</value></data>
   <data name="Tip_LivePreview" xml:space="preserve"><value>Show a draft while someone is still speaking. Uses more CPU.</value></data>
-  <data name="Label_FilterChinese" xml:space="preserve"><value>Filter Nearby Chinese Conversation</value></data>
-  <data name="Tip_FilterChinese" xml:space="preserve"><value>When people nearby chat in Chinese, their words are left out of the subtitles; only the speaker's language is kept.</value></data>
   <data name="Label_MicNoiseReduction" xml:space="preserve"><value>Microphone Noise Reduction</value></data>
   <data name="Tip_MicNoiseReduction" xml:space="preserve"><value>Uses Windows communications voice processing to reduce background noise and remove echo; results depend on the audio driver. Accuracy may drop when the speaker is far away.</value></data>
   <data name="Label_ModelMirror" xml:space="preserve"><value>Model Download Host</value></data>
@@ -149,11 +147,12 @@
   <data name="Label_DisplayMode" xml:space="preserve"><value>Display</value></data>
   <data name="Label_FontSize" xml:space="preserve"><value>Font Size</value></data>
   <data name="Label_Opacity" xml:space="preserve"><value>Background</value></data>
-  <data name="Label_VisibleLines" xml:space="preserve"><value>Show last {0} lines</value></data>
   <data name="Label_Size" xml:space="preserve"><value>Size</value></data>
   <data name="Button_ResetSize" xml:space="preserve"><value>Reset</value></data>
   <data name="Label_ShowStatusBar" xml:space="preserve"><value>Show Status Bar</value></data>
   <data name="Tip_ShowStatusBar" xml:space="preserve"><value>Show the input level, recognition state, model and backlog below the subtitles.</value></data>
+  <data name="Label_FilterChinese" xml:space="preserve"><value>Filter Nearby Chinese Conversation</value></data>
+  <data name="Tip_FilterChinese" xml:space="preserve"><value>When people nearby chat in Chinese, their words are left out of the subtitles; only the speaker's language is kept.</value></data>
   <data name="Label_AutoCorrect" xml:space="preserve"><value>Correct Accented Speech Automatically</value></data>
   <data name="Tip_AutoCorrect" xml:space="preserve"><value>When the speaker has a strong accent and recognition is unreliable, a language model fixes misheard words from pronunciation and context. With Google Translate or Hunyuan Translate, Claude Sonnet is used while correcting; this requires Claude Code signed in on this PC.</value></data>
   <data name="Label_Lock" xml:space="preserve"><value>Lock Subtitles</value></data>

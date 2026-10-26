@@ -163,9 +163,15 @@ public sealed class WasapiSource : IAudioSource
         }
         catch (Exception e)
         {
-            AppLog.Error("audio: cannot opt out of ducking", e);
+            // 有的电脑上麦克风的会话不支持这个设置（AUDCLNT_E_WRONG_ENDPOINT_TYPE，Windows 11 21H2 实测），
+            // 但同一台电脑上开着降噪时系统声音也没有被调小，所以不算错误，每次运行只记一次。
+            if (duckingFailureLogged) return;
+            duckingFailureLogged = true;
+            AppLog.Info($"audio: ducking opt-out unavailable ({e.GetType().Name}: {e.Message})");
         }
     }
+
+    private static bool duckingFailureLogged;
 
     public void Stop()
     {

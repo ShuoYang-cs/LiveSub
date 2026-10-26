@@ -139,8 +139,6 @@
   <data name="Tip_UseGpu" xml:space="preserve"><value>安装了显卡运行库时用显卡识别。重新启动后生效。</value></data>
   <data name="Label_LivePreview" xml:space="preserve"><value>实时预览</value></data>
   <data name="Tip_LivePreview" xml:space="preserve"><value>说话过程中先显示识别草稿，会多用一些处理器。</value></data>
-  <data name="Label_FilterChinese" xml:space="preserve"><value>过滤周围的中文交谈</value></data>
-  <data name="Tip_FilterChinese" xml:space="preserve"><value>周围有人用中文聊天时，这些话不会出现在字幕里，只保留讲话语言的内容。</value></data>
   <data name="Label_MicNoiseReduction" xml:space="preserve"><value>麦克风降噪</value></data>
   <data name="Tip_MicNoiseReduction" xml:space="preserve"><value>使用 Windows 通话语音处理降低环境噪音并消除回声，效果取决于声卡驱动。讲者距离较远时可能降低识别效果。</value></data>
   <data name="Label_ModelMirror" xml:space="preserve"><value>模型下载地址</value></data>
@@ -149,11 +147,12 @@
   <data name="Label_DisplayMode" xml:space="preserve"><value>显示</value></data>
   <data name="Label_FontSize" xml:space="preserve"><value>字号</value></data>
   <data name="Label_Opacity" xml:space="preserve"><value>背景</value></data>
-  <data name="Label_VisibleLines" xml:space="preserve"><value>显示最近 {0} 句</value></data>
   <data name="Label_Size" xml:space="preserve"><value>大小</value></data>
   <data name="Button_ResetSize" xml:space="preserve"><value>恢复默认</value></data>
   <data name="Label_ShowStatusBar" xml:space="preserve"><value>显示状态条</value></data>
   <data name="Tip_ShowStatusBar" xml:space="preserve"><value>在字幕底部显示音量、识别状态、模型和待翻译句数。</value></data>
+  <data name="Label_FilterChinese" xml:space="preserve"><value>过滤周围的中文交谈</value></data>
+  <data name="Tip_FilterChinese" xml:space="preserve"><value>周围有人用中文聊天时，这些话不会出现在字幕里，只保留讲话语言的内容。</value></data>
   <data name="Label_AutoCorrect" xml:space="preserve"><value>自动纠正口音</value></data>
   <data name="Tip_AutoCorrect" xml:space="preserve"><value>讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Google 翻译或混元翻译时，纠正期间临时改用 Claude Sonnet，需要本机已登录 Claude Code。</value></data>
   <data name="Label_Lock" xml:space="preserve"><value>锁定字幕</value></data>

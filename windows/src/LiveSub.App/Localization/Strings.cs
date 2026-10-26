@@ -161,8 +161,6 @@ public static class Strings
     public static string Tip_UseGpu => Get(nameof(Tip_UseGpu));
     public static string Label_LivePreview => Get(nameof(Label_LivePreview));
     public static string Tip_LivePreview => Get(nameof(Tip_LivePreview));
-    public static string Label_FilterChinese => Get(nameof(Label_FilterChinese));
-    public static string Tip_FilterChinese => Get(nameof(Tip_FilterChinese));
     public static string Label_MicNoiseReduction => Get(nameof(Label_MicNoiseReduction));
     public static string Tip_MicNoiseReduction => Get(nameof(Tip_MicNoiseReduction));
     public static string Label_ModelMirror => Get(nameof(Label_ModelMirror));
@@ -171,11 +169,12 @@ public static class Strings
     public static string Label_DisplayMode => Get(nameof(Label_DisplayMode));
     public static string Label_FontSize => Get(nameof(Label_FontSize));
     public static string Label_Opacity => Get(nameof(Label_Opacity));
-    public static string Label_VisibleLines => Get(nameof(Label_VisibleLines));
     public static string Label_Size => Get(nameof(Label_Size));
     public static string Button_ResetSize => Get(nameof(Button_ResetSize));
     public static string Label_ShowStatusBar => Get(nameof(Label_ShowStatusBar));
     public static string Tip_ShowStatusBar => Get(nameof(Tip_ShowStatusBar));
+    public static string Label_FilterChinese => Get(nameof(Label_FilterChinese));
+    public static string Tip_FilterChinese => Get(nameof(Tip_FilterChinese));
     public static string Label_AutoCorrect => Get(nameof(Label_AutoCorrect));
     public static string Tip_AutoCorrect => Get(nameof(Tip_AutoCorrect));
     public static string Label_Lock => Get(nameof(Label_Lock));

@@ -18,7 +18,7 @@ namespace LiveSub.App.Services;
 /// <summary>
 /// 把 AI 助手的附件（拖进来、粘贴、选择的图片和文件）读成可以发给模型的内容（与 macOS 的 AttachmentLoader 相同）。
 /// 读文件、缩小图片、提取 PDF 文字可能要一会儿，不要在界面线程上调用。
-/// - 图片：长边缩到 1568 像素，按照片的方向信息转正；有透明部分的存 PNG（太大时合成到白底上改存 JPEG），其余存 JPEG。
+/// - 图片：长边缩到 1568 像素，按照片的方向信息转正；都存 JPEG，有透明部分的先合成到白底上。
 /// - PDF：原文件和用 PdfPig 提取的文字都带上（Claude 读原文件，OpenAI 兼容格式发文字）；太大、页数太多时只发文字。
 ///   PdfPig 读不了某一页时跳过这页；整个打不开时（PdfPig 比 macOS 的 PDFKit 挑剔）不太大的照样发原文件。
 /// - Word（.docx）、OpenDocument（.odt）、RTF：读出文字。旧的 .doc 读不了，提示存成 PDF。
@@ -127,12 +127,8 @@ internal static class AttachmentLoader
         }
         result.Freeze();
 
-        if (hasAlpha)
-        {
-            var png = Encode(new PngBitmapEncoder(), result);
-            if (png.Length <= AttachmentLimits.MaxPngBytes) return new ChatAttachment.Image(name, "image/png", png);
-        }
-        // JPEG 没有透明通道：透明的地方合成到白底上（直接去掉 alpha 的话是黑的）。
+        // 有透明部分的图片一律合成到白底上存 JPEG：照原样发 PNG 时 Claude 把透明处当成黑色
+        // （2026-10-23 Windows 实测，用户决定只改 Windows）。直接去掉 alpha 的话透明处也是黑的。
         BitmapSource opaque = hasAlpha ? OnWhite(result) : result;
         return new ChatAttachment.Image(name, "image/jpeg", Encode(new JpegBitmapEncoder { QualityLevel = 85 }, opaque));
     }
@@ -283,8 +279,8 @@ internal static class AttachmentLoader
     private static string Truncated(string text) =>
         AttachmentFiles.Truncate(text, remaining => Strings.Format(Strings.Attachment_Truncated, remaining));
 
-    /// <summary>不是 UTF-8 的文本文件按系统的旧编码读（中文 Windows 上是 GBK）。</summary>
-    private static readonly Lazy<Encoding?> LegacyEncoding = new(() =>
+    /// <summary>不是 UTF-8 的文本文件按系统的旧编码读（中文 Windows 上是 GBK）。claude 进程的错误输出也用它（见 ClaudeCodeSession）。</summary>
+    internal static readonly Lazy<Encoding?> LegacyEncoding = new(() =>
     {
         try
         {

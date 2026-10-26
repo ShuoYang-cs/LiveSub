@@ -156,7 +156,7 @@ public static class ChatAttachmentBudget
     };
 
     /// <summary>
-    /// 这一问的附件超过上限时，PDF 从大到小改成只发文字（图片缩小后最大约 3.5 MB，不用动）。
+    /// 这一问的附件超过上限时，PDF 从大到小改成只发文字（图片缩小后存成 JPEG，不大，不用动）。
     /// 返回改过的附件和改成文字的文件名。
     /// </summary>
     public static (IReadOnlyList<ChatAttachment> Attachments, IReadOnlyList<string> TextOnly) Fit(

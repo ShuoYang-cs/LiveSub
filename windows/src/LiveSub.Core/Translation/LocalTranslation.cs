@@ -68,12 +68,34 @@ public static class LocalTranslationModel
     /// <summary>
     /// llama-server 的参数（和 macOS 相同）：只监听 127.0.0.1；两个槽位，Google、混元翻译都是同时翻两句；
     /// 用显卡时把全部层放上去（<c>-ngl 99</c>），否则 <c>-ngl 0</c>。
+    /// <paramref name="gpuDevice"/> 是只用的那块显卡（<see cref="PreferredGpuDevice"/>），没有时按 llama.cpp 的默认分给所有显卡。
     /// </summary>
-    public static List<string> ServerArguments(string modelPath, int port, bool useGpu) =>
-    [
-        "-m", modelPath, "--host", "127.0.0.1", "--port", port.ToString(CultureInfo.InvariantCulture),
-        "-c", "4096", "-np", "2", "--jinja", "--no-webui", "-ngl", useGpu ? "99" : "0",
-    ];
+    public static List<string> ServerArguments(string modelPath, int port, bool useGpu, string? gpuDevice = null)
+    {
+        List<string> args =
+        [
+            "-m", modelPath, "--host", "127.0.0.1", "--port", port.ToString(CultureInfo.InvariantCulture),
+            "-c", "4096", "-np", "2", "--jinja", "--no-webui", "-ngl", useGpu ? "99" : "0",
+        ];
+        if (useGpu && gpuDevice is not null) args.AddRange(["-dev", gpuDevice]);
+        return args;
+    }
+
+    /// <summary>
+    /// 从 <c>llama-bench --list-devices</c> 的输出里挑独立显卡（<c>uma: 0</c>，不和处理器共用内存）。
+    /// 笔记本上常常同时有独立显卡和核显，llama.cpp 默认把模型分到两块上，比只用独立显卡慢
+    /// （RTX 3060 + Iris Xe 实测：生成 125±45 对 152 token/秒，读入 923 对 2254 token/秒）。
+    /// 没有独立显卡时返回 null，照 llama.cpp 的默认。
+    /// </summary>
+    public static string? PreferredGpuDevice(string listing)
+    {
+        foreach (var line in listing.Split('\n'))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(line, @"^ggml_vulkan: (\d+) = .*\| uma: (\d)");
+            if (m.Success && m.Groups[2].Value == "0") return "Vulkan" + m.Groups[1].Value;
+        }
+        return null;
+    }
 
     /// <summary>
     /// 官方提示词：涉及中文时用中文提示词，否则用英文提示词，语言名写全称。

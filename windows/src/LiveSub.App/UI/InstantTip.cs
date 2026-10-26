@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 
 namespace LiveSub.App.UI;
@@ -48,6 +49,8 @@ internal sealed class InstantTip
     /// <param name="above">画在按钮上方（输入栏的按钮）。</param>
     public void Attach(FrameworkElement element, Func<string> describe, bool above = false)
     {
+        // 按钮多是图标，读屏软件和界面自动化读这个名字。
+        AutomationProperties.SetName(element, describe());
         element.MouseEnter += (_, _) => Show(element, describe, above);
         element.MouseLeave += (_, _) =>
         {
@@ -66,6 +69,7 @@ internal sealed class InstantTip
     {
         if (target is null || currentText is null) return;
         text.Text = currentText();
+        AutomationProperties.SetName(target, text.Text);
         Position();
     }
 
@@ -82,6 +86,7 @@ internal sealed class InstantTip
         currentText = describe;
         currentAbove = above;
         text.Text = describe();
+        AutomationProperties.SetName(element, text.Text);
         bubble.Visibility = Visibility.Visible;
         Position();
     }
