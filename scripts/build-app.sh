@@ -25,6 +25,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$(swift build -c release --product LiveSub "${ARCHS[@]}" --show-bin-path)/LiveSub" "$APP/Contents/MacOS/LiveSub"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # 界面文字：中文、英文对照表与本地化的应用名称、权限说明。
 cp -R Resources/*.lproj "$APP/Contents/Resources/"
 date "+%Y-%m-%d %H:%M:%S" > "$APP/Contents/Resources/BuildInfo.txt"
