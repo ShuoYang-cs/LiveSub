@@ -31,6 +31,13 @@ public enum ChatStreamEvent: Equatable, Sendable {
 public enum ChatAPI {
     // MARK: - 请求
 
+    /// 从 `/models` 的回复里取模型名（OpenAI 兼容格式，Ollama、LM Studio 也是）；跳过只做向量化的模型。
+    public static func parseModelIDs(_ data: Data) -> [String] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = object["data"] as? [[String: Any]] else { return [] }
+        return list.compactMap { $0["id"] as? String }.filter { !$0.lowercased().contains("embed") }
+    }
+
     /// 请求地址：`baseURL` 是服务商给的根地址（如 https://api.deepseek.com/v1、http://localhost:11434/v1、https://api.anthropic.com）。
     public static func endpoint(format: ChatAPIFormat, baseURL: String, path: String) -> URL? {
         var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)

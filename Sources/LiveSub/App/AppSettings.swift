@@ -186,6 +186,13 @@ final class AppSettings {
     }
     /// 用户删掉过的内置服务（不再自动加回来）。
     var dismissedBuiltIns: [String] { didSet { save("dismissedBuiltIns", dismissedBuiltIns) } }
+    /// 点过“开始”：第一次启动时开始按钮下面多一行提示，之后不再显示。
+    var hasStartedOnce: Bool { didSet { save("hasStartedOnce", hasStartedOnce) } }
+    /// 已经替用户加进模型服务的本机服务地址（Ollama、LM Studio）：用户删掉后不再自动加回来。
+    var offeredLocalServices: [String] { didSet { save("offeredLocalServices", offeredLocalServices) } }
+    /// 本次启动时检测到的：本机装了 Claude Code、正在运行的本机服务地址。不保存。
+    var detectedClaude = false
+    var runningLocalServices: Set<String> = []
     /// AI 助手面板是否打开：每次启动都默认收起，用到时才打开（不保存）。
     var assistantVisible = false
     var assistantWidth: Double { didSet { save("assistantWidth", assistantWidth) } }
@@ -221,6 +228,9 @@ final class AppSettings {
         let assistant = Self.loadJSON(ModelChoice.self, "assistantModelChoice")
             ?? .claudeCode(d.string(forKey: "assistantModel") ?? "sonnet")
         assistantModel = assistant
+        // 老用户（0.1.0 起每次启动都会存下 claudeTranslationModel）不再看到首次提示；必须在下面的 d.set 之前读。
+        hasStartedOnce = d.object(forKey: "hasStartedOnce") as? Bool ?? (d.object(forKey: "claudeTranslationModel") != nil)
+        offeredLocalServices = d.stringArray(forKey: "offeredLocalServices") ?? []
         let dismissed = d.stringArray(forKey: "dismissedBuiltIns") ?? []
         dismissedBuiltIns = dismissed
         // 以前在列表里直接选过某家的某个模型：记成这家的“翻译用”/“AI 助手用”，接着用原来的模型。
@@ -386,6 +396,28 @@ final class AppSettings {
         case .claudeCode: return "Claude"
         case .endpoint(let id, let model): return endpoint(id)?.name ?? model
         }
+    }
+
+    /// 菜单里的名字：本机检测到可用、又不是当前选中的，后面标“已检测到”。
+    func menuTitle(_ choice: ModelChoice, selection: ModelChoice) -> String {
+        let name = serviceName(choice)
+        guard choice != selection else { return name }
+        let detected: Bool
+        switch choice {
+        case .claudeCode: detected = detectedClaude
+        case .endpoint(let id, _): detected = endpoint(id).map { runningLocalServices.contains($0.baseURL) } ?? false
+        default: detected = false
+        }
+        return detected ? L("%@ · 已检测到", name) : name
+    }
+
+    /// 检测到正在运行、还没加过的本机服务（Ollama、LM Studio）：加进模型服务，放在“本地模型”里。
+    /// 用户删掉后不再加回来；用户自己已经加过同一地址的也不加。
+    func addDetectedLocalService(name: String, baseURL: String, models: [String]) {
+        guard !models.isEmpty, !offeredLocalServices.contains(baseURL),
+              !endpoints.contains(where: { $0.baseURL == baseURL }) else { return }
+        offeredLocalServices.append(baseURL)
+        endpoints.append(ModelEndpoint(name: name, format: .openAI, baseURL: baseURL, models: models))
     }
 
     static func claudeModelName(_ model: String) -> String { model.prefix(1).uppercased() + model.dropFirst() }

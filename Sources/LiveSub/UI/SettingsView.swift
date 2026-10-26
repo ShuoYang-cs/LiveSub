@@ -97,7 +97,7 @@ struct SettingsView: View {
                     ForEach(settings.modelGroups(for: .translation)) { group in
                         Section(group.title) {
                             ForEach(group.choices, id: \.self) { choice in
-                                Text(settings.serviceName(choice)).tag(choice)
+                                Text(settings.menuTitle(choice, selection: settings.translationModel)).tag(choice)
                             }
                         }
                     }

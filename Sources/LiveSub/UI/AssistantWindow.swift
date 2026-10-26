@@ -274,7 +274,7 @@ struct AssistantView: View {
                 ForEach(settings.modelGroups(for: .assistant)) { group in
                     Section(group.title) {
                         ForEach(group.choices, id: \.self) { choice in
-                            Text(settings.serviceName(choice)).tag(choice)
+                            Text(settings.menuTitle(choice, selection: settings.assistantModel)).tag(choice)
                         }
                     }
                 }

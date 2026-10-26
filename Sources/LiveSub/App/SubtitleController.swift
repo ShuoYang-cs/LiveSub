@@ -164,6 +164,7 @@ final class SubtitleController {
             }
         }
 
+        settings.hasStartedOnce = true
         await prepareTranslators()
         appLog.notice("start: translators ready (\(self.translator?.name ?? "none", privacy: .public))")
         if store == nil {

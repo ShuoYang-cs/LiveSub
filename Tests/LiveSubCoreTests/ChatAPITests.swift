@@ -16,6 +16,12 @@ import Testing
                 == "https://api.anthropic.com/v1/models")
     }
 
+    @Test func modelIDsSkipEmbeddingModels() {
+        let data = Data(#"{"object":"list","data":[{"id":"qwen3:4b"},{"id":"nomic-embed-text"},{"id":"llama3.2"}]}"#.utf8)
+        #expect(ChatAPI.parseModelIDs(data) == ["qwen3:4b", "llama3.2"])
+        #expect(ChatAPI.parseModelIDs(Data("nope".utf8)).isEmpty)
+    }
+
     @Test func headers() {
         #expect(ChatAPI.headers(format: .openAI, apiKey: "sk-1")["Authorization"] == "Bearer sk-1")
         #expect(ChatAPI.headers(format: .openAI, apiKey: "")["Authorization"] == nil)  // 本地服务不需要密钥

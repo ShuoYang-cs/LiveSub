@@ -279,3 +279,5 @@
 "%@ 这次先用 Google 翻译。" = "%@ Google Translate is used for now.";
 "混元翻译启动失败：%@" = "Hunyuan Translate failed to start: %@";
 "启动失败：%@" = "Failed to start: %@";
+"%@ · 已检测到" = "%@ · detected";
+"现在用基础翻译，开箱即用。想要更准的翻译、AI 助手和自动纠正口音，到设置里选 Claude 或自己的模型。" = "Using basic translation, ready to go. For more accurate translation, the AI assistant and automatic accent correction, pick Claude or your own model in Settings.";

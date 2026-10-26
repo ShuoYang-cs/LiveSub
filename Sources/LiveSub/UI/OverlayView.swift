@@ -369,7 +369,7 @@ struct OverlayView: View {
                 ForEach(settings.modelGroups(for: .translation)) { group in
                     Section(group.title) {
                         ForEach(group.choices, id: \.self) { choice in
-                            Text(settings.serviceName(choice)).tag(choice)
+                            Text(settings.menuTitle(choice, selection: settings.translationModel)).tag(choice)
                         }
                     }
                 }
@@ -546,6 +546,15 @@ struct OverlayView: View {
             .font(.system(size: 11))
             .lineLimit(1)
             .padding(.horizontal, 18)
+            // 第一次使用：基础翻译够用，更准的翻译、AI 助手和纠正口音要换模型。
+            if !settings.hasStartedOnce, controller.alert == nil, !settings.translationModel.isLanguageModel {
+                Text("现在用基础翻译，开箱即用。想要更准的翻译、AI 助手和自动纠正口音，到设置里选 Claude 或自己的模型。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(palette.fg.opacity(0.65))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 24)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
