@@ -10,7 +10,7 @@
     <AssemblyName>LiveSub</AssemblyName>
     <AssemblyTitle>LiveSub</AssemblyTitle>
     <!-- 发版时改这里，并给发布打 windows-<版本> 的标签：更新检查拿它和 GitHub 上的标签比。 -->
-    <Version>0.1.1</Version>
+    <Version>1.0.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
