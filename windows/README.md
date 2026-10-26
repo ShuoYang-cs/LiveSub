@@ -2,8 +2,8 @@
 
 [中文](#中文) · [English](#english)
 
-版本 0.1.0（第一个 Windows 版本，尚未在实体 Windows 电脑上运行过，请按文末的测试清单逐项确认）。
-Version 0.1.0 — the first Windows build. It has not yet been run on a real Windows PC; please go through the test checklist.
+版本 1.0.0（第一个正式版）。测试清单在文末。
+Version 1.0.0 — the first official release. The test checklist is at the end.
 
 MIT License · © 2026 Shuo Yang
 
@@ -54,7 +54,7 @@ dotnet publish src/LiveSub.App -c Release -r win-x64 --self-contained -p:LiveSub
 
 程序没有代码签名，第一次运行时 SmartScreen 可能提示“未知发布者”，选择“仍要运行”。
 
-**更新**：从 0.1.1 起 LiveSub 会自己检查新版本（每天一次，设置 › 更新里可以关或手动检查）。有新版时开始按钮下面出现“有新版本 x.y.z”，点“更新”会自动下载并替换安装目录里的文件后重新打开（带 Vulkan 的版本更新到带 Vulkan 的）；也可以选“稍后”或“跳过此版本”。必须解压到自己能写的文件夹里，在压缩包里直接运行的不能自动更新。发布新版本（维护者）：改 `src/LiveSub.App/LiveSub.App.csproj` 里的 `Version`，发布的标签必须是 `windows-<版本号>`，附件名 `LiveSub-<版本号>-Windows-x64.zip` 和 `…-Windows-x64-vulkan.zip`。
+**更新**：LiveSub 会自己检查新版本（每天一次，设置 › 更新里可以关或手动检查）。有新版时开始按钮下面出现“有新版本 x.y.z”，点“更新”会自动下载并替换安装目录里的文件后重新打开（带 Vulkan 的版本更新到带 Vulkan 的）；也可以选“稍后”或“跳过此版本”。必须解压到自己能写的文件夹里，在压缩包里直接运行的不能自动更新。发布新版本（维护者）：改 `src/LiveSub.App/LiveSub.App.csproj` 里的 `Version`，发布的标签必须是 `windows-<版本号>`，附件名 `LiveSub-<版本号>-Windows-x64.zip` 和 `…-Windows-x64-vulkan.zip`。
 
 开发时在 macOS 上也能构建（`EnableWindowsTargeting`），但不能运行界面。
 
