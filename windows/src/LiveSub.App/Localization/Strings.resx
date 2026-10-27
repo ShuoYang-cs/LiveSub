@@ -154,7 +154,7 @@
   <data name="Label_FilterChinese" xml:space="preserve"><value>Filter Nearby Chinese Conversation</value></data>
   <data name="Tip_FilterChinese" xml:space="preserve"><value>When people nearby chat in Chinese, their words are left out of the subtitles; only the speaker's language is kept.</value></data>
   <data name="Label_AutoCorrect" xml:space="preserve"><value>Correct Accented Speech Automatically</value></data>
-  <data name="Tip_AutoCorrect" xml:space="preserve"><value>When the speaker has a strong accent and recognition is unreliable, a language model fixes misheard words from pronunciation and context. With Google Translate or Hunyuan Translate, Claude Sonnet is used while correcting; this requires Claude Code signed in on this PC.</value></data>
+  <data name="Tip_AutoCorrect" xml:space="preserve"><value>When the speaker has a strong accent and recognition is unreliable, a language model fixes misheard words from pronunciation and context.</value></data>
   <data name="Label_Lock" xml:space="preserve"><value>Lock Subtitles</value></data>
   <data name="Label_HotKey" xml:space="preserve"><value>Shortcut</value></data>
   <data name="Tip_HotKey" xml:space="preserve"><value>Shows or hides the subtitles. On some keyboard layouts, such as Polish, Ctrl+Alt acts as AltGr, so that choice blocks characters typed with AltGr.</value></data>
@@ -199,7 +199,7 @@
   <data name="Engine_LocalModel" xml:space="preserve"><value>Hunyuan Translate</value></data>
   <data name="Group_Basic" xml:space="preserve"><value>Basic</value></data>
   <data name="Overlay_Correcting" xml:space="preserve"><value>{0} · Correcting</value></data>
-  <data name="Tip_RecognitionNeedsClaude" xml:space="preserve"><value>Recognition confidence is low. Automatic correction requires Claude Code signed in on this PC.</value></data>
+  <data name="Tip_RecognitionNeedsClaude" xml:space="preserve"><value>Recognition confidence is low. Automatic correction requires translating with a cloud model.</value></data>
   <data name="Error_NotLanguageModel" xml:space="preserve"><value>This feature needs a language model. Choose Claude Code, or add a model in Model Services.</value></data>
   <data name="Error_Google" xml:space="preserve"><value>Google Translate error: {0}</value></data>
   <data name="Error_LocalModel" xml:space="preserve"><value>Hunyuan Translate error: {0}</value></data>
@@ -309,4 +309,5 @@
   <data name="Label_AutoUpdate" xml:space="preserve"><value>Check for updates automatically</value></data>
   <data name="Label_CurrentVersion" xml:space="preserve"><value>Current version {0}</value></data>
   <data name="Button_CheckUpdate" xml:space="preserve"><value>Check for Updates</value></data>
+  <data name="Note_AutoCorrectCloudOnly" xml:space="preserve"><value>Takes effect only when translating with a cloud model (Claude or your own API).</value></data>
 </root>

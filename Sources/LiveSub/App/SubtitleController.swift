@@ -112,6 +112,10 @@ final class SubtitleController {
     @ObservationIgnored private var translatorBuiltDifficult = false
     /// 翻译器刚被换掉、新的还在准备（resetTranslators 到 prepareTranslators 结束）。
     @ObservationIgnored private var translatorPending = false
+    /// 自动判断出的这节课的主题和术语（只在自动纠正开着、用云端模型时判断；重新开始新记录时清空）。
+    private(set) var lectureTopic: String?
+    @ObservationIgnored private var linesSinceTopic = 0
+    @ObservationIgnored private var topicInFlight = false
     @ObservationIgnored private var alertAt = Date.distantPast
     /// 这份记录对应的录音从什么时候开始（导出字幕的时间零点）。
     @ObservationIgnored private var sessionStart: Date?
@@ -176,7 +180,7 @@ final class SubtitleController {
         if let testFile = ProcessInfo.processInfo.environment["LIVESUB_TEST_AUDIO_FILE"] {
             captures.append(FileCapture(url: URL(fileURLWithPath: testFile)))
         } else {
-            if mode != .system { captures.append(MicrophoneCapture(noiseReduction: settings.micNoiseReduction)) }
+            if mode != .system { captures.append(MicrophoneCapture(noiseReduction: settings.micNoiseReduction && mode == .microphone)) }
             if mode != .microphone { captures.append(SystemAudioCapture()) }
         }
 
@@ -308,6 +312,8 @@ final class SubtitleController {
             backlog = 0
             store = nil
             sessionStart = nil
+            lectureTopic = nil
+            linesSinceTopic = 0
             translator?.shutdown()
             translator = nil
             assistant.newConversation()
@@ -332,7 +338,7 @@ final class SubtitleController {
     }
 
     private func applySettings() async {
-        appLog.notice("apply settings (running: \(self.isRunning))")
+        appLog.notice("apply settings (running: \(self.isRunning), noiseReduction: \(self.settings.micNoiseReduction && self.settings.audioSource == .microphone))")
         while isStarting { try? await Task.sleep(for: .milliseconds(100)) }
         resetTranslators()
         guard isRunning else { return }
@@ -457,11 +463,10 @@ final class SubtitleController {
         return true
     }
 
-    /// 按发音纠正用的大模型：所选翻译模型是大模型就用它；Google、Apple 不能纠正，本机有 Claude Code 时
-    /// 临时换成 Claude Sonnet（ICT 2026-10-22 实测：带上下文时 Sonnet 和 Haiku 一样快，但 Haiku 会编造原文没有的词）。
+    /// 按发音纠正用的大模型：只有所选翻译模型是大模型（Claude 或自己的 API）时才纠正；
+    /// Google、Apple、混元翻译不纠正（2026-10-26 用户决定：不再临时换成 Claude Sonnet，否则切换模型看不出变化）。
     var correctionModel: ModelChoice? {
-        if settings.translationModel.isLanguageModel { return settings.translationModel }
-        return claudeAvailable ? .claudeCode("sonnet") : nil
+        settings.translationModel.isLanguageModel ? settings.translationModel : nil
     }
 
     /// 大模型翻译会话；提示词里带不带“按发音纠正”看当前是否识别困难。
@@ -471,6 +476,8 @@ final class SubtitleController {
             systemPrompt: Prompts.translatorSystemPrompt(source: settings.source, target: settings.target,
                                                          correctMishearings: correcting),
             maxTurns: 40, historyTurns: 12, timeout: 25)
+        // 只有“按发音纠正”的提示词里讲了 [Topic] 块怎么用，别的会话不能带，否则会被当成要翻译的内容。
+        session.topicNote.set(correcting ? lectureTopic : nil)
         session.warmUp()
         translatorBuiltDifficult = correcting
         return session
@@ -562,6 +569,48 @@ final class SubtitleController {
         }
     }
 
+    // MARK: - 自动判断主题（提高纠正精度）
+
+    /// 前几句翻完后判断一次这节课在讲什么，之后每隔一阵再更新。识别出错的词（“RJCC list”）光靠上下文常常改不回来，
+    /// 知道是在讲图算法，模型才敢改成 adjacency list。2026-10-26 用户提出：术语表上课前没法写，要自动判断。
+    private func noteFinishedLine() {
+        guard settings.autoCorrect, settings.translationModel.isLanguageModel, !topicInFlight else { return }
+        linesSinceTopic += 1
+        guard linesSinceTopic >= (lectureTopic == nil ? 4 : 20) else { return }
+        linesSinceTopic = 0
+        updateTopic()
+    }
+
+    private func updateTopic() {
+        let recent = lines.filter { $0.state == .done }.suffix(30).map(\.source)
+        guard recent.count >= 3 else { return }
+        var input = recent.joined(separator: "\n")
+        if let lectureTopic { input = "Previous topic:\n\(lectureTopic)\n\nRecent lines:\n" + input }
+        let model = settings.translationModel
+        guard let session = try? ChatSessionFactory.make(
+            model, settings: settings, systemPrompt: Prompts.topicPrompt(source: settings.source),
+            maxTurns: 2, historyTurns: 1, timeout: 40) else { return }
+        topicInFlight = true
+        Task { [weak self] in
+            defer { session.shutdown() }
+            let reply = try? await session.request(newSessionMessage: input, ongoingMessage: input, onPartial: { _ in })
+            guard let self else { return }
+            self.topicInFlight = false
+            guard let topic = Self.parseTopic(reply) else { return }
+            appLog.notice("lecture topic: \(topic, privacy: .public)")
+            self.lectureTopic = topic
+            if self.correcting { (self.translator as? ChatSession)?.topicNote.set(topic) }
+        }
+    }
+
+    /// 回复是“Topic: …\nTerms: …”两行；猜不出来（unknown）或格式不对时不用。
+    static func parseTopic(_ reply: String?) -> String? {
+        guard let reply else { return nil }
+        let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.lowercased().hasPrefix("topic:"), !text.lowercased().hasPrefix("topic: unknown") else { return nil }
+        return String(text.prefix(600))
+    }
+
     // MARK: - 状态条
 
     private func updateInputStatus() {
@@ -573,7 +622,9 @@ final class SubtitleController {
             silent = min(silent, s.silentFor)
         }
         // 只在明显变化时更新，避免界面每 0.25 秒重绘。
-        let quantized = (min(level * 8, 1) * 10).rounded() / 10
+        // 按分贝显示：-60 dB 以下算没声音，-20 dB 满格。原来线性映射下 RMS 低于 0.006 就显示 0，声音轻一点就一直是“无声音”。
+        let db = level > 0 ? 20 * log10(level) : -120
+        let quantized = (min(max((db + 60) / 40, 0), 1) * 10).rounded() / 10
         if quantized != inputLevel { inputLevel = quantized }
         let silentRounded = silent.isFinite ? silent.rounded() : 999
         if silentRounded != silentFor { silentFor = silentRounded }
@@ -768,6 +819,7 @@ final class SubtitleController {
         lines[i].state = .done
         lines[i].note = note
         persist()
+        noteFinishedLine()
     }
 
     /// 积压合并只会去掉还在排队的句子（都在 `persistedCount` 后面），所以已经写过的句子位置不变。

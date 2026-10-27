@@ -27,11 +27,15 @@ public sealed class ChatTranslator(IChatSession session) : ITranslator
 {
     public string Name => session.Name;
 
+    /// <summary>这节课的主题和术语（纠正用）；只有“按发音纠正”的提示词里讲了 [Topic] 块怎么用。</summary>
+    public TopicNote Topic { get; } = new();
+
     public void WarmUp() => session.WarmUp();
 
     public Task<string> TranslateAsync(string text, IReadOnlyList<(string Source, string Translation)> context, Action<string>? onPartial,
                                        CancellationToken cancellationToken) =>
-        session.RequestAsync(Prompts.TranslationMessage(text, context), text, onPartial, cancellationToken);
+        // 新会话的消息带当前主题；进行中的会话只在主题变了时补一次（先取 Current，再取 ChangedForOngoing，与 macOS 相同）。
+        session.RequestAsync(Prompts.TranslationMessage(text, context, Topic.Current), Topic.OngoingMessage(text), onPartial, cancellationToken);
 
     public void Dispose() => session.Dispose();
 }

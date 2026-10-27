@@ -94,7 +94,7 @@ public static class TranslationOutput
     internal static string Clean(string text, bool targetIsCJK)
     {
         var lines = TextUtil.SplitLines(text).ToList();
-        lines.RemoveAll(l => l.Contains("[Translate]") || l.Contains("[Context]") || l.Contains(Marker));
+        lines.RemoveAll(l => l.Contains("[Translate]") || l.Contains("[Context]") || l.Contains("[Topic]") || l.Contains(Marker));
         if (targetIsCJK && lines.Any(ContainsCJK))
         {
             lines.RemoveAll(l => !ContainsCJK(l) && LatinWordCount(l) >= 4);
@@ -191,6 +191,8 @@ public static class Prompts
 
                 Recognition is unreliable for this speaker (likely an accent, fast speech or noisy audio). The recognizer often mishears words as similar-sounding ones or splits and merges words wrongly, e.g. "sub sub problems" = subproblems, "minimum Hispanic tree" = minimum spanning tree. Reconstruct the intended words from how they sound and from the earlier lines.
 
+                A message may start with a "[Topic]" block: what the talk is about and terms likely to be spoken. Use it to decide what a misheard word really was (for example, prefer a listed term that sounds like the garbled word). It is only a hint: never translate it, and do not insert terms the speaker did not say.
+
                 The {source.PromptName} line is also shown to the viewer. If you corrected such recognition errors, put one extra line after the translation: {TranslationOutput.Marker} <the corrected {source.PromptName} fragment>. Fix only the misheard words and keep the speaker's wording. If nothing needed correcting, output only the translation.
                 """;
         }
@@ -198,10 +200,17 @@ public static class Prompts
     }
 
     /// <summary>新会话的第一条消息带上最近几句作为上下文，保证换会话后术语和语气连贯。</summary>
-    public static string TranslationMessage(string text, IReadOnlyList<(string Source, string Translation)> context)
+    /// <param name="topic">自动判断出的这节课的主题和术语（见 <see cref="TopicPrompt"/>）；有的话放在最前面，帮纠正听错的词。</param>
+    public static string TranslationMessage(string text, IReadOnlyList<(string Source, string Translation)> context, string? topic = null)
     {
-        if (context.Count == 0) return text;
-        var lines = new List<string> { "[Context]" };
+        if (context.Count == 0 && topic is null) return text;
+        var lines = new List<string>();
+        if (topic is not null)
+        {
+            lines.Add("[Topic]");
+            lines.Add(topic);
+        }
+        if (context.Count > 0) lines.Add("[Context]");
         foreach (var pair in context)
         {
             lines.Add(pair.Source);
@@ -211,6 +220,17 @@ public static class Prompts
         lines.Add(text);
         return string.Join("\n", lines);
     }
+
+    /// <summary>让模型从最近的字幕里判断这段话在讲什么、会用到哪些术语（识别有错也要猜）。结果作为 [Topic] 块送给纠正用的翻译会话。</summary>
+    public static string TopicPrompt(LanguageOption source) => $"""
+        You support a live-subtitle system. The user message contains the most recent lines of live {source.PromptName} speech (a lecture, talk or meeting) as transcribed by speech recognition, plus possibly the previous topic. The transcript contains recognition errors: words are often misheard as similar-sounding ones (e.g. "RJCC list" for "adjacency list"). Infer from the whole passage what the speech is really about.
+
+        Reply with exactly two lines and nothing else:
+        Topic: <the specific subject, e.g. "depth-first vs breadth-first graph traversal in a university algorithms course">
+        Terms: <up to 15 technical terms, names or phrases likely to be spoken next, spelled correctly in {source.PromptName}, comma-separated>
+
+        If the previous topic still fits, keep it and refine the terms. If the speech has clearly moved to a new subject, replace it. If you cannot tell, reply "Topic: unknown".
+        """;
 
     /// <summary>生成笔记用的提示词（Windows 版 v0.1 尚未提供笔记功能，先保留与 macOS 一致的文本）。</summary>
     public static string NotesPrompt(LanguageOption target) => $"""

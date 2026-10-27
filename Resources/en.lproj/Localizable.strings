@@ -227,8 +227,8 @@
 "浅色" = "Light";
 "深色" = "Dark";
 "离线翻译，速度快，不需要账号。" = "Works offline, fast, no account needed.";
-"讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Google 翻译或 Apple 本地翻译时，纠正期间临时改用 Claude Sonnet，需要本机已登录 Claude Code。" = "When the speaker has a strong accent and recognition is unreliable, a language model fixes misheard words from pronunciation and context. With Google Translate or Apple Translation, Claude Sonnet is used while correcting; this requires Claude Code signed in on this Mac.";
-"识别置信度较低。自动纠正需要本机已登录 Claude Code。" = "Recognition confidence is low. Automatic correction requires Claude Code signed in on this Mac.";
+"讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。" = "When the speaker has a strong accent and recognition is unreliable, a language model fixes misheard words from pronunciation and context.";
+"识别置信度较低。自动纠正需要用云端模型翻译。" = "Recognition confidence is low. Automatic correction requires translating with a cloud model.";
 "跟随系统" = "System";
 "音源：%@" = "Audio source: %@";
 "LiveSub 录音记录" = "LiveSub Recordings";
@@ -304,3 +304,7 @@
 "下载的文件里没有 LiveSub.app。" = "The download doesn't contain LiveSub.app.";
 "新版的签名无效。" = "The new version's signature is invalid.";
 "新版的签名和现在的不一致，不能自动更新。" = "The new version is signed differently, so it can't be installed automatically.";
+
+"需要用云端模型翻译（Claude 或自己的 API）才会生效。" = "Takes effect only when translating with a cloud model (Claude or your own API).";
+
+"“麦克风和系统音频”同时录时不能用降噪：系统的语音处理会和系统音频采集冲突，字幕会停止。" = "Noise reduction can't be used when recording microphone and system audio together: the system voice processing conflicts with system audio capture and subtitles stop.";

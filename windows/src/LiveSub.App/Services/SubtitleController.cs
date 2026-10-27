@@ -48,18 +48,13 @@ public sealed class SubtitleController : IDisposable
     public float InputLevel { get; private set; }
     public double SilentFor { get; private set; }
     public bool RecognitionDifficult { get; private set; }
-    /// <summary>翻译时是否按发音纠正识别错误：打开了“自动纠正口音”、最近识别困难，并且有能纠正的大模型。</summary>
+    /// <summary>翻译时是否按发音纠正识别错误：打开了“自动纠正口音”、最近识别困难，并且所选翻译模型是大模型。</summary>
     public bool Correcting => Settings.AutoCorrect && RecognitionDifficult && CorrectionModel is not null;
     /// <summary>
-    /// 按发音纠正用的大模型（与 macOS 相同）：所选翻译模型是大模型就用它；Google 翻译、混元翻译不能纠正，本机有 Claude Code 时
-    /// 临时换成 Claude Sonnet（ICT 2026-10-22 实测：带上下文时 Sonnet 和 Haiku 一样快，但 Haiku 会编造原文没有的词）。
+    /// 按发音纠正用的大模型：只有所选翻译模型是大模型（Claude 或自己的 API）时才纠正；
+    /// Google 翻译、混元翻译不纠正（与 macOS 相同，2026-10-26 用户决定：不再临时换成 Claude Sonnet，否则切换模型看不出变化）。
     /// </summary>
-    public ModelChoice? CorrectionModel => Settings.TranslationModel.IsLanguageModel ? Settings.TranslationModel
-        : ClaudeAvailable && !correctionBroken ? ModelChoice.ClaudeCode(ModelCatalog.Sonnet) : null;
-    /// <summary>本机有没有 Claude Code（准备翻译器时查一次：判断能不能纠正要用，不能每次刷新状态条都去找）。</summary>
-    public bool ClaudeAvailable { get; private set; }
-    /// <summary>打开了“自动纠正口音”，但没有能纠正的大模型（用 Google 翻译、混元翻译，本机又没有可用的 Claude Code）。</summary>
-    public bool CorrectionUnavailable => Settings.AutoCorrect && CorrectionModel is null;
+    public ModelChoice? CorrectionModel => Settings.TranslationModel.IsLanguageModel ? Settings.TranslationModel : null;
     /// <summary>
     /// 麦克风被 Windows 隐私设置挡住（或多半如此）：字幕不停，权限打开后自动继续。
     /// “两者”模式下只影响麦克风这一路，系统音频照常识别。
@@ -74,10 +69,10 @@ public sealed class SubtitleController : IDisposable
     };
     /// <summary>状态里的翻译模型：正在用的翻译器的完整名称（“Claude · Haiku”“Google 翻译”）。</summary>
     public string EngineName => translator?.Name ?? Settings.DisplayName(Settings.TranslationModel);
-    /// <summary>状态条上的翻译模型：服务名；Google 翻译、混元翻译在纠正期间实际用的是 Claude，写成“Claude · 纠正中”（与 macOS 相同）。</summary>
-    public string EngineLabel => !Settings.TranslationModel.IsLanguageModel && Correcting && CorrectionModel is { } model
-        ? Strings.Format(Strings.Overlay_Correcting, Settings.ServiceName(model))
-        : Settings.ServiceName(Settings.TranslationModel);
+    /// <summary>状态条上的翻译模型：服务名（与 macOS 相同）。</summary>
+    public string EngineLabel => Settings.ServiceName(Settings.TranslationModel);
+    /// <summary>自动判断出的这节课的主题和术语（只在自动纠正开着、用云端模型时判断；开始新记录时清空）；鼠标停在状态条的模型上能看到。</summary>
+    public string? LectureTopic { get; private set; }
     public string? TranscriptPath => store?.FilePath;
     /// <summary>正在生成笔记（托盘菜单里的“生成笔记”这时不可点）。</summary>
     public bool IsGeneratingNotes { get; private set; }
@@ -124,10 +119,11 @@ public sealed class SubtitleController : IDisposable
     private bool sessionCorrecting;
     /// <summary>上次出现“重试也没用”的错误（未登录、缺密钥）；设置改变或重新开始前不再请求。</summary>
     private string? brokenMessage;
-    /// <summary>纠正用的 Claude 出过“重试也没用”的错误（例如未登录）：这次不再纠正，一直用基础翻译器；设置改变或重新开始时再试。</summary>
-    private bool correctionBroken;
     /// <summary>混元翻译启动不了，这次改用了 Google 翻译；设置改变或重新开始时再试混元翻译。</summary>
     private bool localModelFellBack;
+    /// <summary>上次判断主题后又翻完了几句；正在判断主题（一次一个）。</summary>
+    private int linesSinceTopic;
+    private bool topicInFlight;
     /// <summary>正在翻译的句数。</summary>
     private int activeTranslations;
     /// <summary>换下来、等正在翻译的句子完成后再关的旧翻译器；退出程序时一并关闭，不留下 claude、llama-server 进程。</summary>
@@ -186,7 +182,7 @@ public sealed class SubtitleController : IDisposable
             if (Settings.AssistantVisible) Assistant.WarmUp();
             quality = new RecognitionQualityMonitor();
             RecognitionDifficult = false;
-            if (brokenMessage is not null || correctionBroken || localModelFellBack) ResetSession();
+            if (brokenMessage is not null || localModelFellBack) ResetSession();
             await Start();
         }
     }
@@ -771,6 +767,8 @@ public sealed class SubtitleController : IDisposable
         Book.Clear();
         store = null;
         sessionStart = null;
+        LectureTopic = null;
+        linesSinceTopic = 0;
         ResetSession();
         Assistant.NewConversation();
         SetStatus(Strings.Status_NewSession);
@@ -842,7 +840,7 @@ public sealed class SubtitleController : IDisposable
 
     /// <summary>
     /// 准备翻译器（与 macOS 的 prepareTranslators 相同）。大模型：按当前是否识别困难建带或不带“按发音纠正”的会话。
-    /// Google 翻译、混元翻译：建好基础翻译器；识别困难（并且打开了“自动纠正口音”）时临时换成 Claude Sonnet 的纠正会话，清楚了换回来。
+    /// Google 翻译、混元翻译：建好基础翻译器（它们不能纠正）。
     /// 旧会话等正在翻译的句子完成后再关，新的紧接着建好，中间不留没有翻译器的空档。
     /// </summary>
     private void PrepareTranslator()
@@ -851,7 +849,6 @@ public sealed class SubtitleController : IDisposable
         {
             if (basicTranslator is null)
             {
-                ClaudeAvailable = ClaudeLocator.Locate(Settings.ClaudePath) is not null;
                 basicTranslator = CreateBasicTranslator();
                 basicTranslator.WarmUp();
                 // 刚从大模型换成 Google 翻译、混元翻译，设置还没应用（ResetSession 要等 0.8 秒）时，下一句就会走到这里：
@@ -860,7 +857,6 @@ public sealed class SubtitleController : IDisposable
                 translator = basicTranslator;
                 AppLog.Info($"translator: {basicTranslator.Name}");
             }
-            PrepareCorrection();
             return;
         }
         // 例如重新开始时识别状态恢复为“清晰”，旧会话却是按“纠正”的提示词建的：换掉。
@@ -882,30 +878,6 @@ public sealed class SubtitleController : IDisposable
         }
     }
 
-    /// <summary>Google 翻译、混元翻译：识别困难时换成带纠正的 Claude 会话，清楚了换回基础翻译器（它一直留着，不关）。</summary>
-    private void PrepareCorrection()
-    {
-        bool correcting = Correcting;
-        bool usingCorrection = translator is not null && !ReferenceEquals(translator, basicTranslator);
-        if (correcting == usingCorrection) return;
-        if (!correcting)
-        {
-            RetireLater(translator);
-            translator = basicTranslator;
-            return;
-        }
-        try
-        {
-            translator = CreateSession(CorrectionModel!);
-        }
-        catch (ChatProviderException e)
-        {
-            correctionBroken = true;
-            translator = basicTranslator;
-            AppLog.Error("translator: correction unavailable", e);
-        }
-    }
-
     /// <summary>大模型翻译会话；提示词里带不带“按发音纠正”看当前是否识别困难。</summary>
     private ChatTranslator CreateSession(ModelChoice model)
     {
@@ -914,7 +886,10 @@ public sealed class SubtitleController : IDisposable
         sessionCorrecting = Correcting;
         session.WarmUp();
         AppLog.Info($"translator: {session.Name}{(sessionCorrecting ? " (correcting)" : "")}");
-        return new ChatTranslator(session);
+        var chat = new ChatTranslator(session);
+        // 只有“按发音纠正”的提示词里讲了 [Topic] 块怎么用，别的会话不能带，否则会被当成要翻译的内容。
+        chat.Topic.Set(sessionCorrecting ? LectureTopic : null);
+        return chat;
     }
 
     /// <summary>Google 翻译或混元翻译。混元翻译还没下载时这次先用 Google 翻译，并打开“模型服务”里的下载按钮（与 macOS 相同）。</summary>
@@ -937,7 +912,6 @@ public sealed class SubtitleController : IDisposable
         translator = null;
         basicTranslator = null;
         brokenMessage = null;
-        correctionBroken = false;
         localModelFellBack = false;
     }
 
@@ -1023,8 +997,7 @@ public sealed class SubtitleController : IDisposable
         // 有两个音源时音量取最大、“多久没收到音频”取最短；采集断了、正在等它恢复的音源不算。
         var input = SourceMix.Combine(pipelines.Select(p =>
             p.Source is { } s ? new SourceInput(s.Level, (now - s.LastDataAt).TotalSeconds) : (SourceInput?)null));
-        float level = Math.Min(input.Level * 8, 1);
-        InputLevel = MathF.Round(level * 10) / 10;
+        InputLevel = SourceMix.DisplayLevel(input.Level);
         SilentFor = input.SilentFor;
         RecoverAudio(now);
         if (Alert is not null && now - alertAt > TimeSpan.FromSeconds(10)) Alert = null;
@@ -1067,8 +1040,8 @@ public sealed class SubtitleController : IDisposable
         RecognitionDifficult = quality.IsDifficult;
         AppLog.Info($"recognition {(RecognitionDifficult ? "difficult" : "clear")} (avg confidence {quality.AverageConfidence:F2})");
         // 没打开自动纠正时只在状态条上提示，不换翻译会话。
-        if (!Settings.AutoCorrect || brokenMessage is not null) return;
-        // 换一个带/不带“按发音纠正”的翻译会话；Google 翻译、混元翻译换成或换回 Claude 的纠正会话（PrepareTranslator 会自动换）。
+        if (!Settings.AutoCorrect || CorrectionModel is null || brokenMessage is not null) return;
+        // 换一个带/不带“按发音纠正”的翻译会话（PrepareTranslator 会自动换）。
         PrepareTranslator();
         UpdateListeningStatus();
     }
@@ -1190,9 +1163,8 @@ public sealed class SubtitleController : IDisposable
             }
             if (e is ChatProviderException { IsPersistent: true } && ReferenceEquals(primary, translator))
             {
-                // 纠正用的 Claude 不能用：这次不再纠正，换回基础翻译器；所选的大模型不能用：设置改变或重新开始前不再请求。
-                if (basicTranslator is not null) correctionBroken = true;
-                else brokenMessage = message;
+                // 所选的大模型不能用：设置改变或重新开始前不再请求。
+                brokenMessage = message;
                 RetireLater(primary);
                 translator = basicTranslator;
             }
@@ -1221,7 +1193,72 @@ public sealed class SubtitleController : IDisposable
         if (line is null) return;
         if (AppLog.DebugLatency) LogLatency(line);
         Persist();
+        NoteFinishedLine();
         RaiseChanged();
+    }
+
+    // MARK: - 自动判断主题（提高纠正精度，与 macOS 相同）
+
+    /// <summary>
+    /// 前几句翻完后判断一次这节课在讲什么，之后每隔一阵再更新。识别出错的词（“RJCC list”）光靠上下文常常改不回来，
+    /// 知道是在讲图算法，模型才敢改成 adjacency list。2026-10-26 用户提出：术语表上课前没法写，要自动判断。
+    /// </summary>
+    private void NoteFinishedLine()
+    {
+        if (!Settings.AutoCorrect || !Settings.TranslationModel.IsLanguageModel || topicInFlight) return;
+        linesSinceTopic++;
+        if (linesSinceTopic < (LectureTopic is null ? 4 : 20)) return;
+        linesSinceTopic = 0;
+        UpdateTopic();
+    }
+
+    private async void UpdateTopic()
+    {
+        var recent = Book.Lines.Where(l => l.State == LineState.Done).TakeLast(30).Select(l => l.Source).ToList();
+        if (recent.Count < 3) return;
+        var input = string.Join("\n", recent);
+        if (LectureTopic is { } previous) input = $"Previous topic:\n{previous}\n\nRecent lines:\n{input}";
+        IChatSession session;
+        try
+        {
+            session = TranslationEngines.Create(Settings.TranslationModel, Settings, secrets, Prompts.TopicPrompt(Settings.Source),
+                maxTurns: 2, timeout: TimeSpan.FromSeconds(40));
+        }
+        catch (Exception e)
+        {
+            // async void：这里不能让异常逃出去（会让整个程序崩溃）；判断不了主题不影响翻译。
+            AppLog.Error("topic: unavailable", e);
+            return;
+        }
+        topicInFlight = true;
+        string? reply = null;
+        try
+        {
+            reply = await session.RequestAsync(input, input, null, CancellationToken.None);
+        }
+        catch (Exception e)
+        {
+            AppLog.Error("topic: failed", e);
+        }
+        finally
+        {
+            session.Dispose();
+            topicInFlight = false;
+        }
+        if (ParseTopic(reply) is not { } topic) return;
+        AppLog.Info($"lecture topic: {topic}");
+        LectureTopic = topic;
+        if (Correcting && translator is ChatTranslator chat) chat.Topic.Set(topic);
+        RaiseChanged();
+    }
+
+    /// <summary>回复是“Topic: …\nTerms: …”两行；猜不出来（unknown）或格式不对时不用。</summary>
+    internal static string? ParseTopic(string? reply)
+    {
+        var text = reply?.Trim();
+        if (string.IsNullOrEmpty(text)) return null;
+        if (!text.StartsWith("topic:", StringComparison.OrdinalIgnoreCase) || text.StartsWith("topic: unknown", StringComparison.OrdinalIgnoreCase)) return null;
+        return text.Length > 600 ? text[..600] : text;
     }
 
     private void Fail(Guid id)

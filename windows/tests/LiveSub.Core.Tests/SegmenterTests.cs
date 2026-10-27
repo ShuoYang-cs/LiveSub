@@ -339,3 +339,35 @@ public class TranslationOutputTests
         Assert.Equal("okay then.", output.CorrectedSource);
     }
 }
+
+// 与 macOS 版 CollapseRepeatsTests 相同。
+public class CollapseRepeatsTests
+{
+    [Fact]
+    public void CollapsesRunsOfThreeOrMore()
+    {
+        Assert.Equal("Okay, okay.", Segmenter.CollapseRepeats("Okay, okay, okay, okay."));
+        Assert.Equal("say, to, to", Segmenter.CollapseRepeats("say, to, to, to, to, to, to"));
+        Assert.Equal("Yeah. Yeah.", Segmenter.CollapseRepeats("Yeah. Yeah. Yeah."));
+    }
+
+    [Fact]
+    public void KeepsOrdinaryRepeats()
+    {
+        Assert.Equal("Okay, okay. So, which one?", Segmenter.CollapseRepeats("Okay, okay. So, which one?"));
+        Assert.Equal("It is what it is", Segmenter.CollapseRepeats("It is what it is"));
+        Assert.Equal("", Segmenter.CollapseRepeats(""));
+    }
+
+    [Fact]
+    public void TopicBlockComesFirstAndIsSentOnlyWhenChanged()
+    {
+        Assert.Equal("[Topic]\nTopic: graphs\n[Translate]\nhi", Prompts.TranslationMessage("hi", [], "Topic: graphs"));
+        var note = new LiveSub.Core.Chat.TopicNote();
+        Assert.Equal("hi", note.OngoingMessage("hi"));
+        note.Set("Topic: graphs");
+        Assert.Equal("[Topic]\nTopic: graphs\n[Translate]\nhi", note.OngoingMessage("hi"));
+        Assert.Equal("hi", note.OngoingMessage("hi"));
+        Assert.Equal("hi", TranslationOutput.Split("hi\n[Topic]").Translation);
+    }
+}

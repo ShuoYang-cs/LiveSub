@@ -83,7 +83,7 @@ public enum TranslationOutput {
 
     static func clean(_ text: String, targetIsCJK: Bool) -> String {
         var lines = text.split(whereSeparator: \.isNewline).map(String.init)
-        lines.removeAll { $0.contains("[Translate]") || $0.contains("[Context]") || $0.contains(marker) }
+        lines.removeAll { $0.contains("[Translate]") || $0.contains("[Context]") || $0.contains("[Topic]") || $0.contains("[Topic]") || $0.contains(marker) }
         if targetIsCJK, lines.contains(where: containsCJK) {
             lines.removeAll { !containsCJK($0) && latinWordCount($0) >= 4 }
         }
@@ -154,6 +154,8 @@ public enum Prompts {
 
             Recognition is unreliable for this speaker (likely an accent, fast speech or noisy audio). The recognizer often mishears words as similar-sounding ones or splits and merges words wrongly, e.g. "sub sub problems" = subproblems, "minimum Hispanic tree" = minimum spanning tree. Reconstruct the intended words from how they sound and from the earlier lines.
 
+            A message may start with a "[Topic]" block: what the talk is about and terms likely to be spoken. Use it to decide what a misheard word really was (for example, prefer a listed term that sounds like the garbled word). It is only a hint: never translate it, and do not insert terms the speaker did not say.
+
             The \(source.promptName) line is also shown to the viewer. If you corrected such recognition errors, put one extra line after the translation: \(TranslationOutput.marker) <the corrected \(source.promptName) fragment>. Fix only the misheard words and keep the speaker's wording. If nothing needed correcting, output only the translation.
             """
         }
@@ -161,9 +163,13 @@ public enum Prompts {
     }
 
     /// 新会话的第一条消息带上最近几句作为上下文，保证换会话后术语和语气连贯。
-    public static func translationMessage(text: String, context: [(source: String, translation: String)]) -> String {
-        guard !context.isEmpty else { return text }
-        var lines = ["[Context]"]
+    /// - topic: 自动判断出的这节课的主题和术语（见 `topicPrompt`）；有的话放在最前面，帮纠正听错的词。
+    public static func translationMessage(text: String, context: [(source: String, translation: String)],
+                                          topic: String? = nil) -> String {
+        guard !context.isEmpty || topic != nil else { return text }
+        var lines: [String] = []
+        if let topic { lines += ["[Topic]", topic] }
+        if !context.isEmpty { lines.append("[Context]") }
         for pair in context {
             lines.append(pair.source)
             lines.append("→ " + pair.translation)
@@ -171,6 +177,19 @@ public enum Prompts {
         lines.append("[Translate]")
         lines.append(text)
         return lines.joined(separator: "\n")
+    }
+
+    /// 让模型从最近的字幕里判断这段话在讲什么、会用到哪些术语（识别有错也要猜）。结果作为 `[Topic]` 块送给纠正用的翻译会话。
+    public static func topicPrompt(source: LanguageOption) -> String {
+        """
+        You support a live-subtitle system. The user message contains the most recent lines of live \(source.promptName) speech (a lecture, talk or meeting) as transcribed by speech recognition, plus possibly the previous topic. The transcript contains recognition errors: words are often misheard as similar-sounding ones (e.g. "RJCC list" for "adjacency list"). Infer from the whole passage what the speech is really about.
+
+        Reply with exactly two lines and nothing else:
+        Topic: <the specific subject, e.g. "depth-first vs breadth-first graph traversal in a university algorithms course">
+        Terms: <up to 15 technical terms, names or phrases likely to be spoken next, spelled correctly in \(source.promptName), comma-separated>
+
+        If the previous topic still fits, keep it and refine the terms. If the speech has clearly moved to a new subject, replace it. If you cannot tell, reply "Topic: unknown".
+        """
     }
 
     public static func notesPrompt(target: LanguageOption) -> String {

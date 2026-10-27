@@ -138,6 +138,8 @@ final class AppSettings {
             adopt(translationModel, for: .translation)
             if !Self.onlyModelChanged(oldValue, translationModel), let id = endpointMissingKey(translationModel) { onModelNeedsSetup?(id) }
             if translationModel == .localModel, !LocalModelFiles.isInstalled { onModelNeedsSetup?(LocalModelFiles.serviceID) }
+            // 自动纠正只对云端模型有效：换到别的模型时关掉，开关也置灰（2026-10-26 用户要求，灰着却是开的容易误解）。
+            if !translationModel.isLanguageModel, autoCorrect { autoCorrect = false }
         }
     }
     /// 选了还没填 API 密钥的服务（比如默认列出的 OpenAI）、或还没下载的混元翻译：
@@ -173,9 +175,23 @@ final class AppSettings {
     /// 字幕底部的运行状态条（有没有声音、识别是否清晰、翻译积压）。
     var showStatusBar: Bool { didSet { save("showStatusBar", showStatusBar) } }
     /// 识别困难（口音重、语速快、噪音大）时让大模型按发音和上下文纠正识别错误。默认关闭。
-    var autoCorrect: Bool { didSet { save("autoCorrect", autoCorrect) } }
+    var autoCorrect: Bool {
+        didSet {
+            save("autoCorrect", autoCorrect)
+            // 纠正会改原文：只看译文时看不出来，打开时从“仅译文”切到“双语”（2026-10-26 用户要求）。
+            if autoCorrect, !oldValue, displayMode == .translationOnly { displayMode = .bilingual }
+            if autoCorrect, !translationModel.isLanguageModel { autoCorrect = false }
+        }
+    }
+    /// 开着自动纠正又保留识别原文时，“仅译文”不能选（看不到原文就没有意义）。
+    var translationOnlyLocked: Bool { autoCorrect && keepOriginalText }
     /// 纠正改过原文时，在记录和字幕记录窗口里同时保留识别器原来给出的文字。
-    var keepOriginalText: Bool { didSet { save("keepOriginalText", keepOriginalText) } }
+    var keepOriginalText: Bool {
+        didSet {
+            save("keepOriginalText", keepOriginalText)
+            if translationOnlyLocked, displayMode == .translationOnly { displayMode = .bilingual }
+        }
+    }
     /// AI 助手和笔记使用的模型（必须是大模型），以及面板是否显示、大小。
     var assistantModel: ModelChoice {
         didSet {
@@ -258,6 +274,7 @@ final class AppSettings {
         }
         autoCorrect = d.object(forKey: "autoCorrect") as? Bool ?? false
         keepOriginalText = d.object(forKey: "keepOriginalText") as? Bool ?? false
+        if !translation.isLanguageModel { autoCorrect = false }
         showStatusBar = d.object(forKey: "showStatusBar") as? Bool ?? true
         micNoiseReduction = d.object(forKey: "micNoiseReduction") as? Bool ?? false
         assistantWidth = d.object(forKey: "assistantWidth") as? Double ?? 380

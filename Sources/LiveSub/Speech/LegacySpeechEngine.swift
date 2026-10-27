@@ -79,7 +79,8 @@ final class LegacySpeechEngine: SpeechEngine, @unchecked Sendable {
         let rms = audioLevel(buffer)
         guard let converted = try? converter.convert(buffer, to: format) else { return }
         lock.withLock {
-            level = rms
+            // 慢慢回落：状态条每 0.25 秒看一次，只看最后一块会常常落在字与字之间的空隙里。
+            level = max(rms, level * 0.85)
             lastBufferAt = Date()
             audioTime += Double(converted.frameLength) / format.sampleRate
             pause.addAudio(level: rms, audioTime: audioTime)

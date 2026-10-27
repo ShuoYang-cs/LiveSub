@@ -27,6 +27,17 @@ public static class SourceMix
         return new SourceInput(level, silent);
     }
 
+    /// <summary>
+    /// 状态条上的音量（0…1，0.1 一档）：按分贝显示，-60 dB 以下算没声音、-20 dB 满格（与 macOS 相同）。
+    /// 原来线性映射时 RMS 低于约 0.006 就是 0，坐在教室后排、讲者离得远时一直显示“无声音”。
+    /// </summary>
+    public static float DisplayLevel(float rms)
+    {
+        double db = rms > 0 ? 20 * Math.Log10(rms) : -120;
+        double level = Math.Clamp((db + 60) / 40, 0, 1);
+        return (float)(Math.Round(level * 10, MidpointRounding.AwayFromZero) / 10);
+    }
+
     /// <summary>字幕下方“正在说”的各行，按音源的顺序；没有字母或数字的不显示（噪音有时被识别成一个“.”）。</summary>
     public static List<LiveRow> LiveRows(IEnumerable<LiveRow> rows) =>
         rows.Where(r => r.Text.Any(char.IsLetterOrDigit)).ToList();

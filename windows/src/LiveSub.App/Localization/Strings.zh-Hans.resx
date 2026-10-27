@@ -154,7 +154,7 @@
   <data name="Label_FilterChinese" xml:space="preserve"><value>过滤周围的中文交谈</value></data>
   <data name="Tip_FilterChinese" xml:space="preserve"><value>周围有人用中文聊天时，这些话不会出现在字幕里，只保留讲话语言的内容。</value></data>
   <data name="Label_AutoCorrect" xml:space="preserve"><value>自动纠正口音</value></data>
-  <data name="Tip_AutoCorrect" xml:space="preserve"><value>讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Google 翻译或混元翻译时，纠正期间临时改用 Claude Sonnet，需要本机已登录 Claude Code。</value></data>
+  <data name="Tip_AutoCorrect" xml:space="preserve"><value>讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。</value></data>
   <data name="Label_Lock" xml:space="preserve"><value>锁定字幕</value></data>
   <data name="Label_HotKey" xml:space="preserve"><value>快捷键</value></data>
   <data name="Tip_HotKey" xml:space="preserve"><value>显示或隐藏字幕。部分键盘布局（例如波兰语）中 Ctrl+Alt 等同于 AltGr，选它会占用用 AltGr 输入的字符。</value></data>
@@ -199,7 +199,7 @@
   <data name="Engine_LocalModel" xml:space="preserve"><value>混元翻译</value></data>
   <data name="Group_Basic" xml:space="preserve"><value>基础</value></data>
   <data name="Overlay_Correcting" xml:space="preserve"><value>{0} · 纠正中</value></data>
-  <data name="Tip_RecognitionNeedsClaude" xml:space="preserve"><value>识别置信度较低。自动纠正需要本机已登录 Claude Code。</value></data>
+  <data name="Tip_RecognitionNeedsClaude" xml:space="preserve"><value>识别置信度较低。自动纠正需要用云端模型翻译。</value></data>
   <data name="Error_NotLanguageModel" xml:space="preserve"><value>这个功能需要大模型：请选择 Claude Code，或在“模型服务”中添加一个模型。</value></data>
   <data name="Error_Google" xml:space="preserve"><value>Google 翻译出错：{0}</value></data>
   <data name="Error_LocalModel" xml:space="preserve"><value>混元翻译出错：{0}</value></data>
@@ -309,4 +309,5 @@
   <data name="Label_AutoUpdate" xml:space="preserve"><value>自动检查更新</value></data>
   <data name="Label_CurrentVersion" xml:space="preserve"><value>当前版本 {0}</value></data>
   <data name="Button_CheckUpdate" xml:space="preserve"><value>检查更新</value></data>
+  <data name="Note_AutoCorrectCloudOnly" xml:space="preserve"><value>需要用云端模型翻译（Claude 或自己的 API）才会生效。</value></data>
 </root>

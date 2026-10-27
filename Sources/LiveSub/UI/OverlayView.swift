@@ -311,7 +311,7 @@ struct OverlayView: View {
                  : controller.recognitionDifficult ? L("识别较难") : L("识别清晰"))
                 .help(controller.correcting ? L("识别置信度较低，已自动按发音纠正识别错误。")
                       : controller.recognitionDifficult
-                        ? (settings.autoCorrect ? L("识别置信度较低。自动纠正需要本机已登录 Claude Code。")
+                        ? (settings.autoCorrect ? L("识别置信度较低。自动纠正需要用云端模型翻译。")
                            : L("识别置信度较低。可以在设置中打开“自动纠正口音”。"))
                       : L("识别置信度正常。"))
             if controller.isRecording {
@@ -350,10 +350,6 @@ struct OverlayView: View {
         let basic = !settings.translationModel.isLanguageModel
         if controller.usingFallback {
             return basic ? settings.serviceName(settings.translationModel) : L("Apple 本地翻译 · 备用")
-        }
-        // Google、Apple 在纠正期间实际用的是 Claude。
-        if basic, controller.correcting, let model = controller.correctionModel {
-            return L("%@ · 纠正中", settings.serviceName(model))
         }
         return settings.serviceName(settings.translationModel)
     }
@@ -400,7 +396,7 @@ struct OverlayView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
             state.modelMenuHovered = false
         }
-        .help("切换翻译模型")
+        .help(controller.lectureTopic.map { L("切换翻译模型") + "\n" + $0 } ?? L("切换翻译模型"))
     }
 
     private var levelMeter: some View {
@@ -621,6 +617,12 @@ struct OverlayView: View {
                     Text(line.source)
                         .font(.system(size: settings.sourceFontSize))
                         .foregroundStyle(palette.fg.opacity(mode == .sourceOnly ? 1 : 0.72))
+                }
+                // 自动纠正改过原文、并且打开了“保留识别原文”：在纠正后的原文下面用淡色小字显示识别器原来的文字。
+                if let original = line.originalSource, original != line.source {
+                    Text(original)
+                        .font(.system(size: settings.sourceFontSize * 0.85))
+                        .foregroundStyle(palette.fg.opacity(0.45))
                 }
             }
             if mode != .sourceOnly {

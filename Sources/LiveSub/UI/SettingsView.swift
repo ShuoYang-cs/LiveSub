@@ -91,7 +91,10 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 if settings.audioSource != .system {
                     Toggle("麦克风降噪", isOn: $settings.micNoiseReduction)
-                        .help("使用系统语音处理降低环境噪音并消除回声。讲者距离较远时可能降低识别效果。")
+                        .help(settings.audioSource == .both
+                              ? "“麦克风和系统音频”同时录时不能用降噪：系统的语音处理会和系统音频采集冲突，字幕会停止。"
+                              : "使用系统语音处理降低环境噪音并消除回声。讲者距离较远时可能降低识别效果。")
+                        .disabled(settings.audioSource == .both)
                 }
                 Picker("翻译模型", selection: $settings.translationModel) {
                     ForEach(settings.modelGroups(for: .translation)) { group in
@@ -112,19 +115,22 @@ struct SettingsView: View {
                     }
                 }
                 Toggle("自动纠正口音", isOn: $settings.autoCorrect)
-                    .help("讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。使用 Google 翻译或 Apple 本地翻译时，纠正期间临时改用 Claude Sonnet，需要本机已登录 Claude Code。")
+                    .help("讲者口音较重、识别不准时，自动让大模型按发音和上下文纠正识别错误。")
+                    .disabled(!settings.translationModel.isLanguageModel)
+                Text("需要用云端模型翻译（Claude 或自己的 API）才会生效。")
+                    .font(.caption).foregroundStyle(.secondary)
                 if settings.autoCorrect {
                     Toggle("纠正时保留识别原文", isOn: $settings.keepOriginalText)
                         .help("纠正修改了原文时，在字幕记录中同时保留识别器原来的文字。")
+                        .disabled(!settings.translationModel.isLanguageModel)
                         .padding(.leading, 14)
                 }
             }
 
             Section("字幕") {
-                Picker("显示", selection: $settings.displayMode) {
-                    ForEach(DisplayMode.allCases) { Text($0.title).tag($0) }
+                LabeledContent("显示") {
+                    DisplayModeSegments(selection: $settings.displayMode, locked: settings.translationOnlyLocked)
                 }
-                .pickerStyle(.segmented)
                 Picker("外观", selection: $settings.appearance) {
                     ForEach(AppearanceMode.allCases) { Text($0.title).tag($0) }
                 }
@@ -343,5 +349,34 @@ struct HistoryView: View {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             NSWorkspace.shared.open(folder)
         }
+    }
+}
+
+
+/// “显示”的分段按钮：系统的分段 Picker 不能单独置灰某一段，所以自己画。
+/// 保留识别原文时“仅译文”不能选。
+private struct DisplayModeSegments: View {
+    @Binding var selection: DisplayMode
+    let locked: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(DisplayMode.allCases) { mode in
+                let disabled = locked && mode == .translationOnly
+                Button { selection = mode } label: {
+                    Text(mode.title)
+                        .padding(.horizontal, 14).padding(.vertical, 3)
+                        .frame(maxWidth: .infinity)
+                        .foregroundStyle(selection == mode ? Color.white : Color.primary.opacity(disabled ? 0.3 : 1))
+                        .background(RoundedRectangle(cornerRadius: 5).fill(selection == mode ? Color.accentColor : .clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(disabled)
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.08)))
+        .fixedSize()
     }
 }

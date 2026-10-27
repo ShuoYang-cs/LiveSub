@@ -1280,6 +1280,8 @@ public sealed class OverlayWindow : Window
     private sealed class LineView : StackPanel
     {
         private readonly TextBlock source = new() { TextWrapping = TextWrapping.Wrap };
+        /// <summary>自动纠正改过原文、并且打开了“保留识别原文”时：纠正后的原文下面用淡色小字显示识别器原来的文字（与 macOS 相同）。</summary>
+        private readonly TextBlock original = new() { TextWrapping = TextWrapping.Wrap, Opacity = 0.45, Visibility = Visibility.Collapsed };
         private readonly TextBlock translation = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
         private string signature = "";
         private string sourceSignature = "";
@@ -1290,7 +1292,9 @@ public sealed class OverlayWindow : Window
         {
             Margin = new Thickness(0, 0, 0, 8);
             source.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg);
+            original.SetResourceReference(TextBlock.ForegroundProperty, OverlayPalette.Fg);
             Children.Add(source);
+            Children.Add(original);
             Children.Add(translation);
         }
 
@@ -1299,7 +1303,7 @@ public sealed class OverlayWindow : Window
         public void Update(SubtitleLine line, DisplayMode mode, double sourceSize, double translationSize, FontFamily sourceFont, FontFamily targetFont)
         {
             Time = line.Time;
-            var sig = $"{line.SourceLabel}\u0001{line.Source}\u0001{line.Translation}\u0001{line.State}\u0001{mode}\u0001{sourceSize}\u0001{translationSize}\u0001{sourceFont}\u0001{targetFont}";
+            var sig = $"{line.SourceLabel}\u0001{line.Source}\u0001{line.OriginalSource}\u0001{line.Translation}\u0001{line.State}\u0001{mode}\u0001{sourceSize}\u0001{translationSize}\u0001{sourceFont}\u0001{targetFont}";
             if (sig == signature) return;
             signature = sig;
 
@@ -1321,6 +1325,15 @@ public sealed class OverlayWindow : Window
                 source.Inlines.Add(run);
                 source.FontSize = sourceSize;
                 source.FontFamily = sourceFont;
+            }
+
+            bool showOriginal = mode != DisplayMode.TranslationOnly && !string.IsNullOrEmpty(line.OriginalSource) && line.OriginalSource != line.Source;
+            original.Visibility = showOriginal ? Visibility.Visible : Visibility.Collapsed;
+            if (showOriginal)
+            {
+                original.Text = line.OriginalSource;
+                original.FontSize = sourceSize * 0.85;
+                original.FontFamily = sourceFont;
             }
 
             translation.Visibility = mode == DisplayMode.SourceOnly ? Visibility.Collapsed : Visibility.Visible;
@@ -1550,13 +1563,13 @@ public sealed class OverlayWindow : Window
                 : c.InputLevel > 0 ? Strings.Overlay_Receiving : Strings.Overlay_Quiet;
             if (hasInput && c.MicrophoneBlock == MicrophoneBlock.None) sound.ClearValue(TextBlock.ForegroundProperty);
             else sound.Foreground = Orange;
-            // 识别困难但没打开“自动纠正口音”时只提示，告诉用户在哪里打开；打开了但没有能纠正的模型（用 Google 翻译、混元翻译，
-            // 本机又没有 Claude Code）时说明需要 Claude Code（与 macOS 相同）。
+            // 识别困难但没纠正时只提示，告诉用户在哪里打开“自动纠正口音”（它只对云端模型有效，设置里有说明）。
             (recognition.Text, recognition.ToolTip) = c.Correcting ? (Strings.Overlay_RecognitionCorrecting, Strings.Tip_RecognitionCorrecting)
-                : c.RecognitionDifficult ? (Strings.Overlay_RecognitionHard, c.CorrectionUnavailable ? Strings.Tip_RecognitionNeedsClaude : Strings.Tip_RecognitionHard)
+                : c.RecognitionDifficult ? (Strings.Overlay_RecognitionHard, Strings.Tip_RecognitionHard)
                 : (Strings.Overlay_RecognitionClear, Strings.Tip_RecognitionClear);
             recording.Visibility = recordingSeparator.Visibility = c.IsRecording ? Visibility.Visible : Visibility.Collapsed;
             engine.Text = c.EngineLabel;
+            engineButton.ToolTip = c.LectureTopic is { } topic ? $"{Strings.Tip_ModelMenu}\n{topic}" : Strings.Tip_ModelMenu;
             int waiting = c.Book.Backlog;
             backlog.Text = waiting > 0 ? Strings.Format(Strings.Overlay_Backlog, waiting) : "";
             backlog.Visibility = backlogSeparator.Visibility = waiting > 0 ? Visibility.Visible : Visibility.Collapsed;

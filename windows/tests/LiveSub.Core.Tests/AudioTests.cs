@@ -214,6 +214,16 @@ public class MicrophoneAccessTests
 public class SourceMixTests
 {
     [Fact]
+    public void DisplayLevelIsOnADecibelScale()
+    {
+        Assert.Equal(0f, SourceMix.DisplayLevel(0));
+        Assert.Equal(0f, SourceMix.DisplayLevel(0.0005f)); // -66 dB
+        Assert.Equal(0.5f, SourceMix.DisplayLevel(0.01f)); // -40 dB
+        Assert.Equal(1f, SourceMix.DisplayLevel(0.5f));
+        Assert.True(SourceMix.DisplayLevel(0.003f) > 0); // -50 dB：原来的线性映射里是 0
+    }
+
+    [Fact]
     public void LevelIsTheLoudestAndSilenceTheShortest()
     {
         var mix = SourceMix.Combine([new SourceInput(0.02f, 0.1), new SourceInput(0.3f, 12)]);

@@ -158,14 +158,40 @@ public sealed class SettingsWindow : Window
             Strings.Tip_FilterChinese);
         refreshers.Add(() => filter.SetVisible(S.FilterChineseOffered));
 
-        Row(Strings.Label_AutoCorrect, Check(() => S.AutoCorrect, v => { S.AutoCorrect = v; Commit(SettingsChange.Translation); }, Strings.Tip_AutoCorrect),
+        // 自动纠正只对云端模型有效（与 macOS 相同）：用 Google 翻译、混元翻译时开关置灰并自动关掉，下面有一行说明。
+        var autoCorrect = Row(Strings.Label_AutoCorrect, Check(() => S.AutoCorrect, v =>
+            {
+                S.AutoCorrect = v;
+                // 纠正会改原文：只看译文时看不出来，打开时从“仅译文”切到“双语”。
+                bool switchedDisplay = v && S.DisplayMode == DisplayMode.TranslationOnly;
+                if (switchedDisplay) S.DisplayMode = DisplayMode.Bilingual;
+                Commit(switchedDisplay ? SettingsChange.Translation | SettingsChange.Appearance : SettingsChange.Translation);
+            }, Strings.Tip_AutoCorrect),
             Strings.Tip_AutoCorrect);
+        var autoCorrectNote = Note();
+        autoCorrectNote.Text = Strings.Note_AutoCorrectCloudOnly;
+        autoCorrectNote.FontSize = 11;
+        autoCorrectNote.Margin = new Thickness(0, 0, 0, 4);
+        Row("", autoCorrectNote);
         // 打开“自动纠正口音”后才出现，缩进表示从属于它。
         var keepOriginal = Row(Strings.Label_KeepOriginal,
-            Check(() => S.KeepOriginalText, v => { S.KeepOriginalText = v; Commit(SettingsChange.None); }, Strings.Tip_KeepOriginal),
+            Check(() => S.KeepOriginalText, v =>
+            {
+                S.KeepOriginalText = v;
+                // 保留识别原文时“仅译文”不能选：已经在“仅译文”就切到“双语”（Commit 里的 SyncModels 改显示模式）。
+                Commit(SettingsChange.Appearance);
+            }, Strings.Tip_KeepOriginal),
             Strings.Tip_KeepOriginal);
         keepOriginal.Label.Margin = new Thickness(16, 4, 12, 4);
-        refreshers.Add(() => keepOriginal.SetVisible(S.AutoCorrect));
+        refreshers.Add(() =>
+        {
+            bool cloud = S.TranslationModel.IsLanguageModel;
+            autoCorrect.Control.IsEnabled = cloud;
+            autoCorrect.Label.Opacity = cloud ? 1 : 0.5;
+            keepOriginal.SetVisible(S.AutoCorrect);
+            keepOriginal.Control.IsEnabled = cloud;
+            keepOriginal.Label.Opacity = cloud ? 1 : 0.5;
+        });
     }
 
     /// <summary>翻译模型：“基础”“云端模型”“本地模型”三组，组名不可选，每家服务一项（与 macOS 的分组菜单相同）。</summary>
@@ -197,8 +223,10 @@ public sealed class SettingsWindow : Window
     {
         Section(Strings.Section_Overlay);
         var modes = AppShell.DisplayModes;
+        // 开着自动纠正又保留识别原文时，“仅译文”置灰、不能选（与 macOS 相同）。
         Row(Strings.Label_DisplayMode, Segmented(modes.Select(m => m.Title), () => IndexOf(modes, m => m.Mode == S.DisplayMode),
-            i => { S.DisplayMode = modes[i].Mode; Commit(SettingsChange.Appearance); }));
+            i => { S.DisplayMode = modes[i].Mode; Commit(SettingsChange.Appearance); },
+            i => !(modes[i].Mode == DisplayMode.TranslationOnly && S.TranslationOnlyLocked)));
         // 外观：字幕、AI 助手和各个窗口一起变（与 macOS 相同）。
         var appearances = new[]
         {
@@ -462,7 +490,8 @@ public sealed class SettingsWindow : Window
     }
 
     /// <summary>分段选择（相当于 macOS 的 segmented picker）：一排按钮样式的单选按钮。</summary>
-    private FrameworkElement Segmented(IEnumerable<string> titles, Func<int> selected, Action<int> onChange)
+    /// <param name="enabled">某一段能不能选（例如开着保留识别原文时“仅译文”置灰）；null 表示都能选。</param>
+    private FrameworkElement Segmented(IEnumerable<string> titles, Func<int> selected, Action<int> onChange, Func<int, bool>? enabled = null)
     {
         var panel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left };
         // 单选按钮套用切换按钮的系统样式，看起来像一组按钮；找不到样式时就是普通的单选按钮。
@@ -489,7 +518,11 @@ public sealed class SettingsWindow : Window
         refreshers.Add(() =>
         {
             int i = selected();
-            for (int k = 0; k < buttons.Count; k++) buttons[k].IsChecked = k == i;
+            for (int k = 0; k < buttons.Count; k++)
+            {
+                buttons[k].IsChecked = k == i;
+                if (enabled is not null) buttons[k].IsEnabled = enabled(k);
+            }
         });
         return panel;
     }

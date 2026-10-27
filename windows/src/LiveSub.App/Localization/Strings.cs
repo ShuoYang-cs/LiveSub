@@ -200,6 +200,7 @@ public static class Strings
     public static string Tip_FilterChinese => Get(nameof(Tip_FilterChinese));
     public static string Label_AutoCorrect => Get(nameof(Label_AutoCorrect));
     public static string Tip_AutoCorrect => Get(nameof(Tip_AutoCorrect));
+    public static string Note_AutoCorrectCloudOnly => Get(nameof(Note_AutoCorrectCloudOnly));
     public static string Label_Lock => Get(nameof(Label_Lock));
     public static string Label_HotKey => Get(nameof(Label_HotKey));
     public static string Tip_HotKey => Get(nameof(Tip_HotKey));

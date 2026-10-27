@@ -43,11 +43,48 @@ public sealed class Segmenter
     /// <summary>送入一段确认的识别文本，返回可以送去翻译的片段。</summary>
     public List<string> AddFinal(string text, DateTime? now = null)
     {
-        var trimmed = text.Trim();
+        var trimmed = CollapseRepeats(text.Trim());
         if (trimmed.Length == 0) return [];
         Pending = Join(Pending, trimmed);
         lastFinalAt = now ?? DateTime.UtcNow;
         return DrainCompleteSentences();
+    }
+
+    /// <summary>
+    /// 同一个词连着出现 3 次以上（“Okay, okay, okay, okay.”“to, to, to, to”）只留前 2 个：多人讨论、音质差时识别器常常这样重复，
+    /// 翻译出来是“好，好，好，好”，没有信息。结尾的标点跟着最后一个重复（与 macOS 相同）。
+    /// </summary>
+    public static string CollapseRepeats(string text)
+    {
+        var tokens = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        static string Key(string t) => new(t.Where(char.IsLetterOrDigit).ToArray());
+        static string Trailing(string t)
+        {
+            int end = t.Length;
+            while (end > 0 && !char.IsLetterOrDigit(t[end - 1])) end--;
+            return t[end..];
+        }
+        var output = new List<string>();
+        int i = 0;
+        while (i < tokens.Length)
+        {
+            int j = i + 1;
+            var key = Key(tokens[i]).ToLowerInvariant();
+            while (key.Length > 0 && j < tokens.Length && Key(tokens[j]).ToLowerInvariant() == key) j++;
+            if (j - i >= 3)
+            {
+                output.Add(tokens[i]);
+                var second = tokens[i + 1];
+                second = second[..(second.Length - Trailing(second).Length)];
+                output.Add(second + Trailing(tokens[j - 1]));
+            }
+            else
+            {
+                for (int k = i; k < j; k++) output.Add(tokens[k]);
+            }
+            i = j;
+        }
+        return string.Join(" ", output);
     }
 
     /// <summary>定时调用；<paramref name="speechInProgress"/> 为 true 表示当前还有未确认的语音，此时不做超时送出。</summary>

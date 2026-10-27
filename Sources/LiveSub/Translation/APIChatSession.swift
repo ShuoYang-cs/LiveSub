@@ -3,6 +3,8 @@ import LiveSubCore
 
 /// 一问一答式的大模型会话：翻译、AI 助手、笔记共用。Claude Code 命令行和 HTTP 接口都实现它。
 protocol ChatSession: Translator {
+    /// 这节课的主题和术语（纠正用）。
+    var topicNote: TopicNote { get }
     /// 会话是新开的（第一次，或轮数用完换了新会话）时发 `newSessionMessage`，否则发 `ongoingMessage`。
     /// `attachments`：随这次提问发送的图片和文件（AI 助手用）。
     func request(newSessionMessage: String, ongoingMessage: String, attachments: [ChatAttachment],
@@ -38,6 +40,7 @@ final class APIChatSession: ChatSession, @unchecked Sendable {
     }
 
     let name: String
+    let topicNote = TopicNote()
     private let config: Config
     private let lock = NSLock()
     // 以下只在 lock 内访问。
@@ -52,8 +55,8 @@ final class APIChatSession: ChatSession, @unchecked Sendable {
     func warmUp() {}
 
     func translate(_ text: String, context: ContextPairs, onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
-        try await request(newSessionMessage: Prompts.translationMessage(text: text, context: context),
-                          ongoingMessage: text, onPartial: onPartial)
+        try await request(newSessionMessage: Prompts.translationMessage(text: text, context: context, topic: topicNote.current),
+                          ongoingMessage: topicNote.ongoingMessage(text), onPartial: onPartial)
     }
 
     func request(newSessionMessage: String, ongoingMessage: String, attachments: [ChatAttachment],

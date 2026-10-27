@@ -4,6 +4,7 @@ import LiveSubCore
 import SwiftUI
 
 // 命令行自检模式（不启动界面）：
+//   LiveSub --mic-compare [--seconds 40] [--locale en-US]（真实麦克风对比降噪开和关）
 //   LiveSub --transcribe-file <音频文件> [--locale en-US] [--guard zh-CN]（过滤中文说话声）[--realtime]（按真实速度播放）
 //   LiveSub --translate "句子1" "句子2" ... [--engine claude|google|local|apple|api]（local：下载好的混元翻译）
 //     --engine api 时：--format openai|anthropic --base-url URL --model 模型名，密钥从环境变量 LIVESUB_API_KEY 读取 [--model haiku] [--target zh-Hans] [--correct]（按发音纠正识别错误）
@@ -59,6 +60,61 @@ func runTranscribeFile(_ path: String) async {
         print("[error] \(error.localizedDescription)")
         exit(1)
     }
+}
+
+/// 用真实麦克风对比“麦克风降噪”开和关：各录 `--seconds` 秒（默认 40），统计音量、识别出的词数、置信度。
+/// 两次要放同一段声音（例如用手机在你平时的座位上放同一段课堂录音，每段开始前回车），结果才能比。
+/// 打开降噪后系统会处理麦克风信号，所以用文件测不出来，只能用真实麦克风。
+func runMicCompare() async {
+    let seconds = Double(option("--seconds") ?? "") ?? 40
+    let locale = option("--locale") ?? "en-US"
+    guard await MicrophoneCapture.requestPermission() else {
+        print("没有麦克风权限：请在“系统设置 › 隐私与安全性 › 麦克风”里允许终端。"); exit(1)
+    }
+    struct Stats { var words = 0, lowWords = 0, segments = 0; var confSum = 0.0, confCount = 0; var peakDB = -120.0; var rmsDBs: [Double] = []; var text: [String] = [] }
+    final class Box: @unchecked Sendable { let lock = NSLock(); var stats = Stats() }
+    var results: [(String, Stats)] = []
+    for (title, reduce) in [("降噪关", false), ("降噪开", true)] {
+        print("\n=== \(title)：按回车后开始录 \(Int(seconds)) 秒，同时放同一段声音 ===")
+        _ = readLine()
+        let box = Box()
+        let engine = TranscriptionEngine()
+        do {
+            try await engine.start(localeID: locale, guardLocaleID: nil, onStatus: { _, _ in }, onEvent: { event in
+                guard case .final(let r) = event else { return }
+                box.lock.withLock {
+                    box.stats.segments += 1
+                    box.stats.text.append(r.text)
+                    box.stats.words += r.text.split(separator: " ").count
+                    for c in r.confidences { box.stats.confSum += c; box.stats.confCount += 1; if c < 0.5 { box.stats.lowWords += 1 } }
+                }
+            })
+            let capture = MicrophoneCapture(noiseReduction: reduce)
+            try capture.start { buffer in
+                let db = 20 * log10(Double(max(audioLevel(buffer), 1e-6)))
+                box.lock.withLock { box.stats.rmsDBs.append(db); box.stats.peakDB = max(box.stats.peakDB, db) }
+                engine.append(buffer)
+            }
+            try await Task.sleep(for: .seconds(seconds))
+            capture.stop()
+            await engine.stop()
+        } catch {
+            print("[error] \(error.localizedDescription)"); exit(1)
+        }
+        results.append((title, box.lock.withLock { box.stats }))
+    }
+    print("\n=== 结果 ===")
+    for (title, s) in results {
+        let avgDB = s.rmsDBs.isEmpty ? -120 : s.rmsDBs.reduce(0, +) / Double(s.rmsDBs.count)
+        // 说话时的音量：取音量最高的 20% 块的平均，免得被停顿拉低。
+        let loud = s.rmsDBs.sorted().suffix(max(1, s.rmsDBs.count / 5))
+        let speechDB = loud.reduce(0, +) / Double(loud.count)
+        let conf = s.confCount == 0 ? 0 : s.confSum / Double(s.confCount)
+        print(String(format: "%@：说话时音量 %.1f dB，峰值 %.1f dB，平均 %.1f dB；识别 %d 句 %d 词，平均置信度 %.2f，低置信度词 %d（%.0f%%）",
+                     title, speechDB, s.peakDB, avgDB, s.segments, s.words, conf, s.lowWords,
+                     s.confCount == 0 ? 0 : Double(s.lowWords) / Double(s.confCount) * 100))
+    }
+    for (title, s) in results { print("\n--- \(title) 识别文字 ---\n" + s.text.joined(separator: "\n")) }
 }
 
 actor SegmenterBox {
@@ -406,6 +462,9 @@ if let out = option("--render-settings") {
 // 自检模式不能阻塞主线程（Translation 框架需要主线程的 run loop），所以用 dispatchMain。
 if let path = option("--transcribe-file") {
     Task.detached { await runTranscribeFile(path); exit(0) }
+    dispatchMain()
+} else if arguments.contains("--mic-compare") {
+    Task.detached { await runMicCompare(); exit(0) }
     dispatchMain()
 } else if let i = arguments.firstIndex(of: "--translate") {
     let texts = arguments[(i + 1)...].prefix { !$0.hasPrefix("--") }

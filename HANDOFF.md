@@ -2,6 +2,12 @@
 
 下次对话从这里开始。更新于 2026-10-23。开发说明、自检命令和踩过的坑见 [CLAUDE.md](CLAUDE.md)，长期计划见 [ROADMAP.md](ROADMAP.md)。
 
+## 2026-10-26 晚：macOS 1.0.1、自动纠正和状态条改动
+
+- 用户上课、开 Teams 会议时发现：切翻译模型没变化、降噪开了字幕就停、一直显示“无声音”、小组讨论里一堆 okay okay okay、翻译莫名其妙。改动和原因见 CLAUDE.md 新加的几条（自动纠正只用云端模型、自动判断主题、降噪与“两者”冲突、状态条按分贝、去重复）。
+- 发布：macOS 1.0.1（`macos-1.0.1`）。Windows 代码已同步改（由子代理在没有 dotnet 的 Mac 上改的，**没编译、没运行**），Windows 版本号没升、没发 Release：要在 Windows 电脑上编译、跑 Core 测试、按 windows/README.md 末尾新加的测试项实测，再打包发 `windows-1.0.1`。
+- 没做：用 `say` + 扬声器测降噪开关对识别的影响（用户在上课，没放声音）；下课后做时要先退出 LiveSub，而且回声消除会把电脑自己放的声音当回声去掉，结果偏向“降噪关”，更可靠的是用手机放同一段录音、用 `--mic-compare` 在座位上测。
+
 ## 2026-10-23 下午：Windows 上实测 port-ict（Windows 上的 Claude）
 
 - 在 Windows 11 21H2（22000）、i7-12700H + RTX 3060 笔记本 + Iris Xe、2560×1440 缩放 150% 单屏上构建（0 警告 0 错误）、Core 测试 242 个全过，按测试清单自动测了新加和改过的大部分项目，结果摘要写在 [windows/README.md](windows/README.md) 测试清单开头，逐项细节在 Windows 电脑上的 `windows/TEST-RESULTS-windows.md`（没有提交）。

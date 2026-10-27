@@ -143,6 +143,8 @@ public sealed class AppSettings
     public bool AutoCorrect { get; set; }
     /// <summary>纠正改过原文时，在记录里同时保留识别器原来给出的文字。</summary>
     public bool KeepOriginalText { get; set; }
+    /// <summary>开着自动纠正又保留识别原文时，“仅译文”不能选（看不到原文就没有意义；与 macOS 的 translationOnlyLocked 相同）。</summary>
+    [JsonIgnore] public bool TranslationOnlyLocked => AutoCorrect && KeepOriginalText;
     public bool ShowStatusBar { get; set; } = true;
 
     /// <summary>
@@ -239,6 +241,10 @@ public sealed class AppSettings
     {
         TranslationModel = Synced(TranslationModel, ModelPurpose.Translation);
         AssistantModel = Synced(AssistantModel, ModelPurpose.Assistant);
+        // 自动纠正只对云端模型有效：换到别的模型时关掉，开关也置灰（macOS 在 translationModel 的 didSet 里做；灰着却是开的容易误解）。
+        if (AutoCorrect && !TranslationModel.IsLanguageModel) AutoCorrect = false;
+        // 保留识别原文时“仅译文”不能选。
+        if (TranslationOnlyLocked && DisplayMode == DisplayMode.TranslationOnly) DisplayMode = DisplayMode.Bilingual;
     }
 
     private ModelChoice Synced(ModelChoice choice, ModelPurpose purpose)

@@ -115,6 +115,7 @@ import Testing
 
 @Suite struct PromptTests {
     @Test func contextMessage() {
+        #expect(Prompts.translationMessage(text: "hi", context: [], topic: "Topic: graphs") == "[Topic]\nTopic: graphs\n[Translate]\nhi")
         #expect(Prompts.translationMessage(text: "hi", context: []) == "hi")
         let m = Prompts.translationMessage(text: "next", context: [("a", "甲")])
         #expect(m == "[Context]\na\n→ 甲\n[Translate]\nnext")
@@ -190,5 +191,19 @@ import Testing
         #expect(TranslationOutput.visibleTranslation("最小生成树。\n@@src: minimum spa") == "最小生成树。")
         #expect(TranslationOutput.visibleTranslation("邮箱 a@b.com") == "邮箱 a@b.com")
         #expect(TranslationOutput.visibleTranslation("好的。\nWait, I should double check this", targetIsCJK: true) == "好的。")
+    }
+}
+
+@Suite struct CollapseRepeatsTests {
+    @Test func collapsesRunsOfThreeOrMore() {
+        #expect(Segmenter.collapseRepeats("Okay, okay, okay, okay.") == "Okay, okay.")
+        #expect(Segmenter.collapseRepeats("say, to, to, to, to, to, to") == "say, to, to")
+        #expect(Segmenter.collapseRepeats("Yeah. Yeah. Yeah.") == "Yeah. Yeah.")
+    }
+
+    @Test func keepsOrdinaryRepeats() {
+        #expect(Segmenter.collapseRepeats("Okay, okay. So, which one?") == "Okay, okay. So, which one?")
+        #expect(Segmenter.collapseRepeats("It is what it is") == "It is what it is")
+        #expect(Segmenter.collapseRepeats("") == "")
     }
 }

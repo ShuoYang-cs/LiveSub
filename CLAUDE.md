@@ -53,6 +53,12 @@ macOS 14.2+ 应用（没有 Dock 和菜单栏图标，所有操作在悬浮字�
 - 字幕记录文件按字幕顺序写（`SubtitleController.persistedCount`）：Google、Apple、混元两句同时翻译时后一句常先翻完，前面的都翻完或失败了才写。
 - AI 助手附件的总大小（`LiveSubCore/ChatAttachment.swift` 的 `ChatAttachmentBudget`）：Claude 一次请求最多 32 MB，图片和 PDF 按 base64 发送；这一问超了时 PDF 从大到小改成只发文字（提示用户），HTTP 会话的历史超了时从最早的提问开始把附件换成文字。
 
+- 自动纠正（2026-10-26 用户决定）：只在翻译模型是云端模型（`isLanguageModel`）时生效；换到 Google、Apple、混元翻译时 `translationModel` 的 didSet 把 `autoCorrect` 关掉，设置里开关置灰。不再临时换成 Claude Sonnet（以前手动切换模型看不出变化：纠正期间仍是 Claude 在翻）。开着自动纠正又保留识别原文时“仅译文”不能选（系统分段 Picker 不能单独置灰一段，`DisplayModeSegments` 自己画）；打开自动纠正时“仅译文”自动切“双语”。纠正过的句子在悬浮字幕里原文下面用淡色小字显示识别原文。
+- 自动判断主题（`SubtitleController.noteFinishedLine/updateTopic`，`Prompts.topicPrompt`，`Translation/TopicNote.swift`）：开着自动纠正且用云端模型时，翻完 4 句后让模型读最近 30 句字幕猜主题和术语，之后每 20 句更新；主题作为 `[Topic]` 块只发给“按发音纠正”的会话（别的提示词里没讲这个块，发过去会被当成要翻译的内容）。用户提出：术语表上课前没法写。2026-10-26 只用 Haiku 单次调用试过（“RJCC list”那几句能推出 adjacency list），没在真实课堂上量过效果。
+- 麦克风降噪（系统语音处理）和系统音频采集同时开会冲突：日志里反复 `VoiceProcessor ... failed to process downlink voice proc`、`number of buffers (2) does not match`，字幕完全停止（2026-10-26 用户在“两者”模式开了降噪，13:11 起没字幕）。所以“两者”模式下降噪不生效、设置里置灰。`LiveSub --mic-compare --seconds 40` 用真实麦克风各录一次降噪关和开（要放同一段声音）；文件输入绕过了降噪，测不出来。空房间实测：开降噪后底噪约被放大 30 dB（自动增益）。
+- 状态条“收音中/无声音”：音量按分贝显示（-60 dB 为 0，-20 dB 满格），引擎里的音量按每块 ×0.85 慢慢回落（`level = max(rms, level*0.85)`）。以前线性映射，RMS 低于约 0.006（-44 dB）就显示“无声音”，坐第二排听课常常整节都是；状态条每 0.25 秒只看最后一块，会落在字与字的空隙里。
+- 识别器输出的“Okay, okay, okay, okay.”“to, to, to, to”这类同一个词连着 3 次以上：`Segmenter.collapseRepeats` 只留前 2 个（多人讨论、Teams 音质差时常见，翻出来是“好，好，好，好”）。听错的词（“Bye, son”“mommy”）靠自动纠正，不靠这个。
+
 ## 结构
 - `Sources/LiveSubCore`：纯逻辑（分句、stream-json 解析、提示词），改动要配单元测试。
 - `Sources/LiveSub/App/SubtitleController.swift`：整条链路与翻译队列（积压合并、Claude 失败自动 Apple 兜底）。

@@ -314,7 +314,8 @@ final class AnalyzerEngine: SpeechEngine, @unchecked Sendable {
         let rms = audioLevel(buffer)
         let duration = Double(buffer.frameLength) / buffer.format.sampleRate
         let lanes = lock.withLock {
-            level = rms
+            // 慢慢回落：状态条每 0.25 秒看一次，只看最后一块会常常落在字与字之间的空隙里。
+            level = max(rms, level * 0.85)
             lastBufferAt = Date()
             audioTime += duration
             if let cut = cutter.addAudio(level: rms, duration: duration, end: audioTime) { pendingCut = cut }

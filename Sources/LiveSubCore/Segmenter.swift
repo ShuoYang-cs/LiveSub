@@ -32,11 +32,36 @@ public struct Segmenter: Sendable {
 
     /// 送入一段确认的识别文本，返回可以送去翻译的片段。
     public mutating func addFinal(_ text: String, at now: Date = Date()) -> [String] {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = Self.collapseRepeats(text.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !trimmed.isEmpty else { return [] }
         pending = Self.join(pending, trimmed)
         lastFinalAt = now
         return drainCompleteSentences()
+    }
+
+    /// 同一个词连着出现 3 次以上（“Okay, okay, okay, okay.”“to, to, to, to”）只留前 2 个：多人讨论、音质差时识别器常常这样重复，
+    /// 翻译出来是“好，好，好，好”，没有信息。结尾的标点跟着最后一个重复。
+    public static func collapseRepeats(_ text: String) -> String {
+        let tokens = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        func key(_ t: String) -> String { t.lowercased().filter { $0.isLetter || $0.isNumber } }
+        func trailing(_ t: String) -> String { String(t.reversed().prefix { !$0.isLetter && !$0.isNumber }.reversed()) }
+        var out: [String] = []
+        var i = 0
+        while i < tokens.count {
+            var j = i + 1
+            let k = key(tokens[i])
+            while !k.isEmpty, j < tokens.count, key(tokens[j]) == k { j += 1 }
+            if j - i >= 3 {
+                out.append(tokens[i])
+                var second = tokens[i + 1]
+                second.removeLast(trailing(second).count)
+                out.append(second + trailing(tokens[j - 1]))
+            } else {
+                out.append(contentsOf: tokens[i..<j])
+            }
+            i = j
+        }
+        return out.joined(separator: " ")
     }
 
     /// 定时调用；`speechInProgress` 为 true 表示当前还有未确认的语音，此时不做超时送出。
