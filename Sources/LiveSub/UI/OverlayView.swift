@@ -540,7 +540,8 @@ struct OverlayView: View {
                 }
             }
             .font(.system(size: 11))
-            .lineLimit(1)
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
             .padding(.horizontal, 18)
             updateBanner
             // 第一次使用：基础翻译够用，更准的翻译、AI 助手和纠正口音要换模型。

@@ -1,6 +1,13 @@
 # 交接说明
 
-下次对话从这里开始。更新于 2026-10-23。开发说明、自检命令和踩过的坑见 [CLAUDE.md](CLAUDE.md)，长期计划见 [ROADMAP.md](ROADMAP.md)。
+下次对话从这里开始。更新于 2026-10-28。开发说明、自检命令和踩过的坑见 [CLAUDE.md](CLAUDE.md)，长期计划见 [ROADMAP.md](ROADMAP.md)。
+
+## 2026-10-28：macOS 1.0.2、Windows 1.0.1
+
+- 用户按建议把 App 从 `~/Applications` 挪到 `/Applications` 时 App 还开着，之后选“麦克风”“两者”点开始都没反应（系统不弹窗直接拒绝麦克风，见 CLAUDE.md）。重开就好了。现在 App 装在 `/Applications/LiveSub.app`；`scripts/build-app.sh --install` 仍然装到 `~/Applications`，用户还没说要不要改，改之前先问。
+- macOS 1.0.2：开始失败的原因显示在开始按钮下面（以前只写进看不到的状态，看起来像没反应；运行中被挪过时提示重开）；模型把讲者的问题当成问它时去掉那段话；`<br>`；去重复词后时间轴不再偏；开始新记录时作废正在进行的主题请求；带新主题的那句失败了下一句重新带主题。
+- Windows 1.0.1：1.0.1 那批（10-26 没编译）在 Mac 上编译通过（只缺一个 using），子代理对照 macOS 审查后修了：主题请求放到后台线程（Claude Code 新开进程时会卡住字幕）、音量回落按音频时长算（WASAPI 每 10 毫秒一块，按块乘 0.85 等于没回落）、上面几条和 macOS 一样的修复，开始失败的原因最多两行。Core 测试 255 个全过。**界面和音频没在 Windows 上运行过**，要在 Windows 上按 windows/README.md 第 67、87–92 项实测。
+- 两个版本都是在这台 Mac 上打包发布的（Windows 用 `~/.dotnet/dotnet publish`，见 windows/README.md）；发 Windows 版时 `gh release create … --latest=false`，否则 README 里 Mac 版的 `releases/latest` 链接会指到 Windows 版。
 
 ## 2026-10-26 晚：macOS 1.0.1、自动纠正和状态条改动
 
@@ -45,7 +52,7 @@
 
 ## 现在的状态
 
-- macOS 版可以日常使用，已安装在 `~/Applications/LiveSub.app`，中文名“实时翻译助手”。
+- macOS 版可以日常使用，已安装在 `/Applications/LiveSub.app`（2026-10-28 从 `~/Applications` 挪过去），中文名“实时翻译助手”。
   - 最低 macOS 14.2：macOS 26 用 SpeechAnalyzer，更早的系统用 SFSpeechRecognizer。
   - 界面有中文和英文。
   - 翻译模型分几档：基础（Google、Apple 本地翻译）、云端模型（Claude Code 或自己的 API）、本地模型（下载到本机的混元翻译，或 Ollama、LM Studio）。

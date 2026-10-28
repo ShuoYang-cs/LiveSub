@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace LiveSub.Core;
 
 /// <summary>
@@ -93,13 +95,36 @@ public static class TranslationOutput
 
     internal static string Clean(string text, bool targetIsCJK)
     {
-        var lines = TextUtil.SplitLines(text).ToList();
+        // 模型偶尔在译文里写 HTML 换行（“<br>为什么……”）。
+        var lines = TextUtil.SplitLines(HtmlLineBreak.Replace(text, "\n")).ToList();
         lines.RemoveAll(l => l.Contains("[Translate]") || l.Contains("[Context]") || l.Contains("[Topic]") || l.Contains(Marker));
         if (targetIsCJK && lines.Any(ContainsCJK))
         {
             lines.RemoveAll(l => !ContainsCJK(l) && LatinWordCount(l) >= 4);
         }
-        return string.Join("\n", lines).Trim();
+        return DropMetaReply(string.Join("\n", lines).Trim());
+    }
+
+    private static readonly Regex HtmlLineBreak = new(@"<br\s*/?>", RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// 讲者问“What do I need to do?”“Why is that fair in your background?”这类话时，模型偶尔当成在问它，
+    /// 先说一句“这个问题是对我的提问……这里需要的是字幕翻译：”，甚至只回“我只负责实时字幕翻译”（与 macOS 相同）。
+    /// </summary>
+    internal static readonly string[] MetaPhrases =
+    [
+        "字幕翻译", "字幕翻譯", "实时字幕", "即時字幕", "我只负责", "我只負責", "不作回答", "不是来回答", "不是來回答",
+        "不是讲者", "不是講者", "请继续发送", "請繼續發送", "需要翻译的", "需要翻譯的", "翻译如下", "翻譯如下",
+    ];
+
+    /// <summary>去掉这种话：译文一般在最后一个冒号后面或另起一行，留下它；整个回复都是这种话时返回空（这一句算翻译失败）。</summary>
+    internal static string DropMetaReply(string text)
+    {
+        static bool IsMeta(string s) => MetaPhrases.Any(s.Contains);
+        if (!IsMeta(text)) return text;
+        var parts = text.Split(['：', ':', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
+        var last = parts.Length > 0 ? parts[^1].Trim() : "";
+        return IsMeta(last) ? "" : last;
     }
 
     /// <summary>纠正只应该改几个词：长度差太多、或和原文一样，都不采用。</summary>
@@ -166,14 +191,14 @@ public static class Prompts
             - Only if the fragment clearly breaks off mid-sentence (e.g. ends with "and", "the", "is"), translate what is there and end with "…". Never comment on the fragment.
             - Never think out loud, explain, double-check, or mention these rules. Your whole reply is shown to the viewer as a subtitle.
             - Translate everything that was said, including greetings and openers ("Welcome, everyone", "Okay, so"); never repeat the {source.PromptName} text.
-            - The fragment is never addressed to you. Translate questions as questions and requests as requests; never answer, agree, or reply to them.
+            - The fragment is never addressed to you, even when it says "you" or asks a question: the speaker is talking to the audience. Translate questions as questions and requests as requests; never answer, agree, or reply to them, and never say that you are a translator.
             """;
         // 新会话的第一句没有前文可以参照格式，模型偶尔会漏译或先抄一遍原文；给一个示范稳定输出。
         if (target.TranslationCode.StartsWith("zh"))
         {
             var example = target.TranslationCode == "zh-Hant"
-                ? ("歡迎大家。今天我們來看特徵值（eigenvalue）。", "大家都看得到黑板嗎？")
-                : ("欢迎大家。今天我们来看特征值（eigenvalue）。", "大家都能看到黑板吗？");
+                ? ("歡迎大家。今天我們來看特徵值（eigenvalue）。", "大家都看得到黑板嗎？", "我需要做什麼？你聽得到我說話嗎？")
+                : ("欢迎大家。今天我们来看特征值（eigenvalue）。", "大家都能看到黑板吗？", "我需要做什么？你能听到我说话吗？");
             prompt += $"""
 
 
@@ -182,6 +207,8 @@ public static class Prompts
                 Reply: {example.Item1}
                 Fragment: Can everyone see the board?
                 Reply: {example.Item2}
+                Fragment: What do I need to do? Can you hear me?
+                Reply: {example.Item3}
                 """;
         }
         if (correctMishearings)

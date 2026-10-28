@@ -7,7 +7,7 @@ macOS 和 Windows 小工具：实时监听**麦克风**（现场交谈、讲座�
 | 你的电脑 | 点这里下载 | 然后 |
 |---|---|---|
 | **Mac**（macOS 14.2 或更新，Apple 芯片和 Intel 都行） | [打开 Mac 版下载页](https://github.com/ShuoYang-cs/LiveSub/releases/latest) | 在页面下方的 **Assets** 里点 `LiveSub-…-macOS.dmg`，双击打开，把图标拖进“应用程序” |
-| **Windows**（10 或 11，64 位） | [打开 Windows 版下载页](https://github.com/ShuoYang-cs/LiveSub/releases/tag/windows-1.0.0) | 在页面下方的 **Assets** 里点 `LiveSub-…-Windows-x64.zip`（有独立显卡的选 `-vulkan` 那个），解压后双击 `LiveSub.exe` |
+| **Windows**（10 或 11，64 位） | [打开 Windows 版下载页](https://github.com/ShuoYang-cs/LiveSub/releases/tag/windows-1.0.1) | 在页面下方的 **Assets** 里点 `LiveSub-…-Windows-x64.zip`（有独立显卡的选 `-vulkan` 那个），解压后双击 `LiveSub.exe` |
 
 下载页里只需要点上面说的那一个文件，其他（如 “Source code”）是给开发者的，不用管。
 

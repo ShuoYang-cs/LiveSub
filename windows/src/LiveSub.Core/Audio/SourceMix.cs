@@ -31,6 +31,13 @@ public static class SourceMix
     /// 状态条上的音量（0…1，0.1 一档）：按分贝显示，-60 dB 以下算没声音、-20 dB 满格（与 macOS 相同）。
     /// 原来线性映射时 RMS 低于约 0.006 就是 0，坐在教室后排、讲者离得远时一直显示“无声音”。
     /// </summary>
+    /// <summary>
+    /// 音量慢慢回落：每 85 毫秒的音频乘 0.85（macOS 的麦克风每块 4096 帧、约 85 毫秒乘一次）。
+    /// 按音频时长算，不按块数算：WASAPI 每约 10 毫秒来一块，按块乘 0.85 时 0.25 秒就掉约 35 dB，等于没有回落。
+    /// </summary>
+    public static float DecayedLevel(float level, float rms, int samples, int sampleRate = AudioConverter.TargetRate) =>
+        MathF.Max(rms, level * MathF.Pow(0.85f, samples / (sampleRate * 0.085f)));
+
     public static float DisplayLevel(float rms)
     {
         double db = rms > 0 ? 20 * Math.Log10(rms) : -120;

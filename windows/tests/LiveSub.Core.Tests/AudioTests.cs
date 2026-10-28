@@ -224,6 +224,18 @@ public class SourceMixTests
     }
 
     [Fact]
+    public void LevelDecaysByAudioTimeNotBlockCount()
+    {
+        // 0.25 秒静音：WASAPI 的 25 块 × 10 毫秒和文件的 2.5 块 × 100 毫秒回落一样多，约 0.85^(250/85) ≈ 0.62。
+        float small = 1, large = 1;
+        for (int i = 0; i < 25; i++) small = SourceMix.DecayedLevel(small, 0, 160);
+        for (int i = 0; i < 5; i++) large = SourceMix.DecayedLevel(large, 0, 800);
+        Assert.Equal(large, small, 3);
+        Assert.InRange(small, 0.6f, 0.64f);
+        Assert.Equal(0.9f, SourceMix.DecayedLevel(0.2f, 0.9f, 160));
+    }
+
+    [Fact]
     public void LevelIsTheLoudestAndSilenceTheShortest()
     {
         var mix = SourceMix.Combine([new SourceInput(0.02f, 0.1), new SourceInput(0.3f, 12)]);

@@ -192,6 +192,24 @@ import Testing
         #expect(TranslationOutput.visibleTranslation("邮箱 a@b.com") == "邮箱 a@b.com")
         #expect(TranslationOutput.visibleTranslation("好的。\nWait, I should double check this", targetIsCJK: true) == "好的。")
     }
+
+    /// 2026-10-28、10-26 真实字幕里出现过的：讲者的问题被当成在问模型。
+    @Test func replyingAsTheTranslatorIsRemoved() {
+        let preamble = "这个问题是对我的提问，不是讲者的内容，我不作回答。这里需要的是字幕翻译：为什么这在你的背景里是公平的？"
+        #expect(TranslationOutput.split(preamble, targetIsCJK: true).translation == "为什么这在你的背景里是公平的？")
+        #expect(TranslationOutput.split("我只负责实时字幕翻译。\n我需要做什么？", targetIsCJK: true).translation == "我需要做什么？")
+        let refusal = "我不是来回答你的问题的，我只负责实时字幕翻译。请继续发送需要翻译的英文语音片段。"
+        #expect(TranslationOutput.split(refusal, targetIsCJK: true).translation == "")
+        // 流式输出时这种话一出现就不显示。
+        #expect(TranslationOutput.visibleTranslation("这个问题是对我的提问，不是讲者", targetIsCJK: true) == "")
+        // 普通译文（包括带冒号的）不动。
+        #expect(TranslationOutput.split("他说：我们开始吧。", targetIsCJK: true).translation == "他说：我们开始吧。")
+    }
+
+    @Test func htmlLineBreaksAreRemoved() {
+        #expect(TranslationOutput.split("<br>为什么你的背景里会有那个？", targetIsCJK: true).translation == "为什么你的背景里会有那个？")
+        #expect(TranslationOutput.split("好的。<br/>我们开始。", targetIsCJK: true).translation == "好的。\n我们开始。")
+    }
 }
 
 @Suite struct CollapseRepeatsTests {
@@ -205,5 +223,16 @@ import Testing
         #expect(Segmenter.collapseRepeats("Okay, okay. So, which one?") == "Okay, okay. So, which one?")
         #expect(Segmenter.collapseRepeats("It is what it is") == "It is what it is")
         #expect(Segmenter.collapseRepeats("") == "")
+    }
+
+    /// SubtitleController 先去掉重复再分别送进时间轴和分句器：两边字数一致，后面句子的时间才不会往前偏。
+    @Test func collapsedTextKeepsTimelineAligned() {
+        let text = Segmenter.collapseRepeats("Okay, okay, okay, okay, okay, okay.")
+        #expect(Segmenter.collapseRepeats(text) == text)
+        var timeline = SegmentTimeline()
+        timeline.addFinal(text, start: 0, end: 3)
+        timeline.addFinal("It stores neighbors.", start: 6, end: 9)
+        _ = timeline.take(text)
+        #expect(timeline.take("It stores neighbors.")?.start == 6)
     }
 }

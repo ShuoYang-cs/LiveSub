@@ -55,8 +55,13 @@ final class APIChatSession: ChatSession, @unchecked Sendable {
     func warmUp() {}
 
     func translate(_ text: String, context: ContextPairs, onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
-        try await request(newSessionMessage: Prompts.translationMessage(text: text, context: context, topic: topicNote.current),
-                          ongoingMessage: topicNote.ongoingMessage(text), onPartial: onPartial)
+        do {
+            return try await request(newSessionMessage: Prompts.translationMessage(text: text, context: context, topic: topicNote.current),
+                                     ongoingMessage: topicNote.ongoingMessage(text), onPartial: onPartial)
+        } catch {
+            topicNote.resend()
+            throw error
+        }
     }
 
     func request(newSessionMessage: String, ongoingMessage: String, attachments: [ChatAttachment],

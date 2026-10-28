@@ -2,8 +2,8 @@
 
 [中文](#中文) · [English](#english)
 
-版本 1.0.0（第一个正式版）。测试清单在文末。
-Version 1.0.0 — the first official release. The test checklist is at the end.
+版本 1.0.1。测试清单在文末。
+Version 1.0.1. The test checklist is at the end.
 
 MIT License · © 2026 Shuo Yang
 
@@ -462,6 +462,7 @@ dotnet publish src/LiveSub.App -c Release -r win-x64 --self-contained -p:LiveSub
 89. 自动判断主题：Claude + 自动纠正，翻完 4 句后日志有 `lecture topic: Topic: …`（模型猜不出来时没有），之后每 20 句更新一次；鼠标停在状态条的模型名上，提示里多出主题和术语。识别困难时纠正的翻译里“RJCC list”这类听错的专业词更容易被改对（效果看课程和模型）；识别清楚时不带主题。开始新的记录后主题清空。
 90. 重复词合并：小组讨论或音质差时识别出 “Okay, okay, okay, okay.”“to, to, to, to” 这样同一个词连着出现 3 次以上，字幕里只留前 2 个；正常的重复（“Okay, okay. So, which one?”）不动。
 91. 状态条音量：坐得远、讲者声音轻时，电平条随说话起伏，不再一直显示“无声音”（-60 dB 以下才算没有）；说话停下约 1 秒内电平慢慢回落。（Windows 的麦克风降噪是“通话”类别采集，与 macOS 的语音处理不同；第 53 项里“两者 + 降噪”已测过，没有改。）
+92. 开始失败的原因：音源打不开、模型不可用等导致开始失败时，开始按钮下面用橙色字显示原因，长的折成两行、居中，不被截成一行（与 macOS 1.0.2 相同）。
 
 
 ---
@@ -723,6 +724,7 @@ Record pass / fail and what you saw. The log is at `%LOCALAPPDATA%\LiveSub\logs\
 89. Automatic topic: with Claude + auto-correct, after 4 translated lines the log has `lecture topic: Topic: …` (nothing when the model cannot tell), then it is updated every 20 lines; hovering the model name in the status bar also shows the topic and terms. While recognition is hard, misheard technical words such as “RJCC list” are more likely to be fixed (depends on the course and model); no topic is sent while recognition is clear. Starting a new transcript clears the topic.
 90. Repeated words: when recognition produces “Okay, okay, okay, okay.” or “to, to, to, to” (the same word 3+ times in a row, common in group discussions or poor audio), only the first 2 are kept; ordinary repeats (“Okay, okay. So, which one?”) are untouched.
 91. Status-bar level: when sitting far away or the speaker is quiet, the level bars follow the speech instead of always showing “No sound” (only below -60 dB counts as none) and fall back slowly (about 1 s) after speech stops. (Windows noise reduction uses the Communications capture category, unlike macOS voice processing; “Both + noise reduction” was already tested in item 53 and is unchanged.)
+92. Why Start failed: when starting fails (audio source cannot be opened, model unavailable, …) the reason appears in orange under the Start button, wrapping to at most two centred lines instead of being cut to one (same as macOS 1.0.2).
 
 ### Project layout
 

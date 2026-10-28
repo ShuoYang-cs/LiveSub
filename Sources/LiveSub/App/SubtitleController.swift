@@ -116,6 +116,8 @@ final class SubtitleController {
     private(set) var lectureTopic: String?
     @ObservationIgnored private var linesSinceTopic = 0
     @ObservationIgnored private var topicInFlight = false
+    /// 开始新的记录时加一：之前发出的主题请求回来时作废。
+    @ObservationIgnored private var topicGeneration = 0
     @ObservationIgnored private var alertAt = Date.distantPast
     /// 这份记录对应的录音从什么时候开始（导出字幕的时间零点）。
     @ObservationIgnored private var sessionStart: Date?
@@ -163,7 +165,13 @@ final class SubtitleController {
         let testing = ProcessInfo.processInfo.environment["LIVESUB_TEST_AUDIO_FILE"] != nil
         if mode != .system, !testing {
             guard await MicrophoneCapture.requestPermission() else {
-                status = CaptureError.permissionDenied(L("麦克风")).localizedDescription
+                // 运行中把 App 挪了位置（比如从 ~/Applications 拖到 /Applications），系统对不上这个进程的签名，
+                // 不弹窗直接拒绝；重新打开就好。原路径已不存在说明被挪过（Bundle.main 记的是启动时的路径）。
+                let moved = !FileManager.default.fileExists(atPath: Bundle.main.bundlePath)
+                status = moved ? L("LiveSub 运行时被移动了位置，系统暂时不给麦克风权限。请退出后重新打开 LiveSub。")
+                               : CaptureError.permissionDenied(L("麦克风")).localizedDescription
+                showAlert(status)
+                appLog.error("start: microphone permission denied (app moved: \(moved, privacy: .public))")
                 return
             }
         }
@@ -223,6 +231,7 @@ final class SubtitleController {
             for p in started { p.capture.stop(); await p.engine.stop() }
             finishRecording(started)
             status = L("启动失败：%@", error.localizedDescription)
+            showAlert(status)
             appLog.error("start failed: \(error.localizedDescription, privacy: .public)")
             return
         }
@@ -313,6 +322,7 @@ final class SubtitleController {
             store = nil
             sessionStart = nil
             lectureTopic = nil
+            topicGeneration += 1
             linesSinceTopic = 0
             translator?.shutdown()
             translator = nil
@@ -494,11 +504,13 @@ final class SubtitleController {
             if lines.isEmpty { appLog.notice("first final result") }
             pipeline.volatileText = ""
             pipeline.finalizeRequested = false
+            // 时间轴按字数对应音频：和分句器用同一份去掉重复词后的文字，否则去掉的字数会让后面每句的时间都往前偏。
+            let text = Segmenter.collapseRepeats(result.text.trimmingCharacters(in: .whitespacesAndNewlines))
             if let start = result.start, let end = result.end {
-                pipeline.timeline.addFinal(result.text, start: start, end: end)
+                pipeline.timeline.addFinal(text, start: start, end: end)
             }
             updateQuality(result.confidences)
-            enqueue(pipeline.segmenter.addFinal(result.text), from: pipeline)
+            enqueue(pipeline.segmenter.addFinal(text), from: pipeline)
             // 长句在换气处切出来的前半句：不等后文，直接送去翻译。
             if result.endsClause { enqueue(pipeline.segmenter.flushAll(), from: pipeline) }
         case .filtered:
@@ -591,12 +603,14 @@ final class SubtitleController {
             model, settings: settings, systemPrompt: Prompts.topicPrompt(source: settings.source),
             maxTurns: 2, historyTurns: 1, timeout: 40) else { return }
         topicInFlight = true
+        let generation = topicGeneration
         Task { [weak self] in
             defer { session.shutdown() }
             let reply = try? await session.request(newSessionMessage: input, ongoingMessage: input, onPartial: { _ in })
             guard let self else { return }
             self.topicInFlight = false
-            guard let topic = Self.parseTopic(reply) else { return }
+            // 等回复期间开始了新的记录：这是上一份记录的主题，不要。
+            guard generation == self.topicGeneration, let topic = Self.parseTopic(reply) else { return }
             appLog.notice("lecture topic: \(topic, privacy: .public)")
             self.lectureTopic = topic
             if self.correcting { (self.translator as? ChatSession)?.topicNote.set(topic) }
@@ -752,8 +766,12 @@ final class SubtitleController {
                     Task { @MainActor in self?.updatePartial(id, visible) }
                 }
                 let output = TranslationOutput.split(result, original: source, targetIsCJK: cjk)
-                finishLine(id, translation: output.translation, note: nil, correctedSource: output.correctedSource)
-                return
+                if !output.translation.isEmpty {
+                    finishLine(id, translation: output.translation, note: nil, correctedSource: output.correctedSource)
+                    return
+                }
+                // 回复里没有译文（把这句当成在问它，只回了“我只负责字幕翻译”）：这一句交给下面的备用翻译。
+                appLog.error("translate: no translation in reply: \(result, privacy: .public)")
             } catch {
                 let err = error as? TranslatorError
                 if err?.isPersistent == true { usingFallback = true }

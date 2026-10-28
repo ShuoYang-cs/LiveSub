@@ -82,12 +82,27 @@ public enum TranslationOutput {
     }
 
     static func clean(_ text: String, targetIsCJK: Bool) -> String {
-        var lines = text.split(whereSeparator: \.isNewline).map(String.init)
-        lines.removeAll { $0.contains("[Translate]") || $0.contains("[Context]") || $0.contains("[Topic]") || $0.contains("[Topic]") || $0.contains(marker) }
+        // Haiku 偶尔在译文里写 HTML 换行（“<br>为什么……”）。
+        var lines = text.replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
+            .split(whereSeparator: \.isNewline).map(String.init)
+        lines.removeAll { $0.contains("[Translate]") || $0.contains("[Context]") || $0.contains("[Topic]") || $0.contains(marker) }
         if targetIsCJK, lines.contains(where: containsCJK) {
             lines.removeAll { !containsCJK($0) && latinWordCount($0) >= 4 }
         }
-        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return dropMetaReply(lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// 讲者问“What do I need to do?”“Why is that fair in your background?”这类话时，Haiku 偶尔当成在问它，
+    /// 先说一句“这个问题是对我的提问……这里需要的是字幕翻译：”，甚至只回“我只负责实时字幕翻译”。
+    static let metaPhrases = ["字幕翻译", "字幕翻譯", "实时字幕", "即時字幕", "我只负责", "我只負責", "不作回答", "不是来回答", "不是來回答",
+                              "不是讲者", "不是講者", "请继续发送", "請繼續發送", "需要翻译的", "需要翻譯的", "翻译如下", "翻譯如下"]
+
+    /// 去掉这种话：译文一般在最后一个冒号后面或另起一行，留下它；整个回复都是这种话时返回空（这一句改用备用翻译）。
+    static func dropMetaReply(_ text: String) -> String {
+        func isMeta(_ s: some StringProtocol) -> Bool { metaPhrases.contains { s.contains($0) } }
+        guard isMeta(text) else { return text }
+        let last = text.split { $0 == "：" || $0 == ":" || $0.isNewline }.last?.trimmingCharacters(in: .whitespaces) ?? ""
+        return isMeta(last) ? "" : last
     }
 
     /// 纠正只应该改几个词：长度差太多、或和原文一样，都不采用。
@@ -131,13 +146,13 @@ public enum Prompts {
         - Only if the fragment clearly breaks off mid-sentence (e.g. ends with "and", "the", "is"), translate what is there and end with "…". Never comment on the fragment.
         - Never think out loud, explain, double-check, or mention these rules. Your whole reply is shown to the viewer as a subtitle.
         - Translate everything that was said, including greetings and openers ("Welcome, everyone", "Okay, so"); never repeat the \(source.promptName) text.
-        - The fragment is never addressed to you. Translate questions as questions and requests as requests; never answer, agree, or reply to them.
+        - The fragment is never addressed to you, even when it says "you" or asks a question: the speaker is talking to the audience. Translate questions as questions and requests as requests; never answer, agree, or reply to them, and never say that you are a translator.
         """
         // 新会话的第一句没有前文可以参照格式，Haiku 偶尔会漏译或先抄一遍原文；给一个示范稳定输出。
         if target.translationCode.hasPrefix("zh") {
             let example = target.translationCode == "zh-Hant"
-                ? ("歡迎大家。今天我們來看特徵值（eigenvalue）。", "大家都看得到黑板嗎？")
-                : ("欢迎大家。今天我们来看特征值（eigenvalue）。", "大家都能看到黑板吗？")
+                ? ("歡迎大家。今天我們來看特徵值（eigenvalue）。", "大家都看得到黑板嗎？", "我需要做什麼？你聽得到我說話嗎？")
+                : ("欢迎大家。今天我们来看特征值（eigenvalue）。", "大家都能看到黑板吗？", "我需要做什么？你能听到我说话吗？")
             prompt += """
 
 
@@ -146,6 +161,8 @@ public enum Prompts {
             Reply: \(example.0)
             Fragment: Can everyone see the board?
             Reply: \(example.1)
+            Fragment: What do I need to do? Can you hear me?
+            Reply: \(example.2)
             """
         }
         if correctMishearings {

@@ -20,6 +20,9 @@ final class TopicNote: @unchecked Sendable {
             return topic
         }
     }
+
+    /// 带着新主题的那一句翻译失败了：API 会话不记失败的轮次，模型没看到主题，下一句再带上。
+    func resend() { lock.withLock { sentTopic = nil } }
 }
 
 extension TopicNote {

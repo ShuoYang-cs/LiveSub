@@ -124,6 +124,8 @@ public sealed class SubtitleController : IDisposable
     /// <summary>上次判断主题后又翻完了几句；正在判断主题（一次一个）。</summary>
     private int linesSinceTopic;
     private bool topicInFlight;
+    /// <summary>开始新的记录时加一：之前发出的主题请求回来时作废。</summary>
+    private int topicGeneration;
     /// <summary>正在翻译的句数。</summary>
     private int activeTranslations;
     /// <summary>换下来、等正在翻译的句子完成后再关的旧翻译器；退出程序时一并关闭，不留下 claude、llama-server 进程。</summary>
@@ -768,6 +770,7 @@ public sealed class SubtitleController : IDisposable
         store = null;
         sessionStart = null;
         LectureTopic = null;
+        topicGeneration++;
         linesSinceTopic = 0;
         ResetSession();
         Assistant.NewConversation();
@@ -969,9 +972,11 @@ public sealed class SubtitleController : IDisposable
         if (gen != generation || Pipeline(result.Source) is not { } p) return;
         if (Book.Lines.Count == 0) AppLog.Info("first final result");
         p.VolatileText = "";
-        p.Timeline.AddFinal(result.Text, result.Start, result.End);
+        // 时间轴按字数对应音频：和分句器用同一份去掉重复词后的文字，否则去掉的字数会让后面每句的时间都往前偏（与 macOS 相同）。
+        var text = Segmenter.CollapseRepeats(result.Text.Trim());
+        p.Timeline.AddFinal(text, result.Start, result.End);
         UpdateQuality(result.Confidences);
-        Enqueue(p.Segmenter.AddFinal(result.Text), p);
+        Enqueue(p.Segmenter.AddFinal(text), p);
         RaiseChanged();
     }
 
@@ -1146,8 +1151,13 @@ public sealed class SubtitleController : IDisposable
                 });
             }, CancellationToken.None);
             var output = TranslationOutput.Split(raw, text, cjk);
-            Finish(id, output.Translation, output.CorrectedSource);
-            return;
+            if (output.Translation.Length > 0)
+            {
+                Finish(id, output.Translation, output.CorrectedSource);
+                return;
+            }
+            // 回复里没有译文（把这句当成在问它，只回了“我只负责字幕翻译”）：有原来的翻译就用它翻这一句，否则算失败（与 macOS 相同）。
+            AppLog.Error($"translate: no translation in reply: {raw}");
         }
         catch (Exception e)
         {
@@ -1231,10 +1241,12 @@ public sealed class SubtitleController : IDisposable
             return;
         }
         topicInFlight = true;
+        int generation = topicGeneration;
         string? reply = null;
         try
         {
-            reply = await session.RequestAsync(input, input, null, CancellationToken.None);
+            // 在后台发：Claude Code 每次新开进程，写进它的输入要等进程启动，放在界面线程上会卡住字幕。
+            reply = await Task.Run(() => session.RequestAsync(input, input, null, CancellationToken.None));
         }
         catch (Exception e)
         {
@@ -1245,7 +1257,8 @@ public sealed class SubtitleController : IDisposable
             session.Dispose();
             topicInFlight = false;
         }
-        if (ParseTopic(reply) is not { } topic) return;
+        // 等回复期间开始了新的记录：这是上一份记录的主题，不要。
+        if (generation != topicGeneration || ParseTopic(reply) is not { } topic) return;
         AppLog.Info($"lecture topic: {topic}");
         LectureTopic = topic;
         if (Correcting && translator is ChatTranslator chat) chat.Topic.Set(topic);

@@ -11,6 +11,7 @@ using LiveSub.App.Translation;
 using LiveSub.Core;
 using LiveSub.Core.Chat;
 using LiveSub.Core.Speech;
+using LiveSub.Core.Subtitles;
 
 namespace LiveSub.App.UI;
 

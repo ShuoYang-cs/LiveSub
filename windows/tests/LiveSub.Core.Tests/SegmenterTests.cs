@@ -243,8 +243,8 @@ public class PromptTests
     {
         var p = Prompts.TranslatorSystemPrompt(LanguageOption.Source("en-US"), LanguageOption.Target("zh-Hans"), correctMishearings: true);
         Assert.StartsWith("You are a real-time subtitle translator. Each user message is a fragment of live speech, transcribed by speech recognition from English audio", p);
-        Assert.Contains("never answer, agree, or reply to them.\n\nExamples\nFragment: Welcome, everyone. Today we're going to look at eigenvalues.\nReply: 欢迎大家。今天我们来看特征值（eigenvalue）。\nFragment: Can everyone see the board?\nReply: 大家都能看到黑板吗？\n\nRecognition is unreliable", p);
-        Assert.Contains("earlier lines.\n\nThe English line is also shown to the viewer. If you corrected such recognition errors, put one extra line after the translation: @@src: <the corrected English fragment>.", p);
+        Assert.Contains("never answer, agree, or reply to them, and never say that you are a translator.\n\nExamples\nFragment: Welcome, everyone. Today we're going to look at eigenvalues.\nReply: 欢迎大家。今天我们来看特征值（eigenvalue）。\nFragment: Can everyone see the board?\nReply: 大家都能看到黑板吗？\nFragment: What do I need to do? Can you hear me?\nReply: 我需要做什么？你能听到我说话吗？\n\nRecognition is unreliable", p);
+        Assert.Contains("earlier lines.\n\nA message may start with a \"[Topic]\" block: what the talk is about and terms likely to be spoken. Use it to decide what a misheard word really was (for example, prefer a listed term that sounds like the garbled word). It is only a hint: never translate it, and do not insert terms the speaker did not say.\n\nThe English line is also shown to the viewer. If you corrected such recognition errors, put one extra line after the translation: @@src: <the corrected English fragment>.", p);
         Assert.EndsWith("If nothing needed correcting, output only the translation.", p);
         Assert.Equal(10, p.Split('\n').Count(l => l.StartsWith("- ")));
     }
@@ -254,9 +254,10 @@ public class PromptTests
     {
         var hant = Prompts.TranslatorSystemPrompt(LanguageOption.Source("en-US"), LanguageOption.Target("zh-Hant"));
         Assert.Contains("Reply: 大家都看得到黑板嗎？", hant);
+        Assert.Contains("Reply: 我需要做什麼？你聽得到我說話嗎？", hant);
         var ja = Prompts.TranslatorSystemPrompt(LanguageOption.Source("en-US"), LanguageOption.Target("ja"));
         Assert.DoesNotContain("Examples", ja);
-        Assert.EndsWith("never answer, agree, or reply to them.", ja);
+        Assert.EndsWith("never answer, agree, or reply to them, and never say that you are a translator.", ja);
     }
 }
 
@@ -329,6 +330,28 @@ public class TranslationOutputTests
         Assert.Equal("好的。", TranslationOutput.VisibleTranslation("好的。\nWait, I should double check this", targetIsCJK: true));
     }
 
+    // 与 macOS 版相同：2026-10-28、10-26 真实字幕里出现过的，讲者的问题被当成在问模型。
+    [Fact]
+    public void ReplyingAsTheTranslatorIsRemoved()
+    {
+        var preamble = "这个问题是对我的提问，不是讲者的内容，我不作回答。这里需要的是字幕翻译：为什么这在你的背景里是公平的？";
+        Assert.Equal("为什么这在你的背景里是公平的？", TranslationOutput.Split(preamble, targetIsCJK: true).Translation);
+        Assert.Equal("我需要做什么？", TranslationOutput.Split("我只负责实时字幕翻译。\n我需要做什么？", targetIsCJK: true).Translation);
+        var refusal = "我不是来回答你的问题的，我只负责实时字幕翻译。请继续发送需要翻译的英文语音片段。";
+        Assert.Equal("", TranslationOutput.Split(refusal, targetIsCJK: true).Translation);
+        // 流式输出时这种话一出现就不显示。
+        Assert.Equal("", TranslationOutput.VisibleTranslation("这个问题是对我的提问，不是讲者", targetIsCJK: true));
+        // 普通译文（包括带冒号的）不动。
+        Assert.Equal("他说：我们开始吧。", TranslationOutput.Split("他说：我们开始吧。", targetIsCJK: true).Translation);
+    }
+
+    [Fact]
+    public void HtmlLineBreaksAreRemoved()
+    {
+        Assert.Equal("为什么你的背景里会有那个？", TranslationOutput.Split("<br>为什么你的背景里会有那个？", targetIsCJK: true).Translation);
+        Assert.Equal("好的。\n我们开始。", TranslationOutput.Split("好的。<br/>我们开始。", targetIsCJK: true).Translation);
+    }
+
     // Windows 版补充：Windows 换行。
 
     [Fact]
@@ -359,6 +382,19 @@ public class CollapseRepeatsTests
         Assert.Equal("", Segmenter.CollapseRepeats(""));
     }
 
+    // SubtitleController 先去掉重复再分别送进时间轴和分句器：两边字数一致，后面句子的时间才不会往前偏。
+    [Fact]
+    public void CollapsedTextKeepsTimelineAligned()
+    {
+        var text = Segmenter.CollapseRepeats("Okay, okay, okay, okay, okay, okay.");
+        Assert.Equal(text, Segmenter.CollapseRepeats(text));
+        var timeline = new SegmentTimeline();
+        timeline.AddFinal(text, 0, 3);
+        timeline.AddFinal("It stores neighbors.", 6, 9);
+        timeline.Take(text);
+        Assert.Equal(6, timeline.Take("It stores neighbors.")?.Start);
+    }
+
     [Fact]
     public void TopicBlockComesFirstAndIsSentOnlyWhenChanged()
     {
@@ -368,6 +404,9 @@ public class CollapseRepeatsTests
         note.Set("Topic: graphs");
         Assert.Equal("[Topic]\nTopic: graphs\n[Translate]\nhi", note.OngoingMessage("hi"));
         Assert.Equal("hi", note.OngoingMessage("hi"));
+        // 带主题的那一句失败了：下一句重新带上。
+        note.Resend();
+        Assert.Equal("[Topic]\nTopic: graphs\n[Translate]\nhi", note.OngoingMessage("hi"));
         Assert.Equal("hi", TranslationOutput.Split("hi\n[Topic]").Translation);
     }
 }

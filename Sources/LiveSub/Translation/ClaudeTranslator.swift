@@ -48,8 +48,13 @@ final class ClaudeTranslator: Translator, @unchecked Sendable {
     }
 
     func translate(_ text: String, context: ContextPairs, onPartial: @escaping @Sendable (String) -> Void) async throws -> String {
-        try await request(newSessionMessage: Prompts.translationMessage(text: text, context: context, topic: topicNote.current),
-                          ongoingMessage: topicNote.ongoingMessage(text), onPartial: onPartial)
+        do {
+            return try await request(newSessionMessage: Prompts.translationMessage(text: text, context: context, topic: topicNote.current),
+                                     ongoingMessage: topicNote.ongoingMessage(text), onPartial: onPartial)
+        } catch {
+            topicNote.resend()
+            throw error
+        }
     }
 
     /// 通用的一问一答。会话是新开的（第一次，或进程重启、轮数用完换了新进程）时发 `newSessionMessage`，

@@ -212,7 +212,7 @@ public sealed class WasapiSource : IAudioSource
             if (recording is { Active: true } && recordingConverter is not null) Record(recordingConverter.Convert(buffer));
             if (samples.Length == 0) return;
             // 慢慢回落：状态条每 0.25 秒看一次，只看最后一块会常常落在字与字之间的空隙里（与 macOS 相同）。
-            Level = MathF.Max(converter.LastRms, Level * 0.85f);
+            Level = SourceMix.DecayedLevel(Level, converter.LastRms, samples.Length);
             LastDataAt = lastPacketAt = DateTime.UtcNow;
             emitted += samples.Length;
             Samples?.Invoke(samples);
@@ -312,7 +312,7 @@ public sealed class FileSource : IAudioSource
                     {
                         recording.Append(n > 0 ? recordingConverter.Convert(buffer.AsSpan(0, n)) : new float[AudioRecorder.SampleRate / 10], newCapture: false);
                     }
-                    Level = n > 0 ? MathF.Max(converter.LastRms, Level * 0.85f) : 0;
+                    Level = n > 0 ? SourceMix.DecayedLevel(Level, converter.LastRms, samples.Length) : 0;
                     LastDataAt = DateTime.UtcNow;
                     Samples?.Invoke(samples);
                 }

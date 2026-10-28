@@ -124,7 +124,13 @@ public sealed class OverlayWindow : Window
     private readonly TextBlock startDetails = new()
     {
         FontSize = 11,
+        // 出错原因可能较长：最多两行（与 macOS 相同）。
+        TextWrapping = TextWrapping.Wrap,
         TextTrimming = TextTrimming.CharacterEllipsis,
+        TextAlignment = TextAlignment.Center,
+        LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+        LineHeight = 15,
+        MaxHeight = 30,
         HorizontalAlignment = HorizontalAlignment.Center,
         Margin = new Thickness(18, 8, 18, 0),
         IsHitTestVisible = false,

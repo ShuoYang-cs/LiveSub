@@ -104,6 +104,7 @@
 "正在生成笔记…" = "Generating Notes…";
 "正在用 %@ 生成笔记…" = "Generating notes with %@…";
 "没有%@权限。请在“系统设置 › 隐私与安全性”中允许 LiveSub。" = "%@ access is not allowed. Allow LiveSub in System Settings › Privacy & Security.";
+"LiveSub 运行时被移动了位置，系统暂时不给麦克风权限。请退出后重新打开 LiveSub。" = "LiveSub was moved while running, so macOS won't grant microphone access for now. Quit and reopen LiveSub.";
 "法语" = "French";
 "注册音频回调" = "Registering audio callback";
 "测试" = "Test";

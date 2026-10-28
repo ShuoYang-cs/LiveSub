@@ -32,10 +32,20 @@ public sealed class ChatTranslator(IChatSession session) : ITranslator
 
     public void WarmUp() => session.WarmUp();
 
-    public Task<string> TranslateAsync(string text, IReadOnlyList<(string Source, string Translation)> context, Action<string>? onPartial,
-                                       CancellationToken cancellationToken) =>
-        // 新会话的消息带当前主题；进行中的会话只在主题变了时补一次（先取 Current，再取 ChangedForOngoing，与 macOS 相同）。
-        session.RequestAsync(Prompts.TranslationMessage(text, context, Topic.Current), Topic.OngoingMessage(text), onPartial, cancellationToken);
+    public async Task<string> TranslateAsync(string text, IReadOnlyList<(string Source, string Translation)> context, Action<string>? onPartial,
+                                             CancellationToken cancellationToken)
+    {
+        try
+        {
+            // 新会话的消息带当前主题；进行中的会话只在主题变了时补一次（先取 Current，再取 ChangedForOngoing，与 macOS 相同）。
+            return await session.RequestAsync(Prompts.TranslationMessage(text, context, Topic.Current), Topic.OngoingMessage(text), onPartial, cancellationToken);
+        }
+        catch
+        {
+            Topic.Resend();
+            throw;
+        }
+    }
 
     public void Dispose() => session.Dispose();
 }
