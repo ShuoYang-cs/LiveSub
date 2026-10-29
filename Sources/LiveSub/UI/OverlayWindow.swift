@@ -225,6 +225,9 @@ final class OverlayWindowController {
     /// 锁定后窗口收不到鼠标事件，onHover 不再触发：改为定时看鼠标在不在字幕上（显示锁定标志用）。
     private var lockedHoverTimer: Timer?
     private let lockBadge = LockBadgePanel()
+    private var settleTask: Task<Void, Never>?
+    /// 离屏自检（--render-window、--stress-overlay）把窗口放在屏幕外，关掉推回屏幕内。
+    var keepsOnScreen = true
 
     init(controller: SubtitleController, settings: AppSettings, actions: OverlayActions) {
         self.settings = settings
@@ -241,13 +244,23 @@ final class OverlayWindowController {
         restorePosition()
         applyClickThrough()
         NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: panel, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.savePosition() }
+            MainActor.assumeIsolated {
+                self?.savePosition()
+                self?.keepOnScreenAfterDrag()
+            }
+        }
+        // 拔掉外接屏幕、改分辨率后，字幕可能落到屏幕外。
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.keepOnScreen() }
         }
     }
 
     var isVisible: Bool { panel.isVisible }
 
-    func show() { panel.orderFrontRegardless() }
+    func show() {
+        keepOnScreen()
+        panel.orderFrontRegardless()
+    }
     func hide() {
         // 先取下锁定标志：子窗口会跟着字幕窗口下次显示时一起出现。
         showLockBadge(false)
@@ -344,11 +357,38 @@ final class OverlayWindowController {
         panel.setFrame(frame, display: true)
     }
 
+    /// 字幕整个留在屏幕里：拖出去一部分时，右上角的快捷按钮和锁定标志跟着出去，锁定后就再也拖不回来、解不了锁
+    /// （2026-10-28 用户把字幕拖到右下角、锁定后只能强制退出）。按整个屏幕算、不按 visibleFrame：全屏看视频时字幕要能放到最下面。
+    /// 屏幕放不下时让右边、上边留在屏幕里（快捷按钮在右上角）。
+    private func keepOnScreen(animate: Bool = false) {
+        guard keepsOnScreen, let screen = panel.screen ?? NSScreen.main else { return }
+        let bounds = screen.frame
+        var frame = panel.frame
+        frame.origin.x = min(max(frame.origin.x, bounds.minX), bounds.maxX - frame.width)
+        frame.origin.y = min(max(frame.origin.y, bounds.minY), bounds.maxY - frame.height)
+        guard frame.origin != panel.frame.origin else { return }
+        appLog.notice("overlay: moved back on screen \(String(describing: self.panel.frame.origin), privacy: .public) → \(String(describing: frame.origin), privacy: .public)")
+        panel.setFrame(frame, display: true, animate: animate)
+    }
+
+    /// 拖动中不改位置（会和系统的拖动打架）：松开鼠标后再推回屏幕内。
+    private func keepOnScreenAfterDrag() {
+        settleTask?.cancel()
+        settleTask = Task { [weak self] in
+            repeat {
+                try? await Task.sleep(for: .milliseconds(200))
+            } while !Task.isCancelled && NSEvent.pressedMouseButtons & 1 != 0
+            guard !Task.isCancelled else { return }
+            self?.keepOnScreen(animate: true)
+        }
+    }
+
     private func restorePosition() {
         if let saved = UserDefaults.standard.array(forKey: Self.originKey) as? [Double], saved.count == 2 {
             let point = NSPoint(x: saved[0], y: saved[1])
             if NSScreen.screens.contains(where: { $0.frame.insetBy(dx: -50, dy: -50).contains(point) }) {
                 panel.setFrameOrigin(point)
+                keepOnScreen()
                 return
             }
         }

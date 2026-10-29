@@ -125,11 +125,6 @@ public sealed class SettingsWindow : Window
         var audioSources = AppShell.AudioSources;
         Row(Strings.Label_AudioSource, Segmented(audioSources.Select(a => a.ShortTitle), () => IndexOf(audioSources, a => a.Mode == S.AudioSource),
             i => { S.AudioSource = audioSources[i].Mode; Commit(SettingsChange.Recognition); }));
-        // 只录系统声音时用不到，不显示（与 macOS 相同）。
-        var noiseReduction = Row(Strings.Label_MicNoiseReduction,
-            Check(() => S.MicNoiseReduction, v => { S.MicNoiseReduction = v; Commit(SettingsChange.Recognition); }, Strings.Tip_MicNoiseReduction),
-            Strings.Tip_MicNoiseReduction);
-        refreshers.Add(() => noiseReduction.SetVisible(S.AudioSource != AudioSourceMode.System));
 
         modelBox.ToolTip = Strings.Tip_TranslationModel;
         AutomationProperties.SetName(modelBox, Strings.Label_TranslationModel);

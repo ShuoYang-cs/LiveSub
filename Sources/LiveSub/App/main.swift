@@ -4,7 +4,7 @@ import LiveSubCore
 import SwiftUI
 
 // 命令行自检模式（不启动界面）：
-//   LiveSub --mic-compare [--seconds 40] [--locale en-US]（真实麦克风对比降噪开和关）
+//   LiveSub --test-mic-restart（真实麦克风：模拟系统改了麦克风配置，看采集能不能自己恢复）
 //   LiveSub --transcribe-file <音频文件> [--locale en-US] [--guard zh-CN]（过滤中文说话声）[--realtime]（按真实速度播放）
 //   LiveSub --translate "句子1" "句子2" ... [--engine claude|google|local|apple|api]（local：下载好的混元翻译）
 //     --engine api 时：--format openai|anthropic --base-url URL --model 模型名，密钥从环境变量 LIVESUB_API_KEY 读取 [--model haiku] [--target zh-Hans] [--correct]（按发音纠正识别错误）
@@ -62,59 +62,28 @@ func runTranscribeFile(_ path: String) async {
     }
 }
 
-/// 用真实麦克风对比“麦克风降噪”开和关：各录 `--seconds` 秒（默认 40），统计音量、识别出的词数、置信度。
-/// 两次要放同一段声音（例如用手机在你平时的座位上放同一段课堂录音，每段开始前回车），结果才能比。
-/// 打开降噪后系统会处理麦克风信号，所以用文件测不出来，只能用真实麦克风。
-func runMicCompare() async {
-    let seconds = Double(option("--seconds") ?? "") ?? 40
-    let locale = option("--locale") ?? "en-US"
-    guard await MicrophoneCapture.requestPermission() else {
-        print("没有麦克风权限：请在“系统设置 › 隐私与安全性 › 麦克风”里允许终端。"); exit(1)
-    }
-    struct Stats { var words = 0, lowWords = 0, segments = 0; var confSum = 0.0, confCount = 0; var peakDB = -120.0; var rmsDBs: [Double] = []; var text: [String] = [] }
-    final class Box: @unchecked Sendable { let lock = NSLock(); var stats = Stats() }
-    var results: [(String, Stats)] = []
-    for (title, reduce) in [("降噪关", false), ("降噪开", true)] {
-        print("\n=== \(title)：按回车后开始录 \(Int(seconds)) 秒，同时放同一段声音 ===")
-        _ = readLine()
-        let box = Box()
-        let engine = TranscriptionEngine()
-        do {
-            try await engine.start(localeID: locale, guardLocaleID: nil, onStatus: { _, _ in }, onEvent: { event in
-                guard case .final(let r) = event else { return }
-                box.lock.withLock {
-                    box.stats.segments += 1
-                    box.stats.text.append(r.text)
-                    box.stats.words += r.text.split(separator: " ").count
-                    for c in r.confidences { box.stats.confSum += c; box.stats.confCount += 1; if c < 0.5 { box.stats.lowWords += 1 } }
-                }
-            })
-            let capture = MicrophoneCapture(noiseReduction: reduce)
-            try capture.start { buffer in
-                let db = 20 * log10(Double(max(audioLevel(buffer), 1e-6)))
-                box.lock.withLock { box.stats.rmsDBs.append(db); box.stats.peakDB = max(box.stats.peakDB, db) }
-                engine.append(buffer)
-            }
-            try await Task.sleep(for: .seconds(seconds))
-            capture.stop()
-            await engine.stop()
-        } catch {
-            print("[error] \(error.localizedDescription)"); exit(1)
+/// 别的程序打开语音处理、换输入设备时系统会让 AVAudioEngine 停下（见 MicrophoneCapture）。
+/// 这里录 6 秒，第 2 秒模拟一次，看之后还有没有声音进来。只开普通的麦克风，不影响别的程序。
+func runMicRestartTest() async {
+    guard await MicrophoneCapture.requestPermission() else { print("没有麦克风权限"); exit(1) }
+    final class Box: @unchecked Sendable { let lock = NSLock(); var before = 0, after = 0, changed = false }
+    let box = Box()
+    let capture = MicrophoneCapture()
+    do {
+        try capture.start { buffer in
+            box.lock.withLock { if box.changed { box.after += Int(buffer.frameLength) } else { box.before += Int(buffer.frameLength) } }
         }
-        results.append((title, box.lock.withLock { box.stats }))
+    } catch {
+        print("[error] \(error.localizedDescription)"); exit(1)
     }
-    print("\n=== 结果 ===")
-    for (title, s) in results {
-        let avgDB = s.rmsDBs.isEmpty ? -120 : s.rmsDBs.reduce(0, +) / Double(s.rmsDBs.count)
-        // 说话时的音量：取音量最高的 20% 块的平均，免得被停顿拉低。
-        let loud = s.rmsDBs.sorted().suffix(max(1, s.rmsDBs.count / 5))
-        let speechDB = loud.reduce(0, +) / Double(loud.count)
-        let conf = s.confCount == 0 ? 0 : s.confSum / Double(s.confCount)
-        print(String(format: "%@：说话时音量 %.1f dB，峰值 %.1f dB，平均 %.1f dB；识别 %d 句 %d 词，平均置信度 %.2f，低置信度词 %d（%.0f%%）",
-                     title, speechDB, s.peakDB, avgDB, s.segments, s.words, conf, s.lowWords,
-                     s.confCount == 0 ? 0 : Double(s.lowWords) / Double(s.confCount) * 100))
-    }
-    for (title, s) in results { print("\n--- \(title) 识别文字 ---\n" + s.text.joined(separator: "\n")) }
+    try? await Task.sleep(for: .seconds(2))
+    box.lock.withLock { box.changed = true }
+    capture.simulateConfigurationChange()
+    try? await Task.sleep(for: .seconds(4))
+    capture.stop()
+    let (before, after) = box.lock.withLock { (box.before, box.after) }
+    print("模拟前 2 秒收到 \(before) 帧，模拟后 4 秒收到 \(after) 帧：" + (after > before ? "已恢复" : "没有恢复"))
+    exit(after > before ? 0 : 1)
 }
 
 actor SegmenterBox {
@@ -212,6 +181,7 @@ if let out = option("--render-window") {
         overlay.state.modelMenuHovered = arguments.contains("--hover-model")
         if arguments.contains("--light") { overlay.panel.appearance = NSAppearance(named: .aqua) }
         if arguments.contains("--dark") { overlay.panel.appearance = NSAppearance(named: .darkAqua) }
+        overlay.keepsOnScreen = false
         overlay.panel.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         overlay.show()
         RunLoop.main.run(until: Date().addingTimeInterval(1.5))
@@ -233,6 +203,7 @@ if arguments.contains("--stress-overlay") {
         let overlay = OverlayWindowController(
             controller: controller, settings: AppSettings.shared,
             actions: OverlayActions(toggleRunning: {}, lock: {}, toggleRecording: {}, showSettings: {}, quit: {}, toggleAssistant: {}, settingsChanged: {}, manageModels: {}))
+        overlay.keepsOnScreen = false
         overlay.panel.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         overlay.show()
         var maxGap = 0.0, last = Date(), n = 0, ticks = 0
@@ -459,12 +430,32 @@ if let out = option("--render-settings") {
     exit(0)
 }
 
+// 字幕记录窗口离屏截图：--render-history out.png [--dark]。本次没有字幕，显示记录文件夹里最近的一份。
+if let out = option("--render-history") {
+    MainActor.assumeIsolated {
+        let controller = SubtitleController(settings: AppSettings.shared)
+        let window = NSWindow(contentViewController: NSHostingController(rootView: HistoryView(
+            controller: controller, model: HistoryModel(controller: controller))))
+        window.appearance = NSAppearance(named: arguments.contains("--dark") ? .darkAqua : .aqua)
+        window.setContentSize(NSSize(width: 640, height: 560))
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderFrontRegardless()
+        RunLoop.main.run(until: Date().addingTimeInterval(2))
+        guard let view = window.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+        print("saved \(out) \(view.bounds.size)")
+    }
+    exit(0)
+}
+
 // 自检模式不能阻塞主线程（Translation 框架需要主线程的 run loop），所以用 dispatchMain。
 if let path = option("--transcribe-file") {
     Task.detached { await runTranscribeFile(path); exit(0) }
     dispatchMain()
-} else if arguments.contains("--mic-compare") {
-    Task.detached { await runMicCompare(); exit(0) }
+} else if arguments.contains("--test-mic-restart") {
+    Task.detached { await runMicRestartTest() }
     dispatchMain()
 } else if let i = arguments.firstIndex(of: "--translate") {
     let texts = arguments[(i + 1)...].prefix { !$0.hasPrefix("--") }

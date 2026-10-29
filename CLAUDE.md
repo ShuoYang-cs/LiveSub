@@ -15,7 +15,7 @@ macOS 14.2+ 应用（没有 Dock 和菜单栏图标，所有操作在悬浮字�
 ## 构建与验证
 - 发布 macOS 版：`scripts/package-release.sh` 生成 Apple 芯片和 Intel 通用的 dmg 和 zip（`build-app.sh --universal`；`--dmg-only` 用现成的 build/LiveSub.app 只做 dmg），上传到 GitHub Releases（tag 用 `macos-版本号`）。签名必须用这台电脑登录钥匙串里的“LiveSub Local Signing”：换了证书，用户的系统会把新版当成另一个 App，要重新授权。这个 SwiftPM 版本不管编哪种芯片，结果都放在同一个输出目录（`.build/out/Products/Release`），后编的覆盖先编的。这台电脑没装 Rosetta，Intel 版只能编译，不能在这里运行。
 - `swift build`；`scripts/test.sh`；`scripts/build-app.sh [--install]` 生成 .app（用登录钥匙串里的 “LiveSub Local Signing” 证书签名，见 `scripts/make-signing-cert.sh`；不要改回 ad-hoc，否则每次重装都会重新弹麦克风权限）。
-- 不用界面的自检：`.build/debug/LiveSub --transcribe-file x.aiff [--guard zh-CN] [--realtime]`、`--translate "..." --engine claude|google|apple [--accent ...]`、`--render-window out.png [--hover] [--hover-tool record] [--idle] [--light|--dark]`（真实窗口截图）、`--render-settings out.png [--height 1100] [--dark]`（设置窗口截图；命令行版设置在 `defaults` 的 `LiveSub` 域。字幕都在 ScrollView 里，`ImageRenderer` 画不出来，所以没有纯 SwiftUI 的截图命令）。
+- 不用界面的自检：`.build/debug/LiveSub --transcribe-file x.aiff [--guard zh-CN] [--realtime]`、`--translate "..." --engine claude|google|apple [--accent ...]`、`--render-window out.png [--hover] [--hover-tool record] [--idle] [--light|--dark]`（真实窗口截图）、`--render-history out.png [--dark]`（字幕记录窗口截图，本次为空时显示记录文件夹里最近的一份）、`--render-settings out.png [--height 1100] [--dark]`（设置窗口截图；命令行版设置在 `defaults` 的 `LiveSub` 域。字幕都在 ScrollView 里，`ImageRenderer` 画不出来，所以没有纯 SwiftUI 的截图命令）。
 - 测识别时间/延迟要加 `--realtime`：不加时整个文件瞬间喂完，临时结果的时间范围会失真。
 - SpeechTranscriber 的临时结果没有逐词时间（整段一个 run），只有确认结果有；哨兵过滤只能靠确认结果。`LIVESUB_DEBUG_GUARD=1` 打印每句等待哨兵的时间。
 - 用文件代替真实声音跑整个界面：`LIVESUB_TEST_AUDIO_FILE=... LIVESUB_AUTOSTART=1 .build/debug/LiveSub`。
@@ -29,6 +29,7 @@ macOS 14.2+ 应用（没有 Dock 和菜单栏图标，所有操作在悬浮字�
 - 延迟实测（2026-10-19）：识别器每句说完后 0.6–1.0 秒确认，Claude Haiku 首字 0.7–0.9 秒，合计约 1.5–1.9 秒。（2026-10-22 起 macOS 26 的临时结果带逗号了，长句提前确认靠它，见下面 `BreathCutter`。）中文哨兵的等待最多 1.5 秒，只在汉字占比 ≥0.3 且这句有低置信度词时才等。`--export-test 音频 out.srt` 跑整条链路并导出字幕。
 - `.fastResults`（识别器偏向速度）保留，不要去掉。`LIVESUB_NO_FAST_RESULTS=1` 可以去掉它来对比。2026-10-22 实测：用 `say` 合成 12 句讲课录音，有标准美音、印度口音、中文口音、加噪声几种，`--transcribe-file --realtime`。去掉后词错误率只降 0–4 个百分点（中文口音 13.8%→9.9%，强噪声下反而 14.4%→15.5%）。但说完到确认结果从 0.5–0.9 秒变成 1.7–3.1 秒，第一个灰色临时字幕也从约 0.8 秒变成 2–3 秒才出来。
 - 字幕窗口高度只随设置变化（`OverlayView.height`：拖出来的高度；设置里不再有“显示最近 N 句”，2026-10-23 用户决定去掉，只有旧设置里 `overlayHeight` 为 0 的才按存下的 `visibleLines` 算；双击上下边框恢复默认高度），不随内容变。不要改回按内容自动高度：出字幕时窗口会忽高忽低（用户提出过）。
+- 字幕窗口要整个留在屏幕里（`OverlayWindowController.keepOnScreen`）：拖出去一部分时右上角的快捷按钮、锁定标志跟着出去，锁定后拖不回来也解不了锁，只能强制退出（2026-10-28 用户遇到，存下的位置是 x=609、宽 900，屏幕宽 1470）。松开鼠标后（`NSEvent.pressedMouseButtons` 为 0，拖动中改位置会和系统的拖动打架）、启动恢复位置时、显示时、屏幕参数变化时推回屏幕内；按整块屏幕算、不按 visibleFrame（全屏看视频时字幕要能放到最下面）。离屏自检要设 `keepsOnScreen = false`。
 - AI 助手面板不是字幕窗口的子窗口，也不跟着字幕窗口移动；按住标题栏（`WindowDragArea`，`performDrag`）单独拖动，用户拖过的位置存在 `assistantOrigin`。
 - 离屏压力测试字幕窗口：`.build/debug/LiveSub --stress-overlay [--streaming]`（报告主线程最长卡顿、窗口高度范围和最后离底部多远）；`--test-watchdog` 验证卡顿采样。离屏窗口没有真实的滚动阶段事件，手动滚动相关的逻辑只能在真实窗口里验证。
 - 真实窗口测试的坑（2026-10-22）：
@@ -46,6 +47,7 @@ macOS 14.2+ 应用（没有 Dock 和菜单栏图标，所有操作在悬浮字�
 - Claude 在模型列表里只有一项（`modelGroups(for:)` 按用途放 `claudeTranslationModel` 或 `claudeAssistantModel`），型号和 Claude 路径在“模型服务”的 Claude Code 区选；改型号时正在用 Claude 的翻译/助手跟着换（`AppSettings` 的 didSet）。2026-10-22 实测 `--translate --engine claude`：Haiku 每句 0.86–1.16 秒，Sonnet 1.10–3.29 秒（有一轮 Haiku 前三句各 8 秒，像是服务临时变慢）。
 - 默认列出的云端服务（`ChatEndpointPreset.builtIn`：OpenAI、通义千问、DeepSeek、Kimi、Grok，2026-10-22 用户要求）：固定 UUID（存钥匙串密钥、判断删没删过），`AppSettings.withBuiltInServices` 每次启动补上缺的；用户删掉的记在 `dismissedBuiltIns`，自己加过同一地址的不补。选了没填密钥的服务（或没下载的混元翻译）时 `AppSettings.onModelNeedsSetup` 让 AppDelegate 打开“模型服务”并滚到它。模型列表每家只列一项 `.endpoint(id, 这家为翻译/AI 助手选的模型)`；在“模型服务”里换了模型，`endpoints` 的 didSet 把正在用这家的 `translationModel`/`assistantModel` 跟着换（只换模型不再弹密钥提示）。模型名 2026-10-22 按各家官方文档选的快、不思考的模型；`ChatAPI.openAILatencySettings` 给 DeepSeek、Kimi（只有 kimi-k2.6 能关）发 `thinking: disabled`、给千问发 `enable_thinking: false`，别的服务不能发（OpenAI 收到不认识的参数返回 400）。Grok 的官方文档现在只写 Responses API，`chat/completions` 能不能用没核实。
 - AI 助手面板的按钮说明（`InstantTip`）：鼠标停上去立刻在按钮下方（输入栏的在上方）画说明，不用系统 `.help`（要等一会儿，面板不是活动窗口时常常不出来）。用 `.offset` 定位：`alignmentGuide` 在 overlay 里没生效（2026-10-22 截图确认）。
+- 字幕记录窗口（`UI/HistoryView.swift`）：左上角“记录”菜单可以换成记录文件夹里以前的某一份（`TranscriptFormat.parse` 读回 Markdown，只读，能生成笔记、存在那份旁边；没有音频时间，不能导出 SRT）。以前只显示内存里本次的字幕，重开 App 后窗口是空的（2026-10-28 用户问）。打开时本次没有字幕就先显示最近的一份，本次有了第一句再换回来；只有标题的空记录不列（读文件前 4 KB 看有没有 `\n**[`）。
 - 录音记录窗口（`UI/RecordingsView.swift`）：记录文件夹在“文稿”里时，第一次列目录系统会弹“想访问文稿文件夹”的权限窗口；列目录放在后台，否则主线程一直卡到用户回答（2026-10-22 实测）。
 - 录音（`Audio/AudioRecorder.swift`）：采集回调里复制 buffer，串行队列上写 AAC m4a；每路音源一个 `RecorderSlot`，运行中途可以开关。文件名由字幕记录的文件名把“字幕记录”换成“录音”。
 
@@ -57,7 +59,8 @@ macOS 14.2+ 应用（没有 Dock 和菜单栏图标，所有操作在悬浮字�
 - 自动判断主题（`SubtitleController.noteFinishedLine/updateTopic`，`Prompts.topicPrompt`，`Translation/TopicNote.swift`）：开着自动纠正且用云端模型时，翻完 4 句后让模型读最近 30 句字幕猜主题和术语，之后每 20 句更新；主题作为 `[Topic]` 块只发给“按发音纠正”的会话（别的提示词里没讲这个块，发过去会被当成要翻译的内容）。用户提出：术语表上课前没法写。2026-10-26 只用 Haiku 单次调用试过（“RJCC list”那几句能推出 adjacency list），没在真实课堂上量过效果。
 - 讲者问“What do I need to do?”“Why is that fair in your background?”这类话时，Haiku 偶尔当成在问它，回“这个问题是对我的提问……这里需要的是字幕翻译：……”或只回“我只负责实时字幕翻译”（真实字幕里 2026-10-26、10-28 各一次）。`TranslationOutput.dropMetaReply` 按几个固定说法认出这种话，留下最后一个冒号后或另起一行的译文；整个回复都是这种话时返回空，`SubtitleController` 这一句改用备用翻译（Windows 没有备用时算失败）。提示词里也加了第二人称问题的示例。用 14 个第二人称问题 × 3 个会话测 Haiku，改前改后都没复现，靠的主要是输出端过滤。Haiku 偶尔还会在译文里写 `<br>`，`clean` 当换行处理。
 - 去重复词（`collapseRepeats`）要在送进时间轴（`SegmentTimeline`）和分句器之前做一次，两边字数一致：以前只在分句器里去，时间轴多出来的字数让之后每句的时间都往前偏（2026-10-28 审查发现，导出的 SRT/VTT 受影响）。
-- 麦克风降噪（系统语音处理）和系统音频采集同时开会冲突：日志里反复 `VoiceProcessor ... failed to process downlink voice proc`、`number of buffers (2) does not match`，字幕完全停止（2026-10-26 用户在“两者”模式开了降噪，13:11 起没字幕）。所以“两者”模式下降噪不生效、设置里置灰。`LiveSub --mic-compare --seconds 40` 用真实麦克风各录一次降噪关和开（要放同一段声音）；文件输入绕过了降噪，测不出来。空房间实测：开降噪后底噪约被放大 30 dB（自动增益）。
+- 没有麦克风降噪（2026-10-29 去掉，Windows 一起去掉）：系统语音处理（`setVoiceProcessingEnabled`，通话用）只留离电脑近的人声。课堂实测：开着时 2.5 分钟一句字幕都没有；同一节课各录 25 秒，关着识别 71 个词，开着 0 个；开着时音量反而高了 19 dB，80% 的能量在 300 Hz 以下，是自动增益放大的低频噪音，老师的声音（关着时 87% 在 300–1000 Hz）几乎没有了。它还和系统音频采集冲突（10-26，“两者”模式下字幕完全停止）。不要加回来；要降噪得自己处理，而且要先在教室里用真实麦克风对比。
+- 别的程序打开麦克风的语音处理（Teams、FaceTime，或者命令行里测语音处理）、换输入设备时，系统改了麦克风的声道数（内置麦克风 1 → 3）或采样率，**其他程序**的 AVAudioEngine 会自己停下（日志 `iounit configuration changed > stopping the engine`），不报错，字幕一直“无声音”。`MicrophoneCapture` 收到 `AVAudioEngineConfigurationChange` 就按新格式重新装 tap、启动（设备忙时每 0.5 秒重试，最多 10 次）；录音器遇到格式变了就转成文件开头的格式。自检：`LiveSub --test-mic-restart`（模拟一次，只开普通麦克风，不影响已经在跑的 LiveSub）。**用户在上课时不要在命令行里开语音处理测试**：2026-10-29 这样测，把正在跑的旧版 LiveSub 的麦克风弄停了。
 - 状态条“收音中/无声音”：音量按分贝显示（-60 dB 为 0，-20 dB 满格），引擎里的音量按每块 ×0.85 慢慢回落（`level = max(rms, level*0.85)`）。以前线性映射，RMS 低于约 0.006（-44 dB）就显示“无声音”，坐第二排听课常常整节都是；状态条每 0.25 秒只看最后一块，会落在字与字的空隙里。
 - 识别器输出的“Okay, okay, okay, okay.”“to, to, to, to”这类同一个词连着 3 次以上：`Segmenter.collapseRepeats` 只留前 2 个（多人讨论、Teams 音质差时常见，翻出来是“好，好，好，好”）。听错的词（“Bye, son”“mommy”）靠自动纠正，不靠这个。
 

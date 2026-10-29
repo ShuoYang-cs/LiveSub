@@ -13,14 +13,12 @@ internal enum SourceKind { Microphone, SystemAudio, TestFile }
 /// 标签（“麦克风”“系统音频”）只在“两者”模式下有。
 /// 除了标明的地方，只在界面线程上访问。
 /// </summary>
-internal sealed class SourcePipeline(int index, SourceKind kind, string? label, bool noiseReduction)
+internal sealed class SourcePipeline(int index, SourceKind kind, string? label)
 {
     /// <summary>送给识别器的音源序号（在 <see cref="SubtitleController"/> 的音源列表里的位置）。</summary>
     public int Index { get; } = index;
     public SourceKind Kind { get; } = kind;
     public string? Label { get; } = label;
-    /// <summary>麦克风降噪（开始时的设置；改设置会重启识别）。</summary>
-    public bool NoiseReduction { get; } = noiseReduction;
 
     /// <summary>是真实的麦克风：隐私设置可能挡住它。</summary>
     public bool IsMicrophone => Kind == SourceKind.Microphone;

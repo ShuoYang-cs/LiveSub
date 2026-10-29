@@ -202,7 +202,7 @@ public sealed class SubtitleController : IDisposable
             settingsService.Commit(SettingsChange.None);
         }
         SetStatus(Strings.Status_Preparing);
-        AppLog.Info($"start: source={Settings.AudioSource} noiseReduction={Settings.MicNoiseReduction} lang={Settings.SourceLanguage} model={Settings.DisplayName(Settings.TranslationModel)} whisper={Settings.WhisperModel} autoCorrect={Settings.AutoCorrect}");
+        AppLog.Info($"start: source={Settings.AudioSource} lang={Settings.SourceLanguage} model={Settings.DisplayName(Settings.TranslationModel)} whisper={Settings.WhisperModel} autoCorrect={Settings.AutoCorrect}");
         try
         {
             // 先启动翻译器（Claude 进程、llama-server 启动需要几秒），与加载识别模型同时进行。
@@ -284,17 +284,17 @@ public sealed class SubtitleController : IDisposable
     /// </summary>
     private List<SourcePipeline> CreatePipelines()
     {
-        if (UsingTestAudio) return [new SourcePipeline(0, SourceKind.TestFile, null, false)];
+        if (UsingTestAudio) return [new SourcePipeline(0, SourceKind.TestFile, null)];
         var mode = Settings.AudioSource;
         bool both = mode == AudioSourceMode.Both;
         var list = new List<SourcePipeline>();
         if (mode != AudioSourceMode.System)
         {
-            list.Add(new SourcePipeline(list.Count, SourceKind.Microphone, both ? Strings.Source_Microphone : null, Settings.MicNoiseReduction));
+            list.Add(new SourcePipeline(list.Count, SourceKind.Microphone, both ? Strings.Source_Microphone : null));
         }
         if (mode != AudioSourceMode.Microphone)
         {
-            list.Add(new SourcePipeline(list.Count, SourceKind.SystemAudio, both ? Strings.Source_System : null, false));
+            list.Add(new SourcePipeline(list.Count, SourceKind.SystemAudio, both ? Strings.Source_System : null));
         }
         return list;
     }
@@ -342,7 +342,7 @@ public sealed class SubtitleController : IDisposable
         IAudioSource s = p.Kind switch
         {
             SourceKind.TestFile => new FileSource(TestAudioFile!, p.Recording),
-            SourceKind.Microphone => new WasapiSource(loopback: false, noiseReduction: p.NoiseReduction, recording: p.Recording),
+            SourceKind.Microphone => new WasapiSource(loopback: false, recording: p.Recording),
             _ => new WasapiSource(loopback: true, recording: p.Recording),
         };
         s.Samples += samples => OnSamples(gen, p, samples);
@@ -812,7 +812,7 @@ public sealed class SubtitleController : IDisposable
         applyTimer.Start();
     }
 
-    private string RecognitionKey => string.Join('\u0001', Settings.SourceLanguage, Settings.AudioSource, Settings.MicNoiseReduction,
+    private string RecognitionKey => string.Join('\u0001', Settings.SourceLanguage, Settings.AudioSource,
         Settings.WhisperModel, Settings.FilterChineseActive, Settings.UseGpu);
 
     private async Task ApplySettings(SettingsChange change)
@@ -1336,10 +1336,11 @@ public sealed class SubtitleController : IDisposable
     /// 用 AI 助手的模型把本次全部字幕整理成笔记（与 macOS 版相同），保存在字幕记录旁边（没有记录文件时放在临时文件夹），
     /// 然后用默认程序打开。
     /// </summary>
-    public async void GenerateNotes()
+    /// <param name="past">字幕记录窗口里看以前的记录时，传那一份的字幕；笔记存在 <paramref name="pastPath"/> 旁边（与 macOS 相同）。</param>
+    public async void GenerateNotes(IReadOnlyList<(DateTime Time, string Source, string Translation)>? past = null, string? pastPath = null)
     {
         if (IsGeneratingNotes) return;
-        var done = Book.Lines.Where(l => l.Source.Length > 0).ToList();
+        var done = (past ?? Book.Lines.Select(l => (l.Time, l.Source, l.Translation)).ToList()).Where(l => l.Source.Length > 0).ToList();
         if (done.Count == 0)
         {
             SetStatus(Strings.Status_NoNotes);
@@ -1360,9 +1361,9 @@ public sealed class SubtitleController : IDisposable
         notesSession = notes;
         IsGeneratingNotes = true;
         SetStatus(Strings.Format(Strings.Status_GeneratingNotes, Settings.DisplayName(Settings.AssistantModel)));
-        var transcript = TranscriptFormat.Plain(done.Select(l => (l.Time, l.Source, l.Translation)));
-        var path = store is { } s
-            ? TranscriptFormat.NotesPath(s.FilePath, Strings.Transcript_Name, Strings.Notes_Name)
+        var transcript = TranscriptFormat.Plain(done);
+        var path = (pastPath ?? store?.FilePath) is { } transcriptPath
+            ? TranscriptFormat.NotesPath(transcriptPath, Strings.Transcript_Name, Strings.Notes_Name)
             : Path.Combine(Path.GetTempPath(), Strings.Notes_TempName + ".md");
         AppLog.Info($"notes: generating from {done.Count} lines");
         try

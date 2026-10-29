@@ -209,4 +209,28 @@ public class AssistantPromptTests
             TranscriptFormat.Entry(time, "Microphone", "a question.", "", "a quest in."));
         Assert.Equal("**[14:03:09]** next slide.\n\n", TranscriptFormat.Entry(time, null, "next slide.", ""));
     }
+
+    // 与 macOS 版 TranscriptParseTests 相同。
+    [Fact]
+    public void ParseReadsBackWhatEntryWrites()
+    {
+        var day = new DateTime(2026, 10, 28, 0, 0, 0, DateTimeKind.Local);
+        var text = TranscriptFormat.Header("2026-10-28 13.11 字幕记录", day, LanguageOption.Source("en-US"), LanguageOption.Target("zh-Hans"))
+            + TranscriptFormat.Entry(day.AddSeconds(13 * 3600 + 17 * 60 + 33), null, "Now, when", "现在，当")
+            + TranscriptFormat.Entry(day.AddSeconds(13 * 3600 + 18 * 60), "麦克风", "Okay.", "第一行\n第二行", "Okay, okay.")
+            + TranscriptFormat.Entry(day.AddSeconds(13 * 3600 + 18 * 60 + 5), null, "Untranslated.", "");
+        Assert.Equal(
+        [
+            new TranscriptFormat.ParsedEntry(47853, null, "Now, when", null, "现在，当"),
+            new TranscriptFormat.ParsedEntry(47880, "麦克风", "Okay.", "Okay, okay.", "第一行\n第二行"),
+            new TranscriptFormat.ParsedEntry(47885, null, "Untranslated.", null, ""),
+        ], TranscriptFormat.Parse(text));
+    }
+
+    [Fact]
+    public void ParseReadsEnglishOriginalAndWindowsLineEndings()
+    {
+        var text = "# 2026-10-28 13.11 Transcript\r\n\r\n- Started: 2026-10-28 13:11\r\n\r\n**[09:00:01]** Hi.\r\n*Recognized: High.*\r\n> 你好。\r\n";
+        Assert.Equal([new TranscriptFormat.ParsedEntry(32401, null, "Hi.", "High.", "你好。")], TranscriptFormat.Parse(text));
+    }
 }

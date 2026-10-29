@@ -184,8 +184,6 @@ public static class Strings
     public static string Tip_UseGpu => Get(nameof(Tip_UseGpu));
     public static string Label_LivePreview => Get(nameof(Label_LivePreview));
     public static string Tip_LivePreview => Get(nameof(Tip_LivePreview));
-    public static string Label_MicNoiseReduction => Get(nameof(Label_MicNoiseReduction));
-    public static string Tip_MicNoiseReduction => Get(nameof(Tip_MicNoiseReduction));
     public static string Label_ModelMirror => Get(nameof(Label_ModelMirror));
     public static string Tip_ModelMirror => Get(nameof(Tip_ModelMirror));
     public static string Section_Overlay => Get(nameof(Section_Overlay));
@@ -214,6 +212,10 @@ public static class Strings
     public static string History_Original => Get(nameof(History_Original));
     public static string History_ShowInExplorer => Get(nameof(History_ShowInExplorer));
     public static string History_Generating => Get(nameof(History_Generating));
+    public static string History_Records => Get(nameof(History_Records));
+    public static string History_Current => Get(nameof(History_Current));
+    public static string History_EmptyWithPast => Get(nameof(History_EmptyWithPast));
+    public static string History_LineCount => Get(nameof(History_LineCount));
     public static string Export_FilterSrt => Get(nameof(Export_FilterSrt));
     public static string Export_FilterVtt => Get(nameof(Export_FilterVtt));
     public static string Export_DefaultName => Get(nameof(Export_DefaultName));

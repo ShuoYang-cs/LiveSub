@@ -139,8 +139,6 @@
   <data name="Tip_UseGpu" xml:space="preserve"><value>Use the GPU when a GPU runtime is installed. Takes effect after restart.</value></data>
   <data name="Label_LivePreview" xml:space="preserve"><value>Live Preview</value></data>
   <data name="Tip_LivePreview" xml:space="preserve"><value>Show a draft while someone is still speaking. Uses more CPU.</value></data>
-  <data name="Label_MicNoiseReduction" xml:space="preserve"><value>Microphone Noise Reduction</value></data>
-  <data name="Tip_MicNoiseReduction" xml:space="preserve"><value>Uses Windows communications voice processing to reduce background noise and remove echo; results depend on the audio driver. Accuracy may drop when the speaker is far away.</value></data>
   <data name="Label_ModelMirror" xml:space="preserve"><value>Model Download Host</value></data>
   <data name="Tip_ModelMirror" xml:space="preserve"><value>The default is https://huggingface.co. Use a mirror if it is unreachable.</value></data>
   <data name="Section_Overlay" xml:space="preserve"><value>Subtitles</value></data>
@@ -168,6 +166,10 @@
   <data name="History_Original" xml:space="preserve"><value>Recognized: {0}</value></data>
   <data name="History_ShowInExplorer" xml:space="preserve"><value>Show Transcript in File Explorer</value></data>
   <data name="History_Generating" xml:space="preserve"><value>Generating…</value></data>
+  <data name="History_Records" xml:space="preserve"><value>Transcript</value></data>
+  <data name="History_Current" xml:space="preserve"><value>Current</value></data>
+  <data name="History_EmptyWithPast" xml:space="preserve"><value>No subtitles in this session yet. Earlier transcripts are in the menu at the top left.</value></data>
+  <data name="History_LineCount" xml:space="preserve"><value>{0} lines</value></data>
   <data name="Export_FilterSrt" xml:space="preserve"><value>SRT Subtitles</value></data>
   <data name="Export_FilterVtt" xml:space="preserve"><value>WebVTT Subtitles</value></data>
   <data name="Export_DefaultName" xml:space="preserve"><value>Subtitles</value></data>

@@ -170,8 +170,6 @@ final class AppSettings {
         }
     }
     static let claudeModels = ["haiku", "sonnet", "opus"]
-    /// 麦克风降噪（系统语音处理：降噪、回声消除、自动增益）。
-    var micNoiseReduction: Bool { didSet { save("micNoiseReduction", micNoiseReduction) } }
     /// 字幕底部的运行状态条（有没有声音、识别是否清晰、翻译积压）。
     var showStatusBar: Bool { didSet { save("showStatusBar", showStatusBar) } }
     /// 识别困难（口音重、语速快、噪音大）时让大模型按发音和上下文纠正识别错误。默认关闭。
@@ -276,7 +274,6 @@ final class AppSettings {
         keepOriginalText = d.object(forKey: "keepOriginalText") as? Bool ?? false
         if !translation.isLanguageModel { autoCorrect = false }
         showStatusBar = d.object(forKey: "showStatusBar") as? Bool ?? true
-        micNoiseReduction = d.object(forKey: "micNoiseReduction") as? Bool ?? false
         assistantWidth = d.object(forKey: "assistantWidth") as? Double ?? 380
         assistantHeight = d.object(forKey: "assistantHeight") as? Double ?? 420
         displayMode = DisplayMode(rawValue: d.string(forKey: "displayMode") ?? "") ?? .bilingual

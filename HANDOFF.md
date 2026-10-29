@@ -1,19 +1,27 @@
 # 交接说明
 
-下次对话从这里开始。更新于 2026-10-28。开发说明、自检命令和踩过的坑见 [CLAUDE.md](CLAUDE.md)，长期计划见 [ROADMAP.md](ROADMAP.md)。
+下次对话从这里开始。更新于 2026-10-29。开发说明、自检命令和踩过的坑见 [CLAUDE.md](CLAUDE.md)，长期计划见 [ROADMAP.md](ROADMAP.md)。
+
+## 2026-10-29：macOS 1.0.3、Windows 1.0.2（去掉麦克风降噪，麦克风被别的程序改配置后自动恢复）
+
+- 用户上课时开了“麦克风降噪”，老师的话一句也不出字幕。课堂实测确认是系统语音处理把远处的讲者去掉了（数据见 CLAUDE.md），macOS 和 Windows 都去掉了这个选项（Windows 是另一套“通话类别”处理，没在 Windows 上测过，按同样的道理一起去掉；README 第 53、95 项）。
+- 测的时候在命令行开语音处理，把用户正在用的 LiveSub 的麦克风弄停了（11:14:53，用户切换音源才恢复）。由此发现：Teams、FaceTime 这类程序开始用麦克风时，LiveSub 的麦克风会一样停下。已修（`MicrophoneCapture` 自动重新开始），`--test-mic-restart` 模拟测过；**真实触发（另一个程序开语音处理）还没测**，要等用户不上课时，在新版 LiveSub 运行时跑一次语音处理采集，看日志有没有 `microphone: restarted after configuration change`、字幕是否继续。
+- 发布：macOS 1.0.3（`macos-1.0.3`）、Windows 1.0.2（`windows-1.0.2`），包括 10-28 发布后的两项（字幕留在屏幕里、字幕记录窗口看以前的记录）。Windows 版仍然只在 Mac 上编译和跑 Core 测试，要在 Windows 上按 windows/README.md 第 93–95 项实测。
 
 ## 2026-10-28：macOS 1.0.2、Windows 1.0.1
 
 - 用户按建议把 App 从 `~/Applications` 挪到 `/Applications` 时 App 还开着，之后选“麦克风”“两者”点开始都没反应（系统不弹窗直接拒绝麦克风，见 CLAUDE.md）。重开就好了。现在 App 装在 `/Applications/LiveSub.app`；`scripts/build-app.sh --install` 仍然装到 `~/Applications`，用户还没说要不要改，改之前先问。
 - macOS 1.0.2：开始失败的原因显示在开始按钮下面（以前只写进看不到的状态，看起来像没反应；运行中被挪过时提示重开）；模型把讲者的问题当成问它时去掉那段话；`<br>`；去重复词后时间轴不再偏；开始新记录时作废正在进行的主题请求；带新主题的那句失败了下一句重新带主题。
 - Windows 1.0.1：1.0.1 那批（10-26 没编译）在 Mac 上编译通过（只缺一个 using），子代理对照 macOS 审查后修了：主题请求放到后台线程（Claude Code 新开进程时会卡住字幕）、音量回落按音频时长算（WASAPI 每 10 毫秒一块，按块乘 0.85 等于没回落）、上面几条和 macOS 一样的修复，开始失败的原因最多两行。Core 测试 255 个全过。**界面和音频没在 Windows 上运行过**，要在 Windows 上按 windows/README.md 第 67、87–92 项实测。
+- 发布后（15:00）：字幕拖到右下角一部分出了屏幕、又锁定了，锁定标志在屏幕外，解不了锁也拖不回来。改成字幕始终整个留在屏幕里（CLAUDE.md 有说明），Windows 同步改了拖动松开后和启动时（第 93 项）。已装到 `/Applications`，重开后字幕从 x=609 推回到 570。10-29 随 1.0.3 发布。真实窗口里拖动松开那条路径没测（用户在上课），离屏测过“挪出屏幕 → 0.2 秒后推回”和启动时恢复。
+- 18:00：字幕记录窗口能看以前的记录（见 CLAUDE.md），Windows 同步改了（第 94 项，只编译过）。10-29 随 1.0.3 发布。
 - 两个版本都是在这台 Mac 上打包发布的（Windows 用 `~/.dotnet/dotnet publish`，见 windows/README.md）；发 Windows 版时 `gh release create … --latest=false`，否则 README 里 Mac 版的 `releases/latest` 链接会指到 Windows 版。
 
 ## 2026-10-26 晚：macOS 1.0.1、自动纠正和状态条改动
 
 - 用户上课、开 Teams 会议时发现：切翻译模型没变化、降噪开了字幕就停、一直显示“无声音”、小组讨论里一堆 okay okay okay、翻译莫名其妙。改动和原因见 CLAUDE.md 新加的几条（自动纠正只用云端模型、自动判断主题、降噪与“两者”冲突、状态条按分贝、去重复）。
 - 发布：macOS 1.0.1（`macos-1.0.1`）。Windows 代码已同步改（由子代理在没有 dotnet 的 Mac 上改的，**没编译、没运行**），Windows 版本号没升、没发 Release：要在 Windows 电脑上编译、跑 Core 测试、按 windows/README.md 末尾新加的测试项实测，再打包发 `windows-1.0.1`。
-- 没做：用 `say` + 扬声器测降噪开关对识别的影响（用户在上课，没放声音）；下课后做时要先退出 LiveSub，而且回声消除会把电脑自己放的声音当回声去掉，结果偏向“降噪关”，更可靠的是用手机放同一段录音、用 `--mic-compare` 在座位上测。
+- （10-29 已在课堂上测过降噪，结果是去掉，见上面。）
 
 ## 2026-10-23 下午：Windows 上实测 port-ict（Windows 上的 Claude）
 

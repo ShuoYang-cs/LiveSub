@@ -188,7 +188,7 @@ final class SubtitleController {
         if let testFile = ProcessInfo.processInfo.environment["LIVESUB_TEST_AUDIO_FILE"] {
             captures.append(FileCapture(url: URL(fileURLWithPath: testFile)))
         } else {
-            if mode != .system { captures.append(MicrophoneCapture(noiseReduction: settings.micNoiseReduction && mode == .microphone)) }
+            if mode != .system { captures.append(MicrophoneCapture()) }
             if mode != .microphone { captures.append(SystemAudioCapture()) }
         }
 
@@ -343,12 +343,12 @@ final class SubtitleController {
     }
 
     private var recognitionKey: String {
-        [settings.sourceLanguage, settings.audioSource.rawValue, settings.guardLocale ?? "", String(settings.micNoiseReduction)]
+        [settings.sourceLanguage, settings.audioSource.rawValue, settings.guardLocale ?? ""]
             .joined(separator: "\u{1}")
     }
 
     private func applySettings() async {
-        appLog.notice("apply settings (running: \(self.isRunning), noiseReduction: \(self.settings.micNoiseReduction && self.settings.audioSource == .microphone))")
+        appLog.notice("apply settings (running: \(self.isRunning))")
         while isStarting { try? await Task.sleep(for: .milliseconds(100)) }
         resetTranslators()
         guard isRunning else { return }
@@ -910,9 +910,10 @@ final class SubtitleController {
 
     // MARK: - 笔记
 
-    func generateNotes() {
+    /// 生成笔记。不传参数时用本次的记录；字幕记录窗口里看以前的记录时传那一份的字幕和文件。
+    func generateNotes(lines source: [SubtitleLine]? = nil, transcriptURL: URL? = nil) {
         guard !notesInProgress else { return }
-        let done = lines.filter { !$0.source.isEmpty }
+        let done = (source ?? lines).filter { !$0.source.isEmpty }
         guard !done.isEmpty else {
             status = L("还没有字幕记录，无法生成笔记。")
             return
@@ -930,7 +931,7 @@ final class SubtitleController {
         notesInProgress = true
         status = L("正在用 %@ 生成笔记…", settings.displayName(settings.assistantModel))
         let transcript = TranscriptFormat.plain(done.map { ($0.time, $0.source, $0.translation) })
-        let notesURL = store?.notesURL
+        let notesURL = transcriptURL.map(TranscriptStore.notesURL(for:)) ?? store?.notesURL
             ?? FileManager.default.temporaryDirectory.appendingPathComponent(L("LiveSub 笔记") + ".md")
         Task {
             defer { notesInProgress = false }

@@ -33,47 +33,78 @@ enum CaptureError: LocalizedError {
     }
 }
 
-final class MicrophoneCapture: AudioCapture {
+/// 采集的开始、停止和重新开始都在 `queue` 上，所以可以跨线程使用。
+final class MicrophoneCapture: AudioCapture, @unchecked Sendable {
     let label = L("麦克风")
     private let engine = AVAudioEngine()
+    private let queue = DispatchQueue(label: "LiveSub.MicrophoneCapture")
+    // 以下只在 queue 上访问。
     private var running = false
-    private let noiseReduction: Bool
+    private var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+    private var observer: NSObjectProtocol?
 
-    /// - noiseReduction: 打开系统的语音处理（FaceTime 用的那套）：降噪、回声消除、自动增益。
-    ///   嘈杂环境、讲者离得远时可能更清楚；但它偏向“离麦克风近的人声”，远处的讲者也可能被压低，所以做成可选项。
-    ///   回声消除还能去掉扬声器外放被麦克风再录一遍的声音（“两者同时”模式下的重复字幕）。
-    init(noiseReduction: Bool = false) {
-        self.noiseReduction = noiseReduction
-    }
+    // 没有“麦克风降噪”（系统语音处理）：它是给通话用的，只留离电脑近的人声，
+    // 教室里远处老师的声音几乎全被去掉，自动增益再把剩下的低频噪音放大，识别不出任何字（2026-10-29 课堂实测）。
 
     static func requestPermission() async -> Bool {
         await AVAudioApplication.requestRecordPermission()
     }
 
     func start(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) throws {
-        let input = engine.inputNode
-        if noiseReduction {
-            try input.setVoiceProcessingEnabled(true)
-            input.isVoiceProcessingAGCEnabled = true
-            // 语音处理默认会把其他声音（视频、音乐）压低，这里尽量不压。
-            input.voiceProcessingOtherAudioDuckingConfiguration =
-                AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
+        try queue.sync {
+            self.onBuffer = onBuffer
+            try run()
+            running = true
         }
-        // 打开语音处理后会给出多个声道（麦克风阵列）；后面转成单声道时取第一个，也就是处理后的人声。
+        // 别的程序打开麦克风的语音处理（Teams、FaceTime 等通话软件）、换了输入设备时，系统会改麦克风的声道数或采样率，
+        // AVAudioEngine 随之自己停下，不报错，字幕从此“无声音”（2026-10-29 实测）。收到通知就按新的格式重新开始。
+        let observer = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+            self?.queue.async { self?.restart(attempt: 1) }
+        }
+        queue.sync { self.observer = observer }
+    }
+
+    private func run() throws {
+        let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw CaptureError.noInput }
+        let onBuffer = onBuffer
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
-            onBuffer(buffer)
+            onBuffer?(buffer)
         }
         engine.prepare()
         try engine.start()
-        running = true
+    }
+
+    /// 设备刚改完配置时可能还在忙（日志里 `Start failed ... error 89`），隔半秒再试，最多 10 次。
+    private func restart(attempt: Int) {
+        guard running, !engine.isRunning else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        do {
+            try run()
+            appLog.notice("microphone: restarted after configuration change (\(self.engine.inputNode.outputFormat(forBus: 0), privacy: .public))")
+        } catch {
+            appLog.error("microphone: restart \(attempt) failed: \(error.localizedDescription, privacy: .public)")
+            guard attempt < 10 else { return }
+            queue.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.restart(attempt: attempt + 1) }
+        }
+    }
+
+    /// 自检用（`--test-mic-restart`）：像系统改了麦克风配置那样停下引擎、发出通知。
+    func simulateConfigurationChange() {
+        queue.sync { engine.stop() }
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: engine)
     }
 
     func stop() {
-        guard running else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        running = false
+        queue.sync {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
+            guard running else { return }
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            running = false
+        }
     }
 }

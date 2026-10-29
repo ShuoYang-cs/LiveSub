@@ -17,6 +17,8 @@ namespace LiveSub.App.UI;
 /// 纠正前的识别原文、译文，文字可以选中复制。下方是状态、“在资源管理器中显示记录”、“导出字幕”、“开始新的记录”和“生成笔记”
 /// （快捷按钮里去掉“⋯”菜单后，记录相关的操作都在这里，与 macOS 相同）。
 /// 停在底部时跟着新字幕滚动，往上翻看时不打扰。搜索留到以后的版本。外观跟着设置变；用 LiveSub 时显示在字幕上面。
+/// 左上角的菜单可以换成记录文件夹里以前的某一份（只读，可以生成笔记）：以前只显示本次的，重新打开程序后窗口是空的，
+/// 文件夹里明明有记录（2026-10-28 macOS 上用户提出）。打开时本次还没有字幕，先显示最近的一份，本次有了字幕再换回来。
 /// </summary>
 public sealed class HistoryWindow : Window
 {
@@ -51,6 +53,18 @@ public sealed class HistoryWindow : Window
     private ScrollViewer? scroller;
     /// <summary>停在最新一句：有新字幕时跟着滚到底；往上翻看时为 false，不打扰。</summary>
     private bool following = true;
+    private readonly ComboBox records = new() { MinWidth = 180, Margin = new Thickness(8, 0, 0, 0) };
+    private readonly Border recordsBar;
+    /// <summary>记录文件夹里以前的记录（不含本次的），最新的在前面。</summary>
+    private List<string> files = [];
+    /// <summary>正在看的以前那份记录（null 是本次）和它的字幕。</summary>
+    private string? pastFile;
+    private List<TranscriptFormat.ParsedEntry> pastEntries = [];
+    /// <summary>打开时本次还没有字幕、自动换成了最近的一份：本次有了字幕就换回来。</summary>
+    private bool autoSelected;
+    /// <summary>程序在改菜单的内容或选中项，不当成用户选的。</summary>
+    private bool updatingRecords;
+    private int lastLineCount;
 
     public HistoryWindow(SubtitleController controller, SettingsService settingsService, AppShell shell)
     {
@@ -93,8 +107,12 @@ public sealed class HistoryWindow : Window
         };
         list.Loaded += (_, _) => Scroller();
 
-        // 有本次的记录文件就在资源管理器里选中它，否则打开记录文件夹。
-        reveal.Click += (_, _) => shell.OpenTranscriptFolder();
+        // 有本次的记录文件就在资源管理器里选中它，否则打开记录文件夹；看以前的记录时选中那一份。
+        reveal.Click += (_, _) =>
+        {
+            if (pastFile is not null) AppShell.RevealInExplorer(pastFile);
+            else shell.OpenTranscriptFolder();
+        };
         export.Click += (_, _) =>
         {
             var menu = new ContextMenu { PlacementTarget = export, Placement = System.Windows.Controls.Primitives.PlacementMode.Top };
@@ -109,7 +127,15 @@ public sealed class HistoryWindow : Window
         };
         notes.Click += (_, _) =>
         {
-            controller.GenerateNotes();
+            if (pastFile is not null)
+            {
+                var day = DateTime.Today;
+                controller.GenerateNotes(pastEntries.Select(e => (day.AddSeconds(e.Seconds), e.Source, e.Translation)).ToList(), pastFile);
+            }
+            else
+            {
+                controller.GenerateNotes();
+            }
             RefreshBar();
         };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 0, 0, 0) };
@@ -129,9 +155,27 @@ public sealed class HistoryWindow : Window
             BorderThickness = new Thickness(0, 1, 0, 0),
         };
 
+        var recordsPanel = new StackPanel { Orientation = Orientation.Horizontal };
+        recordsPanel.Children.Add(new TextBlock { Text = Strings.History_Records, VerticalAlignment = VerticalAlignment.Center });
+        recordsPanel.Children.Add(records);
+        records.SelectionChanged += (_, _) =>
+        {
+            if (!updatingRecords) SelectRecord((records.SelectedItem as ComboBoxItem)?.Tag as string, auto: false);
+        };
+        recordsBar = new Border
+        {
+            Child = recordsPanel,
+            Padding = new Thickness(10, 6, 10, 6),
+            BorderBrush = Hairline,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Visibility = Visibility.Collapsed,
+        };
+
         var dock = new DockPanel();
         DockPanel.SetDock(barBorder, Dock.Bottom);
         dock.Children.Add(barBorder);
+        DockPanel.SetDock(recordsBar, Dock.Top);
+        dock.Children.Add(recordsBar);
         var body = new Grid();
         body.Children.Add(list);
         body.Children.Add(empty);
@@ -141,6 +185,110 @@ public sealed class HistoryWindow : Window
         refreshTimer.Tick += (_, _) => Refresh();
         refreshTimer.Start();
         Closed += (_, _) => refreshTimer.Stop();
+        // 窗口回到前面时可能已经多了一份记录（开始了新的记录、重新打开过程序）。
+        Activated += (_, _) => ReloadRecords();
+        Refresh();
+        ReloadRecords();
+    }
+
+    /// <summary>在后台读记录文件夹（同录音记录窗口）。</summary>
+    private async void ReloadRecords()
+    {
+        var folder = Environment.ExpandEnvironmentVariables(settingsService.Current.TranscriptFolder);
+        var current = controller.TranscriptPath;
+        var found = await Task.Run(() => ScanRecords(folder));
+        files = found.Where(f => current is null || !string.Equals(Path.GetFullPath(f), Path.GetFullPath(current), StringComparison.OrdinalIgnoreCase)).ToList();
+        if (pastFile is not null && !files.Contains(pastFile)) SelectRecord(null, auto: false);
+        else if (pastFile is null && controller.Book.Lines.Count == 0 && files.Count > 0) SelectRecord(files[0], auto: true);
+        UpdateRecordsMenu();
+    }
+
+    /// <summary>只列有字幕的记录（开始后没说话就停了的只有标题）；英文界面下写的文件名是“Transcript”。按文件名倒排就是最新的在前面。</summary>
+    private static List<string> ScanRecords(string folder)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(folder, "*.md")
+                .Where(f => Path.GetFileName(f) is var name && (name.Contains("字幕记录") || name.Contains("Transcript")) && HasLines(f))
+                .OrderByDescending(f => Path.GetFileName(f), StringComparer.Ordinal)
+                .ToList();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private static bool HasLines(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            var buffer = new byte[4096];
+            int n = stream.Read(buffer, 0, buffer.Length);
+            return System.Text.Encoding.UTF8.GetString(buffer, 0, n).Contains("\n**[");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>菜单里的名字：文件名去掉“字幕记录”，剩下开始时间。</summary>
+    private static string RecordTitle(string path) =>
+        Path.GetFileNameWithoutExtension(path).Replace("字幕记录", "").Replace("Transcript", "").Trim();
+
+    private void UpdateRecordsMenu()
+    {
+        updatingRecords = true;
+        records.Items.Clear();
+        records.Items.Add(new ComboBoxItem { Content = Strings.History_Current });
+        foreach (var f in files) records.Items.Add(new ComboBoxItem { Content = RecordTitle(f), Tag = f });
+        records.SelectedIndex = pastFile is null ? 0 : files.IndexOf(pastFile) + 1;
+        updatingRecords = false;
+        recordsBar.Visibility = files.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        Refresh();
+    }
+
+    private async void SelectRecord(string? file, bool auto)
+    {
+        autoSelected = auto && file is not null;
+        if (file == pastFile) return;
+        pastFile = file;
+        pastEntries = [];
+        items.Clear();
+        if (!updatingRecords && records.Items.Count > 0)
+        {
+            updatingRecords = true;
+            records.SelectedIndex = file is null ? 0 : files.IndexOf(file) + 1;
+            updatingRecords = false;
+        }
+        if (file is null)
+        {
+            // 回到本次：从头重新填，停在最新一句。
+            following = true;
+            Refresh();
+            return;
+        }
+        var entries = await Task.Run(() =>
+        {
+            try { return TranscriptFormat.Parse(File.ReadAllText(file)); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
+        });
+        if (pastFile != file) return;
+        pastEntries = entries;
+        var sourceFont = TextFonts.For(settingsService.Current.Source);
+        var targetFont = TextFonts.For(settingsService.Current.Target);
+        foreach (var e in entries)
+        {
+            var time = TimeSpan.FromSeconds(e.Seconds);
+            items.Add(new Row(Guid.NewGuid(), $"{(int)time.TotalHours:00}:{time.Minutes:00}:{time.Seconds:00}", e.Label, null, e.Source,
+                e.Original is { } o && o != e.Source ? Strings.Format(Strings.History_Original, o) : null,
+                e.Translation.Length > 0 ? e.Translation : null, false, sourceFont, targetFont));
+        }
+        // 以前的记录从头看。
+        following = false;
+        Scroller()?.ScrollToTop();
         Refresh();
     }
 
@@ -154,6 +302,17 @@ public sealed class HistoryWindow : Window
     private void Refresh()
     {
         var lines = controller.Book.Lines;
+        // 本次有了第一句字幕：自动显示的以前那份换回本次；开始了新的记录（本次清空）：刚才那份成了以前的记录。
+        if (autoSelected && lines.Count > 0) SelectRecord(null, auto: false);
+        if (lines.Count == 0 && lastLineCount > 0) ReloadRecords();
+        lastLineCount = lines.Count;
+        if (pastFile is not null)
+        {
+            empty.Visibility = Visibility.Collapsed;
+            list.Visibility = Visibility.Visible;
+            RefreshBar();
+            return;
+        }
         var sourceFont = TextFonts.For(settingsService.Current.Source);
         var targetFont = TextFonts.For(settingsService.Current.Target);
         // 逐项更新而不是整体替换（翻译完成、纠正原文时只换那一行），往上翻看时滚动位置不会被重置。
@@ -177,6 +336,7 @@ public sealed class HistoryWindow : Window
             items.RemoveAt(items.Count - 1);
             changed = true;
         }
+        empty.Text = files.Count > 0 ? Strings.History_EmptyWithPast : Strings.History_Empty;
         empty.Visibility = lines.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         list.Visibility = lines.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         // 每次都找一下滚动区：列表刚从收起变为显示时，要等排版后才找得到。
@@ -187,14 +347,17 @@ public sealed class HistoryWindow : Window
 
     private void RefreshBar()
     {
-        status.Text = controller.Status;
-        status.ToolTip = controller.Status;
+        bool generating = controller.IsGeneratingNotes;
+        bool past = pastFile is not null;
+        // 以前的记录没有音频时间，不能导出字幕；也不是本次，不能“开始新的记录”。
+        status.Text = past && !generating ? Strings.Format(Strings.History_LineCount, pastEntries.Count) : controller.Status;
+        status.ToolTip = status.Text;
         bool hasLines = controller.Book.Lines.Count > 0;
+        export.Visibility = newSession.Visibility = past ? Visibility.Collapsed : Visibility.Visible;
         export.IsEnabled = hasLines;
         newSession.IsEnabled = hasLines;
-        bool generating = controller.IsGeneratingNotes;
         ((TextBlock)notes.Content).Text = generating ? Strings.History_Generating : Strings.Menu_GenerateNotes;
-        notes.IsEnabled = !generating && controller.Book.Lines.Count > 0;
+        notes.IsEnabled = !generating && (past ? pastEntries.Count > 0 : hasLines);
     }
 
     /// <summary>
@@ -213,7 +376,8 @@ public sealed class HistoryWindow : Window
 
     private void OnScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        if (scroller is null) return;
+        // 以前的记录不会再长，不跟随到底。
+        if (scroller is null || pastFile is not null) return;
         bool atEnd = scroller.VerticalOffset >= scroller.ScrollableHeight - 8;
         // 往上滚就不再跟随，回到底部时重新跟随。只按“往上滚”判断：只创建看得见的行时，行高边滚边修正，
         // 程序滚到底的那一下可能还差一点，不能因此停止跟随。

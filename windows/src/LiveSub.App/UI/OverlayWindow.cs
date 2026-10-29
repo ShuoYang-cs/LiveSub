@@ -1005,6 +1005,7 @@ public sealed class OverlayWindow : Window
             // 松开鼠标的消息丢了（例如被别的窗口抢走捕获）：结束拖动。
             dragging = false;
             panel.ReleaseMouseCapture();
+            KeepOnScreen(wholeScreen: true);
             SavePosition();
             return;
         }
@@ -1018,6 +1019,8 @@ public sealed class OverlayWindow : Window
         if (!dragging) return;
         dragging = false;
         panel.ReleaseMouseCapture();
+        // 拖出去一部分时右上角的快捷按钮和锁定标志跟着出去，锁定后拖不回来（2026-10-28 macOS 上用户遇到）：松开后推回屏幕内。
+        KeepOnScreen(wholeScreen: true);
         SavePosition();
     }
 
@@ -1142,9 +1145,10 @@ public sealed class OverlayWindow : Window
         KeepOnScreen();
     }
 
-    private void KeepOnScreen()
+    /// <param name="wholeScreen">按整块屏幕（含任务栏）算：用户拖的位置可以盖住任务栏，全屏看视频时字幕要能放到最下面（与 macOS 相同）。</param>
+    private void KeepOnScreen(bool wholeScreen = false)
     {
-        var (left, top) = OverlayLayout.Clamp(new ScreenRect(Left, Top, ActualWidth, ActualHeight), ToScreenRect(CurrentWorkArea()));
+        var (left, top) = OverlayLayout.Clamp(new ScreenRect(Left, Top, ActualWidth, ActualHeight), ToScreenRect(CurrentWorkArea(wholeScreen)));
         if (Math.Abs(left - Left) > 0.5) Left = left;
         if (Math.Abs(top - Top) > 0.5) Top = top;
     }
@@ -1162,6 +1166,8 @@ public sealed class OverlayWindow : Window
             // 照着放会伸出屏幕上边（2026-10-23 Windows 实测 Top = -307），所以上边不超出虚拟屏幕。
             Left = left;
             Top = Math.Max(bottom - height, SystemParameters.VirtualScreenTop);
+            // 以前存下的位置可能有一部分在屏幕外（快捷按钮、锁定标志点不到）。
+            KeepOnScreen(wholeScreen: true);
         }
         else
         {
@@ -1204,14 +1210,14 @@ public sealed class OverlayWindow : Window
 
     private static ScreenRect ToScreenRect(Rect r) => new(r.Left, r.Top, r.Width, r.Height);
 
-    /// <summary>字幕所在屏幕的工作区（与设备无关的像素）。</summary>
-    private Rect CurrentWorkArea()
+    /// <summary>字幕所在屏幕的工作区（<paramref name="wholeScreen"/> 时是整块屏幕），与设备无关的像素。</summary>
+    private Rect CurrentWorkArea(bool wholeScreen = false)
     {
         var hwnd = this.Handle();
         var screen = hwnd != IntPtr.Zero ? System.Windows.Forms.Screen.FromHandle(hwnd) : System.Windows.Forms.Screen.PrimaryScreen;
         if (screen is null) return SystemParameters.WorkArea;
         var dpi = VisualTreeHelper.GetDpi(this);
-        var r = screen.WorkingArea;
+        var r = wholeScreen ? screen.Bounds : screen.WorkingArea;
         return new Rect(r.Left / dpi.DpiScaleX, r.Top / dpi.DpiScaleY, r.Width / dpi.DpiScaleX, r.Height / dpi.DpiScaleY);
     }
 

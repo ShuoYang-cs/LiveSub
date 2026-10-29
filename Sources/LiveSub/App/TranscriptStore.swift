@@ -37,8 +37,11 @@ final class TranscriptStore {
         try? handle.write(contentsOf: Data(text.utf8))
     }
 
-    var notesURL: URL {
-        fileURL.deletingLastPathComponent()
-            .appendingPathComponent(fileURL.deletingPathExtension().lastPathComponent.replacingOccurrences(of: L("字幕记录"), with: L("笔记")) + ".md")
+    var notesURL: URL { Self.notesURL(for: fileURL) }
+
+    /// 笔记和字幕记录放在一起：“2026-10-28 13.11 笔记.md”。
+    static func notesURL(for transcript: URL) -> URL {
+        transcript.deletingLastPathComponent()
+            .appendingPathComponent(transcript.deletingPathExtension().lastPathComponent.replacingOccurrences(of: L("字幕记录"), with: L("笔记")) + ".md")
     }
 }

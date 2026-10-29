@@ -236,3 +236,27 @@ import Testing
         #expect(timeline.take("It stores neighbors.")?.start == 6)
     }
 }
+
+@Suite struct TranscriptParseTests {
+    @Test func readsBackWhatEntryWrites() {
+        let day = Calendar.current.startOfDay(for: Date())
+        let text = TranscriptFormat.header(title: "2026-10-28 13.11 字幕记录", started: day, source: .source("en-US"), target: .target("zh-Hans"))
+            + TranscriptFormat.entry(time: day.addingTimeInterval(13 * 3600 + 17 * 60 + 33), sourceLabel: nil,
+                                     source: "Now, when", translation: "现在，当")
+            + TranscriptFormat.entry(time: day.addingTimeInterval(13 * 3600 + 18 * 60), sourceLabel: "麦克风",
+                                     source: "Okay.", translation: "第一行\n第二行", original: "Okay, okay.")
+            + TranscriptFormat.entry(time: day.addingTimeInterval(13 * 3600 + 18 * 60 + 5), sourceLabel: nil,
+                                     source: "Untranslated.", translation: "")
+        let entries = TranscriptFormat.parse(text)
+        #expect(entries == [
+            .init(seconds: 47853, label: nil, source: "Now, when", original: nil, translation: "现在，当"),
+            .init(seconds: 47880, label: "麦克风", source: "Okay.", original: "Okay, okay.", translation: "第一行\n第二行"),
+            .init(seconds: 47885, label: nil, source: "Untranslated.", original: nil, translation: ""),
+        ])
+    }
+
+    @Test func readsEnglishOriginalAndSkipsHeader() {
+        let text = "# 2026-10-28 13.11 Transcript\n\n- Started: 2026-10-28 13:11\n\n**[09:00:01]** Hi.\n*Recognized: High.*\n> 你好。\n"
+        #expect(TranscriptFormat.parse(text) == [.init(seconds: 32401, label: nil, source: "Hi.", original: "High.", translation: "你好。")])
+    }
+}

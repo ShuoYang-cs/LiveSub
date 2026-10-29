@@ -67,8 +67,6 @@ public sealed class AppSettings
     public string TargetLanguage { get; set; } = "zh-Hans";
     /// <summary>新用户默认“两者”（2026-10-22 用户决定，与 macOS 相同）；用过的用户的设置文件里有这一项，保留自己的选择。</summary>
     public AudioSourceMode AudioSource { get; set; } = AudioSourceMode.Both;
-    /// <summary>麦克风降噪：用 Windows 的通话语音处理（降噪、回声消除）打开麦克风。默认关闭。</summary>
-    public bool MicNoiseReduction { get; set; }
 
     /// <summary>
     /// 字幕翻译使用的模型。新用户默认 Google 翻译（不需要配置，与 macOS 相同）；用过的用户保留自己的选择：

@@ -30,10 +30,8 @@ public interface IAudioSource : IDisposable
 /// 系统没有播放任何声音时，环回采集根本不送数据（不是送静音）。为了让分段器看到“停顿”、
 /// 让导出字幕的时间轴与真实时间对齐，超过 200 毫秒没收到数据时按真实时间补静音。
 ///
-/// 麦克风降噪：按“通话”类别打开麦克风（WithCommunicationsMode，在初始化前设置 AudioStreamCategory.Communications），
-/// 系统和声卡驱动对它做通话用的语音处理：降噪、回声消除，较新的 Windows 11 上还有“语音清晰度”（Voice Clarity）。
-/// 具体做哪些处理取决于驱动。设置类别失败时写日志，改为不降噪地打开，不让字幕因此启动失败。
-/// 环回采集（系统声音）不用通话类别。
+/// 没有“麦克风降噪”（通话类别的语音处理）：通话用的处理只留离电脑近的人声，macOS 上实测教室里远处老师的声音几乎全被去掉，
+/// 一个字也识别不出来（2026-10-29），两边一起去掉。
 ///
 /// 录音（快捷按钮里的录音按钮）打开时，同一块数据另外换成 48 kHz 单声道交给 <see cref="RecorderSlot"/>，补的静音也一样补上，
 /// 录下的声音和真实时间对齐。采集中断、换了新的 WasapiSource 时，两个采集之间的空缺由录音器补（第一块标上 newCapture）。
@@ -41,7 +39,6 @@ public interface IAudioSource : IDisposable
 public sealed class WasapiSource : IAudioSource
 {
     private readonly bool loopback;
-    private readonly bool noiseReduction;
     private readonly RecorderSlot? recording;
     private readonly object gate = new();
     private WasapiRecorder? recorder;
@@ -72,12 +69,10 @@ public sealed class WasapiSource : IAudioSource
     public float Level { get; private set; }
     public DateTime LastDataAt { get; private set; } = DateTime.UtcNow;
 
-    /// <param name="noiseReduction">麦克风降噪（只对麦克风有效）。</param>
     /// <param name="recording">这一路的录音器（录音打开时才有录音器在里面）。</param>
-    internal WasapiSource(bool loopback, bool noiseReduction = false, RecorderSlot? recording = null)
+    internal WasapiSource(bool loopback, RecorderSlot? recording = null)
     {
         this.loopback = loopback;
-        this.noiseReduction = noiseReduction && !loopback;
         this.recording = recording;
     }
 
@@ -96,19 +91,6 @@ public sealed class WasapiSource : IAudioSource
             device = enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Console);
         }
         KeepOtherSoundsAtFullVolume(device);
-        if (noiseReduction)
-        {
-            try
-            {
-                Begin(NewBuilder().WithDevice(device).WithCommunicationsMode().Build(), "microphone (noise reduction)");
-                return;
-            }
-            catch (Exception e) when (!MicrophonePrivacy.IsAccessDenied(e))
-            {
-                // 例如驱动不支持通话类别：不降噪也照常录音。权限问题照常抛出，由控制器提示去隐私设置里打开。
-                AppLog.Error("audio: noise reduction unavailable, capturing without it", e);
-            }
-        }
         Begin(NewBuilder().WithDevice(device).Build(), "microphone");
     }
 
@@ -152,7 +134,7 @@ public sealed class WasapiSource : IAudioSource
     }
 
     /// <summary>
-    /// 按通话类别录音时（麦克风同时是“默认通信设备”时也可能），Windows 会按“检测到通信活动时降低其他声音的音量”
+    /// 麦克风同时是“默认通信设备”时，Windows 会按“检测到通信活动时降低其他声音的音量”
     /// 把其他声音调小，“两者”模式下正在识别的系统声音也会变小。开始录音前让这个会话不触发它；做不到时只写日志。
     /// </summary>
     private static void KeepOtherSoundsAtFullVolume(MMDevice device)
@@ -164,7 +146,7 @@ public sealed class WasapiSource : IAudioSource
         catch (Exception e)
         {
             // 有的电脑上麦克风的会话不支持这个设置（AUDCLNT_E_WRONG_ENDPOINT_TYPE，Windows 11 21H2 实测），
-            // 但同一台电脑上开着降噪时系统声音也没有被调小，所以不算错误，每次运行只记一次。
+            // 但同一台电脑上按通话类别录音时系统声音也没有被调小，所以不算错误，每次运行只记一次。
             if (duckingFailureLogged) return;
             duckingFailureLogged = true;
             AppLog.Info($"audio: ducking opt-out unavailable ({e.GetType().Name}: {e.Message})");

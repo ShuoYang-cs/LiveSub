@@ -160,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showHistory() {
         if historyWindow == nil {
-            historyWindow = makeWindow(title: L("LiveSub 字幕记录"), view: HistoryView(controller: controller))
+            historyWindow = makeWindow(title: L("LiveSub 字幕记录"), view: HistoryView(controller: controller, model: HistoryModel(controller: controller)))
             historyWindow?.setContentSize(NSSize(width: 640, height: 560))
         }
         present(historyWindow!)

@@ -89,13 +89,6 @@ struct SettingsView: View {
                     ForEach(AudioSourceMode.allCases) { Text($0.shortTitle).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                if settings.audioSource != .system {
-                    Toggle("麦克风降噪", isOn: $settings.micNoiseReduction)
-                        .help(settings.audioSource == .both
-                              ? "“麦克风和系统音频”同时录时不能用降噪：系统的语音处理会和系统音频采集冲突，字幕会停止。"
-                              : "使用系统语音处理降低环境噪音并消除回声。讲者距离较远时可能降低识别效果。")
-                        .disabled(settings.audioSource == .both)
-                }
                 Picker("翻译模型", selection: $settings.translationModel) {
                     ForEach(settings.modelGroups(for: .translation)) { group in
                         Section(group.title) {
@@ -243,7 +236,6 @@ struct SettingsView: View {
     private var translationKey: String {
         [settings.sourceLanguage, settings.targetLanguage, settings.audioSource.rawValue,
          settings.displayName(settings.translationModel), settings.claudePath,
-         String(settings.micNoiseReduction),
          String(settings.autoCorrect)].joined(separator: "\u{1}")
     }
 
@@ -282,76 +274,6 @@ struct WindowBackgroundDrag: ViewModifier {
         }
     }
 }
-
-struct HistoryView: View {
-    let controller: SubtitleController
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                List(controller.lines) { line in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(line.time, format: .dateTime.hour().minute().second())
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                            if let label = line.sourceLabel {
-                                Text(label).font(.caption).foregroundStyle(.secondary)
-                            }
-                            if let note = line.note {
-                                Text(note).font(.caption).foregroundStyle(.orange)
-                            }
-                        }
-                        Text(line.source).textSelection(.enabled)
-                        if let original = line.originalSource, original != line.source {
-                            Text(L("识别原文：%@", original)).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                        }
-                        if !line.translation.isEmpty {
-                            Text(line.translation).font(.body.weight(.medium)).textSelection(.enabled)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                    .id(line.id)
-                }
-                .onChange(of: controller.lines.count) {
-                    if let last = controller.lines.last { proxy.scrollTo(last.id, anchor: .bottom) }
-                }
-            }
-            Divider()
-            HStack {
-                Text(controller.status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                Spacer()
-                // 菜单栏图标去掉后（2026-10-22），记录相关的操作都在这里。
-                Button("在 Finder 中显示") { openTranscriptFolder() }
-                Menu("导出字幕") {
-                    ForEach(SubtitleFileFormat.allCases, id: \.self) { format in
-                        Button(format.menuTitle) { controller.exportSubtitles(format: format) }
-                    }
-                }
-                .fixedSize()
-                .disabled(controller.lines.isEmpty)
-                Button("开始新的记录") { controller.newSession() }
-                    .disabled(controller.lines.isEmpty)
-                Button(controller.notesInProgress ? L("正在生成…") : L("生成笔记")) { controller.generateNotes() }
-                    .disabled(controller.notesInProgress || controller.lines.isEmpty)
-            }
-            .padding(10)
-        }
-        .frame(minWidth: 520, minHeight: 420)
-    }
-
-    /// 有本次的记录文件就在 Finder 里选中它，否则打开记录文件夹。
-    private func openTranscriptFolder() {
-        if let url = controller.transcriptURL {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } else {
-            let folder = URL(fileURLWithPath: (controller.settings.transcriptFolder as NSString).expandingTildeInPath)
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            NSWorkspace.shared.open(folder)
-        }
-    }
-}
-
 
 /// “显示”的分段按钮：系统的分段 Picker 不能单独置灰某一段，所以自己画。
 /// 保留识别原文时“仅译文”不能选。

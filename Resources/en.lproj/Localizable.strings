@@ -26,7 +26,6 @@
 "云端模型" = "Cloud Models";
 "仅原文" = "Original Only";
 "仅译文" = "Translation Only";
-"使用系统语音处理降低环境噪音并消除回声。讲者距离较远时可能降低识别效果。" = "Uses system voice processing to reduce background noise and remove echo. Accuracy may drop when the speaker is far away.";
 "停止" = "Stop";
 "停止字幕" = "Stop Subtitles";
 "准备中…" = "Preparing…";
@@ -165,7 +164,6 @@
 "音源" = "Audio Source";
 "麦克风" = "Microphone";
 "麦克风和系统音频" = "Microphone and System Audio";
-"麦克风降噪" = "Microphone Noise Reduction";
 "未知错误" = "Unknown error";
 "更多操作" = "More";
 "隐藏 AI 助手" = "Hide AI Assistant";
@@ -308,4 +306,7 @@
 
 "需要用云端模型翻译（Claude 或自己的 API）才会生效。" = "Takes effect only when translating with a cloud model (Claude or your own API).";
 
-"“麦克风和系统音频”同时录时不能用降噪：系统的语音处理会和系统音频采集冲突，字幕会停止。" = "Noise reduction can't be used when recording microphone and system audio together: the system voice processing conflicts with system audio capture and subtitles stop.";
+"本次" = "Current";
+"本次还没有字幕。" = "No subtitles in this session yet.";
+"本次还没有字幕。以前的记录在左上角的菜单里。" = "No subtitles in this session yet. Earlier transcripts are in the menu at the top left.";
+"共 %d 句" = "%d lines";

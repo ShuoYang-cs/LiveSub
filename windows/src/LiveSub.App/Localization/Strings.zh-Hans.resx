@@ -139,8 +139,6 @@
   <data name="Tip_UseGpu" xml:space="preserve"><value>安装了显卡运行库时用显卡识别。重新启动后生效。</value></data>
   <data name="Label_LivePreview" xml:space="preserve"><value>实时预览</value></data>
   <data name="Tip_LivePreview" xml:space="preserve"><value>说话过程中先显示识别草稿，会多用一些处理器。</value></data>
-  <data name="Label_MicNoiseReduction" xml:space="preserve"><value>麦克风降噪</value></data>
-  <data name="Tip_MicNoiseReduction" xml:space="preserve"><value>使用 Windows 通话语音处理降低环境噪音并消除回声，效果取决于声卡驱动。讲者距离较远时可能降低识别效果。</value></data>
   <data name="Label_ModelMirror" xml:space="preserve"><value>模型下载地址</value></data>
   <data name="Tip_ModelMirror" xml:space="preserve"><value>默认 https://huggingface.co。无法访问时可以换成镜像地址。</value></data>
   <data name="Section_Overlay" xml:space="preserve"><value>字幕</value></data>
@@ -168,6 +166,10 @@
   <data name="History_Original" xml:space="preserve"><value>识别原文：{0}</value></data>
   <data name="History_ShowInExplorer" xml:space="preserve"><value>在资源管理器中显示记录</value></data>
   <data name="History_Generating" xml:space="preserve"><value>正在生成…</value></data>
+  <data name="History_Records" xml:space="preserve"><value>记录</value></data>
+  <data name="History_Current" xml:space="preserve"><value>本次</value></data>
+  <data name="History_EmptyWithPast" xml:space="preserve"><value>本次还没有字幕。以前的记录在左上角的菜单里。</value></data>
+  <data name="History_LineCount" xml:space="preserve"><value>共 {0} 句</value></data>
   <data name="Export_FilterSrt" xml:space="preserve"><value>SRT 字幕</value></data>
   <data name="Export_FilterVtt" xml:space="preserve"><value>WebVTT 字幕</value></data>
   <data name="Export_DefaultName" xml:space="preserve"><value>字幕</value></data>

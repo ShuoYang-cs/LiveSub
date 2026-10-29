@@ -8,6 +8,7 @@ final class AudioRecorder: @unchecked Sendable {
     // 以下只在 queue 上访问。
     private var file: AVAudioFile?
     private var failed = false
+    private let converter = BufferConverter()
 
     init(url: URL) {
         self.url = url
@@ -40,7 +41,10 @@ final class AudioRecorder: @unchecked Sendable {
                                        commonFormat: format.commonFormat, interleaved: format.isInterleaved)
                 appLog.notice("recording: \(self.url.lastPathComponent, privacy: .public)")
             }
-            try file?.write(from: buffer)
+            guard let file else { return }
+            // 采集中途麦克风换了声道数或采样率（见 MicrophoneCapture）：转成文件开头的格式接着写。
+            try file.write(from: buffer.format == file.processingFormat
+                           ? buffer : converter.convert(buffer, to: file.processingFormat))
         } catch {
             failed = true
             file = nil
