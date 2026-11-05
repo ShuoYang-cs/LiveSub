@@ -166,6 +166,8 @@ public sealed class OverlayWindow : Window
     public Window? KeepAbove { get; set; }
     /// <summary>锁定后窗口收不到鼠标事件（MouseEnter 不再触发）：改为定时看鼠标在不在字幕上。</summary>
     private readonly DispatcherTimer lockedHoverTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
+    /// <summary>锁定时字幕停在旧句子上（往回翻看过）：5 秒后自动回到实时，和 macOS 一致。</summary>
+    private readonly DispatcherTimer returnToLiveTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     /// <summary>
     /// 正在显示的菜单（音源或状态条上的模型菜单）。打开着时快捷按钮不消失，鼠标移到菜单上、离开字幕也一样（macOS 的 menuOpen）。
     /// </summary>
@@ -247,6 +249,7 @@ public sealed class OverlayWindow : Window
         root.Children.Add(toolbar);
 
         lockedHoverTimer.Tick += (_, _) => UpdateLockedBadge();
+        returnToLiveTimer.Tick += (_, _) => ReturnToLive();
 
         backToLive = FlatButton(Strings.Overlay_BackToLive, null);
         backToLive.FontSize = 12;
@@ -353,6 +356,7 @@ public sealed class OverlayWindow : Window
 
     private void ApplyClickThrough()
     {
+        ScheduleReturnToLive();
         var hwnd = this.Handle();
         if (hwnd == IntPtr.Zero) return;
         if (S.ClickThrough)
@@ -369,6 +373,23 @@ public sealed class OverlayWindow : Window
         hovering = CursorInside();
         UpdateToolbar();
         UpdateLockedBadge();
+    }
+
+    /// <summary>锁定时如果字幕不在底部，重新计时 5 秒后回到实时；解锁或已在底部时停止计时。</summary>
+    private void ScheduleReturnToLive()
+    {
+        returnToLiveTimer.Stop();
+        if (S.ClickThrough && !atBottom) returnToLiveTimer.Start();
+    }
+
+    private void ReturnToLive()
+    {
+        returnToLiveTimer.Stop();
+        if (!S.ClickThrough || atBottom) return;
+        atBottom = true;
+        scroller.ScrollToEnd();
+        backToLive.Visibility = Visibility.Collapsed;
+        scrollThumb.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>鼠标在字幕上或菜单开着时显示快捷按钮；锁定时不显示。</summary>
@@ -1232,6 +1253,7 @@ public sealed class OverlayWindow : Window
     {
         topmostTimer.Stop();
         lockedHoverTimer.Stop();
+        returnToLiveTimer.Stop();
         if (openMenu is not null) openMenu.IsOpen = false;
         lockBadge?.Close();
         controller.Changed -= RequestRender;
