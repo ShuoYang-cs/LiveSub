@@ -224,6 +224,8 @@ final class OverlayWindowController {
     private static let originKey = "overlayOrigin"
     /// 锁定后窗口收不到鼠标事件，onHover 不再触发：改为定时看鼠标在不在字幕上（显示锁定标志用）。
     private var lockedHoverTimer: Timer?
+    /// 锁定后往回翻看的字幕没法再用鼠标滚回去：锁定 5 秒后自动回到实时（见 scheduleReturnToLive）。
+    private var returnToLiveTask: Task<Void, Never>?
     private let lockBadge = LockBadgePanel()
     private var settleTask: Task<Void, Never>?
     /// 离屏自检（--render-window、--stress-overlay）把窗口放在屏幕外，关掉推回屏幕内。
@@ -280,6 +282,27 @@ final class OverlayWindowController {
         }
         // 锁定、解锁的那一刻鼠标多半就在字幕上，onHover 不会补发，这里直接按鼠标位置更新一次。
         updateHoverFromMouse()
+        scheduleReturnToLive()
+    }
+
+    /// 锁定时如果字幕停在旧句子上（往回翻看过），5 秒后自动回到实时；解锁或已经在实时时不做。
+    private func scheduleReturnToLive() {
+        returnToLiveTask?.cancel()
+        returnToLiveTask = nil
+        guard settings.clickThrough, !state.atBottom else { return }
+        returnToLiveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, let self, self.settings.clickThrough, !self.state.atBottom else { return }
+            self.returnToLive()
+        }
+    }
+
+    private func returnToLive() {
+        if #available(macOS 15, *) {
+            withAnimation(.easeOut(duration: 0.2)) { state.follow.position.scrollTo(edge: .bottom) }
+        }
+        state.atBottom = true
+        appLog.notice("overlay: locked, returned to latest line after 5s")
     }
 
     private func updateHoverFromMouse() {
