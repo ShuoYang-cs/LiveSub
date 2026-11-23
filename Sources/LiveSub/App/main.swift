@@ -312,10 +312,24 @@ if let path = option("--assistant-test") {
             assistant.shutdown()
             exit(0)
         }
+        // --record-folder 目录：在这个目录里新建一次记录，问答写进它的对话记录；最后再开一个新对话问一次（验证分隔线）。
+        var store: TranscriptStore?
+        if let folder = option("--record-folder") {
+            let s = TranscriptStore(folderPath: folder, started: Date(), source: AppSettings.shared.source, target: AppSettings.shared.target)
+            store = s
+            assistant.record = { (s.folderURL, s.assistantLogURL) }
+        }
         print("[lines] first half \(visible.count) / all \(entries.count)")
         ask("在讲哪个算法？一句话。")
         visible = entries
         ask("最后几分钟讲到哪一步了？一句话。")
+        if let store {
+            assistant.newConversation()
+            assistant.debugBackdate(to: today)
+            ask("把这节课的要点存成文件，三条以内。")
+            print("[log] \(store.assistantLogURL.path)")
+            for file in assistant.messages.last?.files ?? [] { print("[file] \(file.url?.path ?? "-") \(file.error ?? "")") }
+        }
         assistant.shutdown()
     }
     exit(0)

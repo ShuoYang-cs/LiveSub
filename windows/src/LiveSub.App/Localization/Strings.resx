@@ -187,6 +187,7 @@
   <data name="Assistant_SaveFailed" xml:space="preserve"><value>Couldn't save: {0}</value></data>
   <data name="Assistant_ShowInExplorer" xml:space="preserve"><value>Show in File Explorer</value></data>
   <data name="Assistant_FolderName" xml:space="preserve"><value>AI Assistant</value></data>
+  <data name="Assistant_LogName" xml:space="preserve"><value>AI Assistant Conversation</value></data>
   <data name="Quick_Summarize" xml:space="preserve"><value>Summarize recent content</value></data>
   <data name="Quick_Concepts" xml:space="preserve"><value>Explain related concepts</value></data>
   <data name="Quick_LastSentence" xml:space="preserve"><value>Explain the last sentence</value></data>

@@ -37,7 +37,7 @@ final class RecordingsModel {
 
     private nonisolated static func scan(_ folder: URL) -> [Recording] {
         let keys: [URLResourceKey] = [.creationDateKey, .fileSizeKey]
-        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys)) ?? []
+        let files = RecordFolderMigration.recordFiles(in: folder)
         return files.filter { $0.pathExtension.lowercased() == "m4a" }.map { url in
             let values = try? url.resourceValues(forKeys: Set(keys))
             let duration = (try? AVAudioFile(forReading: url)).map { Double($0.length) / $0.processingFormat.sampleRate }

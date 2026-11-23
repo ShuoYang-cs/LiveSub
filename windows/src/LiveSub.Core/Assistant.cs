@@ -29,7 +29,7 @@ public static class AssistantPrompt
         {AssistantFiles.StartMarker} <short file name>
         <the complete file content in Markdown; headings, lists and tables are fine here>
         {AssistantFiles.EndMarker}
-        The app saves the files into the user's LiveSub "AI 助手" folder and shows their names. Outside the blocks write at most one short sentence; do not repeat the file content, do not wrap the blocks in code fences, and never give shell commands. Only use these blocks when the user asks to save something.
+        The app saves the files into the folder of the current LiveSub record (next to the transcript) and shows their names. Outside the blocks write at most one short sentence; do not repeat the file content, do not wrap the blocks in code fences, and never give shell commands. Only use these blocks when the user asks to save something.
         """;
 
     /// <summary>一句字幕。</summary>
@@ -218,6 +218,8 @@ public sealed class AssistantConversation(DateTime start)
 
     public IReadOnlyList<AssistantMessage> Messages => messages;
     public bool IsAnswering => answering is not null;
+    /// <summary>第几个对话（每次 <see cref="Reset"/> 加一）：对话记录据此判断要不要写“新对话”分隔线。</summary>
+    public int Number => conversation;
     /// <summary>对话开始的时刻（与字幕的 <see cref="SubtitleLine.Time"/> 同一种时间）。</summary>
     public DateTime Start { get; private set; } = start;
 
