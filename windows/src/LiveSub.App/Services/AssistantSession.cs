@@ -29,7 +29,12 @@ public sealed class AssistantSession
     /// <summary>由控制器提供：当前的字幕和正在说的半句。</summary>
     private readonly Func<(IReadOnlyList<SubtitleLine> Lines, string Speaking)> transcript;
     private readonly AssistantConversation conversation = new(DateTime.UtcNow);
+    /// <summary>对话记录最后写的是哪个文件、第几个对话：同一个文件里换了对话就先写分隔线。</summary>
+    private (string Log, int Conversation)? logged;
     private IChatSession? session;
+
+    /// <summary>由控制器提供：本次记录的文件夹和对话记录文件；还没有记录（没点过“开始”）时为 null，问答不保存。</summary>
+    public Func<(string Folder, string Log)?> Record { get; set; } = () => null;
     /// <summary>建会话时的设置（<see cref="SessionKey"/>）。</summary>
     private string? sessionKey;
 
@@ -195,9 +200,11 @@ public sealed class AssistantSession
             AppLog.Error("assistant: unavailable", e);
             conversation.AddFailure(question, TranslationEngines.Describe(e), labels);
             RaiseChanged();
+            await LogAnswer(conversation.Number, conversation.Messages[^1], question, labels, DateTime.Now);
             return;
         }
         var (lines, speaking) = transcript();
+        var askedAt = DateTime.Now;
         if (conversation.Begin(question, lines, speaking, labels, prompt) is not { } pending) return;
         RaiseChanged();
         IReadOnlyList<AssistantFiles.File> files = [];
@@ -226,29 +233,62 @@ public sealed class AssistantSession
         if (ReferenceEquals(session, current) && SessionOutdated) CloseSession();
         RaiseChanged();
         if (files.Count > 0) await SaveFiles(pending, files);
+        // 答完或失败了才记；其间“新对话”清空了问答时不记（与面板一致）。
+        if (pending.Conversation == conversation.Number && conversation.Messages.FirstOrDefault(m => m.Id == pending.AnswerId) is { } answer)
+            await LogAnswer(pending.Conversation, answer, question, labels, askedAt);
     }
 
     /// <summary>
-    /// 回答里要保存的文件写进记录文件夹下的“AI 助手”文件夹（模型自己不能写文件），不覆盖已有文件。
+    /// 答完一问，追加到本次记录的对话文件里（与 macOS 相同）；还没有记录时不保存。
+    /// 在后台线程上写（记录文件夹可能在网络驱动器上）；同一时间只有一问在回答，不会两段交错。
+    /// </summary>
+    private async Task LogAnswer(int conversationNumber, AssistantMessage answer, string question,
+                                 IReadOnlyList<AttachmentLabel> attachments, DateTime askedAt)
+    {
+        if (Record() is not { } record) return;
+        var labels = Strings.IsChinese ? AssistantLogLabels.Chinese : AssistantLogLabels.English;
+        var entry = AssistantLog.Entry(askedAt, question, attachments.Select(a => a.Name).ToList(), answer.Text,
+            answer.Files.Where(f => f.Path is not null).Select(f => f.Name).ToList(), answer.Failed, labels);
+        var newConversation = logged is { } last && last.Log == record.Log && last.Conversation != conversationNumber;
+        var separator = newConversation ? AssistantLog.Separator(conversation.Start, labels) : "";
+        var title = Path.GetFileNameWithoutExtension(record.Log);
+        logged = (record.Log, conversationNumber);
+        try
+        {
+            await Task.Run(() =>
+            {
+                var text = (File.Exists(record.Log) ? separator : AssistantLog.Header(title)) + entry;
+                File.AppendAllText(record.Log, text, new UTF8Encoding(false));
+            });
+        }
+        catch (Exception e) when (IsFileError(e))
+        {
+            AppLog.Error("assistant: cannot write conversation log", e);
+        }
+    }
+
+    /// <summary>
+    /// 回答里要保存的文件写进本次记录的文件夹（模型自己不能写文件）；还没有记录时写进记录文件夹下的“AI 助手”文件夹。不覆盖已有文件。
     /// 在后台线程上写（记录文件夹可能在网络驱动器上），写完回到界面线程显示结果；其间“新对话”清空了问答时不再显示。
     /// </summary>
     private async Task SaveFiles(AssistantQuestion question, IReadOnlyList<AssistantFiles.File> files)
     {
         var transcriptFolder = Settings.TranscriptFolder;
         var folderName = Strings.Assistant_FolderName;
-        var saved = await Task.Run(() => Save(files, transcriptFolder, folderName, DateTime.Now));
+        var recordFolder = Record()?.Folder;
+        var saved = await Task.Run(() => Save(files, transcriptFolder, folderName, DateTime.Now, recordFolder));
         AppLog.Info($"assistant: saved {saved.Count(f => f.Path is not null)}/{files.Count} files");
         if (conversation.FilesSaved(question, saved)) RaiseChanged();
     }
 
     private static List<AssistantSavedFile> Save(IReadOnlyList<AssistantFiles.File> files, string transcriptFolder, string folderName,
-                                                 DateTime now)
+                                                 DateTime now, string? recordFolder)
     {
         var stamp = TranscriptFormat.FileStamp(now);
         string folder;
         try
         {
-            folder = FilesFolder(transcriptFolder, folderName);
+            folder = recordFolder is not null ? Directory.CreateDirectory(recordFolder).FullName : FilesFolder(transcriptFolder, folderName);
         }
         catch (Exception e) when (IsFileError(e))
         {

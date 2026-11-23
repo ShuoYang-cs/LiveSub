@@ -71,6 +71,10 @@ final class AssistantSession {
     @ObservationIgnored private var sentIDs = Set<UUID>()
     /// 由控制器提供：当前的字幕和正在说的半句。
     @ObservationIgnored var transcript: () -> (lines: [SubtitleLine], speaking: String) = { ([], "") }
+    /// 由控制器提供：本次记录的文件夹和对话记录文件；还没有记录（没点过“开始”）时为 nil，问答不保存。
+    @ObservationIgnored var record: () -> (folder: URL, log: URL)? = { nil }
+    /// 对话记录最后写的是哪个文件、哪个对话：同一个文件里换了对话就先写分隔线。
+    @ObservationIgnored private var loggedConversation: (log: URL, generation: Int)?
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -203,7 +207,9 @@ final class AssistantSession {
             session = try makeSessionIfNeeded()
         } catch {
             messages.append(Message(role: .user, text: question, attachments: labels))
-            messages.append(Message(role: .assistant, text: error.localizedDescription, failed: true))
+            let failed = Message(role: .assistant, text: error.localizedDescription, failed: true)
+            messages.append(failed)
+            logAnswer(failed.id, question: question, attachments: labels.map(\.name), asked: Date())
             return
         }
         let (lines, speaking) = transcript()
@@ -224,6 +230,7 @@ final class AssistantSession {
         let answerID = answer.id
         let settledIDs = settled.map(\.id)
         let gen = generation
+        let askedAt = Date()
         Task {
             do {
                 let reply = try await session.request(newSessionMessage: fresh, ongoingMessage: ongoing,
@@ -243,6 +250,7 @@ final class AssistantSession {
                 }
                 appLog.error("assistant failed: \(error.localizedDescription, privacy: .public)")
             }
+            logAnswer(answerID, question: question, attachments: labels.map(\.name), asked: askedAt)
             isAnswering = false
         }
     }
@@ -255,7 +263,35 @@ final class AssistantSession {
         messages[i].writingFile = parsed.writing
     }
 
-    /// 回答里要保存的文件写进记录文件夹下的“AI 助手”文件夹（模型自己不能写文件）。不覆盖已有文件。
+    /// 答完（或失败）一问，追加到本次记录的对话文件里。还没有记录时不保存。
+    private func logAnswer(_ id: UUID, question: String, attachments: [String], asked: Date) {
+        guard let record = record(), let answer = messages.first(where: { $0.id == id }) else { return }
+        var text = ""
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: record.log.path) {
+            text = AssistantLog.header(title: record.log.deletingPathExtension().lastPathComponent)
+        } else if let last = loggedConversation, last.log == record.log, last.generation != generation {
+            text = AssistantLog.separator(time: conversationStart)
+        }
+        text += AssistantLog.entry(time: asked, question: question, attachments: attachments, answer: answer.text,
+                                   files: answer.files.filter { $0.url != nil }.map(\.name), failed: answer.failed)
+        do {
+            if fm.fileExists(atPath: record.log.path) {
+                let handle = try FileHandle(forWritingTo: record.log)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(text.utf8))
+            } else {
+                try text.write(to: record.log, atomically: true, encoding: .utf8)
+            }
+            loggedConversation = (record.log, generation)
+        } catch {
+            appLog.error("assistant: could not write conversation log: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// 回答里要保存的文件写进本次记录的文件夹（模型自己不能写文件）；还没有记录时写进记录文件夹下的“AI 助手”文件夹。
+    /// 不覆盖已有文件。
     private func saveFiles(_ id: UUID) {
         guard let i = messages.firstIndex(where: { $0.id == id }) else { return }
         let files = AssistantFiles.parse(messages[i].raw).files
@@ -264,7 +300,7 @@ final class AssistantSession {
         let stamp = TranscriptFormat.fileStampFormatter.string(from: Date())
         var saved: [SavedFile] = []
         do {
-            let folder = try Self.filesFolder(settings.transcriptFolder)
+            let folder = try record()?.folder ?? Self.filesFolder(settings.transcriptFolder)
             for file in files {
                 let name = AssistantFiles.uniqueName(AssistantFiles.fileName(for: file.name, stamp: stamp, fallback: L("AI 助手"))) {
                     FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)

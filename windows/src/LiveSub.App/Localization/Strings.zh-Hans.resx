@@ -187,6 +187,7 @@
   <data name="Assistant_SaveFailed" xml:space="preserve"><value>保存失败：{0}</value></data>
   <data name="Assistant_ShowInExplorer" xml:space="preserve"><value>在资源管理器中显示</value></data>
   <data name="Assistant_FolderName" xml:space="preserve"><value>AI 助手</value></data>
+  <data name="Assistant_LogName" xml:space="preserve"><value>AI 助手对话</value></data>
   <data name="Quick_Summarize" xml:space="preserve"><value>总结最近的内容</value></data>
   <data name="Quick_Concepts" xml:space="preserve"><value>解释相关概念</value></data>
   <data name="Quick_LastSentence" xml:space="preserve"><value>解释上一句</value></data>

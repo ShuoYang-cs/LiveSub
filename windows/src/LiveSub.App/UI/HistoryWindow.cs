@@ -208,7 +208,8 @@ public sealed class HistoryWindow : Window
     {
         try
         {
-            return Directory.EnumerateFiles(folder, "*.md")
+            // 每次记录在自己的文件夹里（RecordFolders），旧版平铺的先搬进去。
+            return RecordFolderMigration.RecordFiles(folder, "*.md")
                 .Where(f => Path.GetFileName(f) is var name && (name.Contains("字幕记录") || name.Contains("Transcript")) && HasLines(f))
                 .OrderByDescending(f => Path.GetFileName(f), StringComparer.Ordinal)
                 .ToList();

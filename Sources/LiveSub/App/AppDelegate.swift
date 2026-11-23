@@ -24,6 +24,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UpdateManager.shared.start()
         // 提前读好终端里的登录环境变量，第一次翻译时不用等。
         DispatchQueue.global(qos: .utility).async { _ = ClaudeCLI.shellEnvironment() }
+        // 旧版平铺的字幕记录、录音、笔记搬进各自的文件夹。只在用过 App 时做：新用户的记录文件夹还不存在，
+        // 在“文稿”里列目录会让系统提前弹访问权限的窗口。在后台做，第一次可能要等用户回答权限窗口。
+        if settings.hasStartedOnce {
+            let root = URL(fileURLWithPath: (settings.transcriptFolder as NSString).expandingTildeInPath, isDirectory: true)
+            DispatchQueue.global(qos: .utility).async { RecordFolderMigration.run(root) }
+        }
         overlay = OverlayWindowController(controller: controller, settings: settings, actions: OverlayActions(
             toggleRunning: { [weak self] in self?.controller.toggle() },
             lock: { [weak self] in self?.lockSubtitles() },

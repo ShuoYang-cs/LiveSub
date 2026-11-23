@@ -126,7 +126,7 @@ public sealed class RecordingsWindow : Window
             IEnumerable<string> files;
             try
             {
-                files = Directory.EnumerateFiles(folder, "*" + RecordingFiles.Extension).ToList();
+                files = RecordFolderMigration.RecordFiles(folder, "*" + RecordingFiles.Extension);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {

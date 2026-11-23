@@ -234,6 +234,7 @@ public static class Strings
     public static string Assistant_ShowInExplorer => Get(nameof(Assistant_ShowInExplorer));
     /// <summary>AI 助手存文件的文件夹（记录文件夹下），也是没有文件名时的默认名字。</summary>
     public static string Assistant_FolderName => Get(nameof(Assistant_FolderName));
+    public static string Assistant_LogName => Get(nameof(Assistant_LogName));
     public static string Quick_Summarize => Get(nameof(Quick_Summarize));
     public static string Quick_Concepts => Get(nameof(Quick_Concepts));
     public static string Quick_LastSentence => Get(nameof(Quick_LastSentence));

@@ -310,3 +310,9 @@
 "本次还没有字幕。" = "No subtitles in this session yet.";
 "本次还没有字幕。以前的记录在左上角的菜单里。" = "No subtitles in this session yet. Earlier transcripts are in the menu at the top left.";
 "共 %d 句" = "%d lines";
+"AI 助手对话" = "AI Assistant Conversation";
+"**新对话 %@**" = "**New conversation %@**";
+"（只发了附件）" = "(attachments only)";
+"附件：%@" = "Attachments: %@";
+"回答失败：%@" = "Answer failed: %@";
+"已保存文件：%@" = "Saved files: %@";

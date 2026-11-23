@@ -144,6 +144,12 @@ public sealed class AppShell : IDisposable
         // 先定好外观（字幕、AI 助手的颜色，设置类窗口的主题），再建窗口。
         appliedAppearance = Settings.Current.Appearance;
         Appearance.Apply(appliedAppearance);
+        // 旧版平铺的字幕记录、录音、笔记搬进各自的文件夹（与 macOS 相同）。只在用过程序时做，在后台做。
+        if (Settings.Current.HasStartedOnce == true)
+        {
+            var root = Environment.ExpandEnvironmentVariables(Settings.Current.TranscriptFolder);
+            _ = Task.Run(() => RecordFolderMigration.Run(root));
+        }
         overlay = new OverlayWindow(Controller, Settings, new OverlayActions(
             ToggleRunning: ToggleRunning,
             ToggleRecording: ToggleRecording,

@@ -158,6 +158,7 @@ public sealed class SubtitleController : IDisposable
         settingsService.Changed += OnSettingsChanged;
         LocalModelStore.Shared.InstalledChanged += OnLocalModelInstalledChanged;
         Assistant = new AssistantSession(settingsService, secrets, dispatcher, () => (Book.Lines, LiveText));
+        Assistant.Record = () => store is { } s ? (s.FolderPath, s.AssistantLogPath) : null;
     }
 
     // MARK: - 开始 / 停止

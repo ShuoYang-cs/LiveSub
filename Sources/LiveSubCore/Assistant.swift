@@ -22,7 +22,7 @@ public enum AssistantPrompt {
         \(AssistantFiles.startMarker) <short file name>
         <the complete file content in Markdown; headings, lists and tables are fine here>
         \(AssistantFiles.endMarker)
-        The app saves the files into the user's LiveSub "AI 助手" folder and shows their names. Outside the blocks write at most one short sentence; do not repeat the file content, do not wrap the blocks in code fences, and never give shell commands. Only use these blocks when the user asks to save something.
+        The app saves the files into the folder of the current LiveSub record (next to the transcript) and shows their names. Outside the blocks write at most one short sentence; do not repeat the file content, do not wrap the blocks in code fences, and never give shell commands. Only use these blocks when the user asks to save something.
         """
     }
 

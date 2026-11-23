@@ -80,9 +80,9 @@ final class HistoryModel {
     }
 
     /// 只列有字幕的记录（开始后没说话就停了的只有标题）；英文界面下写的文件名是“Transcript”。
+    /// 每次记录在自己的文件夹里（`RecordFolders`），旧版平铺的先搬进去。
     private nonisolated static func scan(_ folder: URL) -> [URL] {
-        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        return files.filter { url in
+        RecordFolderMigration.recordFiles(in: folder).filter { url in
             let name = url.lastPathComponent
             guard url.pathExtension.lowercased() == "md", name.contains("字幕记录") || name.contains("Transcript"),
                   let handle = try? FileHandle(forReadingFrom: url) else { return false }

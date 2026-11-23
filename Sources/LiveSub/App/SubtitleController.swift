@@ -130,6 +130,10 @@ final class SubtitleController {
             guard let self else { return ([], "") }
             return (self.lines, self.live.keys.sorted().compactMap { self.live[$0] }.joined(separator: " "))
         }
+        assistant.record = { [weak self] in
+            guard let store = self?.store else { return nil }
+            return (store.folderURL, store.assistantLogURL)
+        }
     }
 
     var transcriptURL: URL? { store?.fileURL }
